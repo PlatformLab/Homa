@@ -9,6 +9,9 @@ project(Homa VERSION 0.1.0.0 LANGUAGES CXX)
 # Tell CMake where to find our custom/3rd-party "Find" modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/modules)
 
+# Doxygen documentation generation tool (http://www.doxygen.org)
+find_package(Doxygen OPTIONAL_COMPONENTS dot mscgen dia)
+
 ################################################################################
 ## Source Configuration ########################################################
 ################################################################################
@@ -75,6 +78,16 @@ add_executable(unitTest
 )
 target_link_libraries(unitTest gtest_main Homa)
 gtest_discover_tests(unitTest)
+
+################################################################################
+## Generate Docs ###############################################################
+################################################################################
+
+if(DOXYGEN_FOUND)
+    doxygen_add_docs(docs
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+endif()
 
 ################################################################################
 ## Install & Export ############################################################
