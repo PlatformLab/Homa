@@ -1,44 +1,39 @@
-/* Copyright (c) 2010-2017 Stanford University
+/* Copyright (c) 2010-2018, Stanford University
  *
- * Permission to use, copy, modify, and distribute this software for any purpose
- * with or without fee is hereby granted, provided that the above copyright
- * notice and this permission notice appear in all copies.
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
  *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR ANY
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
  * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
  * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
  * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef RAMCLOUD_DRIVER_H
-#define RAMCLOUD_DRIVER_H
+#ifndef HOMA_HOMA_H
+#define HOMA_HOMA_H
 
-#include <memory>
+#include <string>
 #include <vector>
 
-#include "Common.h"
-#include "Buffer.h"
-#include "QueueEstimator.h"
-
-#undef CURRENT_LOG_MODULE
-#define CURRENT_LOG_MODULE RAMCloud::TRANSPORT_MODULE
-
-namespace RAMCloud {
-
-class ServiceLocator;
+namespace Homa {
 
 /**
- * Used by transports to send and receive unreliable datagrams. This is an
- * abstract class; see UdpDriver for an example of a concrete implementation.
+ * Used by Homa::Transport to send and receive unreliable datagrams. This is an
+ * abstract class.
+ *
+ * Note: some implementation may require the application call Driver::poll() in
+ * order to make progress.
+ *
+ * Implementations of this class should be thread-safe.
  */
 class Driver {
   public:
-
     /**
-     * A base class for Driver-specific network addresses.
+     * A base class for Driver specific network addresses.
      */
     class Address {
       protected:
@@ -49,184 +44,158 @@ class Driver {
         virtual ~Address() {}
 
         /**
-         * Return a string describing the contents of this Address (for
-         * debugging, logging, etc).
+         * Return the string representation of this network address.
          */
-        virtual string toString() const = 0;
+        virtual std::string toString() const = 0;
     };
 
-  PROTECTED:
     /**
-     * Holds an incoming packet plus the address from which it came.
+     * Represents a packet of data that can be send or is received over the
+     * network using implementations of Homa::Driver. A Packet logically
+     * contains only the payload and not any Driver specific headers. When
+     * sending a Packet, the address field will contain the destination Address.
+     * When receiving a Packet, address field will contain the source Address.
      *
-     * This struct template is only visible to the Driver sub-classes;
-     * Transport module interfaces with Received instead.
+     * This class defines part of the Driver interface.
      *
-     * PacketBuf and Received are separated because we would like to have
-     * fixed sized PacketBuf objects allocated from an object pool in a
-     * specific driver implementation, while Transport has to work with any
-     * driver whose packet size is not known statically.
+     * A Packet may be Driver specific and should not used interchangeably
+     * between Driver instances or implementations.
      *
-     * \tparam T
-     *      type of the sender's address
-     * \tparam N
-     *      the maximum size of the payload
-     * \tparam M
-     *      the maximum size of the headroom space
+     * This class is NOT thread-safe but should be implemented such that the
+     * Driver, Transport, and application can run on different threads. A Driver
+     * should only access Packet state at well defined times during sending
+     * and receiving. Transports The Transport should ensure the Driver is not
+     * operating on the Packet before access Packet state by calling
+     * waitPacketsDone();
+     *
+     * @see Related Driver methods include: Driver::allocPacket(),
+     *      Driver::releasePackets(), Driver::sendPackets(),
+     *      Driver::waitPacketsDone(), Driver::receivePackets(),
      */
-    template<typename T, uint32_t N, uint32_t M = 0>
-    struct PacketBuf {
-        PacketBuf()
-            : sender()
-            // No need to initialize payload
-        {}
-
-        virtual ~PacketBuf() {}
-
-        /// Address of sender (used to send reply).
-        Tub<T> sender;
-
-        /// Optional small headroom space (used to embed extra metadata).
-        char headroom[M];
-
-        /// Packet data (may not fill all of the allocated space).
-        char payload[N];
-    };
-
-  public:
-    /**
-     * Represents an incoming packet.
-     *
-     * A Received typically refers to resources owned by the driver, such
-     * as a packet buffer. These resources will be returned to the driver
-     * when the Received is destroyed. However, if the transport wishes to
-     * retain ownership of the packet buffer after the Received is destroyed
-     * (e.g. while the RPC is being processed), then it may call the
-     * steal method to take over responsibility for the packet buffer.
-     * If it does this, it must eventually call the Driver's release
-     * method to return the packet buffer.
-     */
-    class Received {
+    class Packet {
       public:
-        Received(const Address* sender, Driver *driver, uint32_t len,
-                char *payload)
-            : sender(sender)
-            , driver(driver)
-            , len(len)
-            , payload(payload)
-        {}
+        /// Packet's source (for incomming) or destination (for outgoing).
+        Address* address;
 
-        // Move constructor (needed for using in std::vectors)
-        Received(Received&& other)
-            : sender(other.sender)
-            , driver(other.driver)
-            , len(other.len)
-            , payload(other.payload)
-        {
-            other.len = 0;
-            other.payload = NULL;
-        }
+        /// Pointer to an array of bytes containing the payload of this Packet.
+        void* const payload;
 
-        ~Received();
+        /// Number of bytes the payload holds.
+        uint16_t len;
 
-        void* getRange(uint32_t offset, uint32_t length);
-
-        /**
-         * Allows data at a given offset into the Received to be treated as a
-         * specific type.
-         *
-         * \tparam T
-         *      The type to treat the data at payload + offset as.
-         * \param offset
-         *      Offset in bytes of the desired object within the payload.
-         * \return
-         *      Pointer to a T object at the desired offset, or NULL if
-         *      the requested object doesn't fit entirely within the payload.
-         */
-        template<typename T>
-        T*
-        getOffset(uint32_t offset)
-        {
-            return static_cast<T*>(getRange(offset, sizeof(T)));
-        }
-
-        char *steal(uint32_t *len);
-
-        /// Address from which this data was received. The object referred
-        /// to by this pointer will be stable as long as the packet data
-        /// is stable (i.e., if steal() is invoked, then the Address will
-        /// live until release is invoked).
-        const Address* sender;
-
-        /// Driver the packet came from, where resources should be returned.
-        Driver* const driver;
-
-        /// Length in bytes of received data.
-        uint32_t len;
-
-        /// The start of the received data.  If non-NULL then we must return
-        /// this storage to the driver when this object is deleted.  NULL means
-        /// someone else (e.g. the Transport module) has taken responsibility
-        /// for it.
-        char *payload;
-
-        /// Counts the total number of times that steal has been invoked
-        /// across all Received objects. Intended for unit testing; only
-        /// updated if compiled for TESTING.
-        static uint32_t stealCount;
-
-      private:
-        DISALLOW_COPY_AND_ASSIGN(Received);
+        /// Maxumum number of bytes the payload can hold.
+        uint16_t const MAX_PAYLOAD_SIZE;
     };
 
     /**
-     * A Buffer::Chunk that is comprised of memory for incoming packets,
-     * owned by the Driver but loaned to a Buffer during the processing of an
-     * incoming RPC so the message doesn't have to be copied.
-     *
-     * PayloadChunk behaves like any other Buffer::Chunk except it returns
-     * its memory to the Driver when the Buffer is deleted.
+     * Driver destructor.
      */
-    class PayloadChunk : public Buffer::Chunk {
-      public:
-        static PayloadChunk* appendToBuffer(Buffer* buffer,
-                                            char* data,
-                                            uint32_t dataLength,
-                                            Driver* driver,
-                                            char* payload);
-        ~PayloadChunk();
-      private:
-        PayloadChunk(void* data,
-                     uint32_t dataLength,
-                     Driver* driver,
-                     char* const payload);
+    virtual ~Driver() {}
 
-        /// Return the PayloadChunk memory here.
-        Driver* const driver;
+    /**
+     * Return a new Driver specific network address for the given string
+     * representation of the address. Address strings are Driver specific.
+     * Address objects are potentally expensive to create so the transport
+     * should reuse addresses when possible.
+     *
+     * @param addressString
+     *      See above.
+     * @return
+     *      An address that must be released later by the caller.
+     *
+     * @sa Driver::releaseAddress()
+     */
+    virtual Address* getAddress(const std::string& addressString) = 0;
 
-        /// The memory backing the chunk and which is to be returned.
-        char* const payload;
+    /**
+     * Release an Address back to the Driver.
+     *
+     * @param address
+     *      Pointer to Address object to be released.
+     *
+     * @sa Driver::getAddress()
+     */
+    virtual void releaseAddress(Address* address) = 0;
 
-        friend class Buffer;      // allocAux must call private constructor.
-        DISALLOW_COPY_AND_ASSIGN(PayloadChunk);
-    };
+    /**
+     * Allocate a new Packet object from the Driver's pool of resources. The
+     * caller must ensure that the Packet returned by this method is
+     * eventually released back to the Driver; see Driver::releasePackets().
+     *
+     * @sa Driver::releasePackets()
+     */
+    virtual Packet* allocPacket() = 0;
 
-    /// Create a protected short alias to be used in Driver subclasses.
-    using TransmitQueueState = QueueEstimator::TransmitQueueState;
+    /**
+     * Send a burst of packets over the network.
+     *
+     * Packet objects may be sent asynchornously by the Driver and should not be
+     * modified once while the Driver is in the process of sending the packet.
+     * If a Packet needs to be modified, e.g. to be resent, the caller should
+     * wait until the Driver finishes processing the Packet by calling the
+     * waitPacketsDone() method.
+     *
+     * @param packets
+     *      Set of Packet objects to be sent over the network.
+     * @param priorities
+     *      Set of network priorities conresponding to the Packet objects in
+     *      the _packets_ vector.  0 is the lowest priority.
+     *
+     * @sa Driver::waitPacketsDone()
+     */
+    virtual void sendPackets(std::vector<Packet*>& packets,
+                             std::vector<int> priorities) = 0;
 
-    explicit Driver()
-        : lastTransmitTime(0)
-        , maxTransmitQueueSize(0)
-        , queueEstimator(0)
-    {
-        // Default: no throttling of transmissions (probably not a good idea).
-        maxTransmitQueueSize = 10000000;
-    }
+    /**
+     * Ensure a set of Packet objects are not in use by the Driver.
+     *
+     * Packet objects are not in general thread-safe and the Driver will access
+     * the contents of a Packet while the Packet is being sent. To prvent
+     * corruption, applications must NOT modify a Packet's contents while the
+     * Driver still has access. The waitPacketsDone() method can be used to
+     * ensure the Driver has finished using a Packet and is thus safe to modify.
+     *
+     * @param packets
+     *      Set of Packet objects that will be unused by the Driver when this
+     *      method returns.
+     *
+     * @sa Driver::Packet, Driver::sendPackets()
+     */
+    virtual void waitPacketsDone(std::vector<Packet*>& packets) = 0;
 
-    virtual ~Driver() {};
+    /**
+     * Check to see if any packets have arrived that have not already been
+     * returned by this method; if so, it returns some or all of them. The
+     * caller must ensure that Packet objects return by this method are
+     * eventually released back to the Driver; see Driver::releasePackets().
+     *
+     * @param maxPackets
+     *      The maximum number of Packet objects that should be returned by this
+     *      method.
+     * @param[out] receivedPackets
+     *      Recevied packets are appended to this vector in order of arrival.
+     *
+     * @return
+     *      Number of Packet objects being returned.
+     *
+     * @sa Driver::releasePackets()
+     */
+    virtual uint32_t receivePackets(uint32_t maxPackets,
+                                    std::vector<Packet*>& receivedPackets) = 0;
 
-    /// \copydoc Transport::dumpStats
-    virtual void dumpStats() {}
+    /**
+     * Release a collection of Packet objects back to the Driver. Every Packet
+     * allocated using allocPacket() or recieved using receivePackets() must
+     * eventually be released back to the Driver using this method. While in
+     * general it is safe for applications to keep Packet objects for an
+     * indeterminate period of time, doing so may be resource inefficent and
+     * adversely affect Driver performance.  As such, it is recommended that
+     * Packet objects be released in a timely manner.
+     *
+     * @param packets
+     *      Set of Packet objects which should be released back to the Driver.
+     */
+    virtual void releasePackets(std::vector<Packet*>& packets) = 0;
 
     /**
      * Returns the highest packet priority level this Driver supports (0 is
@@ -235,305 +204,27 @@ class Driver {
      * then the Driver has 8 priority levels, ranging from 0 (lowest priority)
      * to 7 (highest priority).
      */
-    virtual int getHighestPacketPriority()
-    {
+    virtual int getHighestPacketPriority() {
         // Default: support only one priority level.
         return 0;
     }
 
     /**
-     * The maximum number of bytes this Driver can transmit in a single
-     * packet, including both header and payload.
-     */
-    virtual uint32_t getMaxPacketSize() = 0;
-
-    /**
      * Returns the bandwidth of the network in Mbits/second. If the
-     * driver cannot determine the network bandwidth, then it returns 0. 
+     * driver cannot determine the network bandwidth, then it returns 0.
      */
-    virtual uint32_t getBandwidth()
-    {
+    virtual uint32_t getBandwidth() {
         return 0;
     }
 
     /**
-     * This method provides a hint to transports about how many bytes
-     * they should send. The driver will operate most efficiently if
-     * transports don't send more bytes than indicated by the return value.
-     * This will keep the output queue relatively short, which allows better
-     * scheduling (e.g., a new short message or control packet can preempt
-     * a long ongoing message). At the same time, it will allow enough
-     * buffering so that the output queue doesn't completely run dry
-     * (resulting in unused network bandwidth) before the transport's poller
-     * checks this method again.
-     * \param currentTime
-     *      Current time, in Cycles::rdtsc ticks.
-     * \return
-     *      Number of bytes that can be transmitted without creating
-     *      a long output queue in the driver. Value may be negative
-     *      if transport has ignored this method and transmitted too
-     *      many bytes.
+     * Perform any necessary background work that would be too expensive to
+     * perform inline in other Driver methods. Some implementation may require
+     * this method be called in order to make progress.
      */
-    VIRTUAL_FOR_TESTING int
-    getTransmitQueueSpace(uint64_t currentTime)
-    {
-        return static_cast<int>(maxTransmitQueueSize) -
-                queueEstimator.getQueueSize(currentTime);
-    }
-
-    /**
-     * The most recent time that the driver handed a packet to the NIC.
-     * Mainly used for performance debugging.
-     *
-     * \return
-     *      Last transmit time, in Cycles::rdtsc ticks
-     */
-    uint64_t getLastTransmitTime()
-    {
-        return lastTransmitTime;
-    }
-
-    /**
-     * Returns the total protocol overhead involved in transmitting one
-     * packet, in bytes. This is equal to # bytes in the physical layer
-     * data packet on the wire (e.g., preamble, inter-packet gaps,etc.)
-     * minus the size of the payload passed to the #sendPacket method.
-     * 0 means this feature has not been implemented by the driver.
-     */
-    virtual uint32_t getPacketOverhead()
-    {
-        // Default: not implemented
-        return 0;
-    }
-
-    /**
-     * Return ownership of a packet buffer back to the driver.
-     *
-     * Invoked by a transport when it has finished processing the data
-     * in an incoming packet; used by drivers to recycle packet buffers
-     * at a safe time.
-     *
-     * \param payload
-     *      The first byte of a packet that was previously "stolen"
-     *      (i.e., the payload field from the Received object used to
-     *      pass the packet to the transport when it was received).
-     */
-    virtual void release(char *payload) = 0;
-
-    template<typename T>
-    void release(T* payload) {
-        release(reinterpret_cast<char*>(payload));
-    }
-
-    /**
-     * A hint from the transport that it's a good time for the driver to
-     * actually recycle the resources of a few packet buffers.
-     *
-     * Note: there is no guarantee that the driver will follow this hint.
-     * For instance, a driver can simply ignore this hint and perform the
-     * release whenever the ownership of a packet buffer is returned via
-     * #release (which is the default behavior).
-     *
-     * \param maxCount
-     *      The maximum number of packet buffers to release.
-     *      -1 means unlimited.
-     */
-    virtual void releaseHint(int maxCount) {}
-
-    /**
-     * This method is invoked by transports to tell a driver that it should
-     * release a packet buffer back to the NIC. It is needed because some
-     * drivers may use zero-copy techniques when packets arrive, passing the
-     * input packet buffer to the transport instead of copying the data into
-     * a separate buffer. The zero-copy approach can potentially cause the NIC
-     * to run out of packet buffers (e.g. if several very long messages are
-     * being received but none is yet complete). Transports must detect
-     * excessive use of packet buffers and invoke this method on some
-     * of the incoming packets. If received is currently occupying one of
-     * the NIC's packet buffers (i.e. it hasn't already been copied), the
-     * driver must copy the packet into a separate copy in memory (e.g.
-     * Driver::PacketBuf) so it can release the packet buffer back to the
-     * NIC. If this packet has already been copied out of the NIC's buffer,
-     * then the method does nothing. This method must not be invoked if the
-     * transport has retained a pointer to data in the original packet (e.g.
-     * by calling getRange or getOffset, or by accessing payload).
-     *
-     * \param received
-     *      An incoming packet which contains the packet buffer to copy.
-     */
-    virtual void releaseHwPacketBuf(Driver::Received* received)
-    {
-        // The default implementation does nothing. It can be used by drivers
-        // that don't support zero-copy RX or have sufficient hardware-managed
-        // packet buffers.
-    }
-
-    /**
-     * Return a new Driver-specific network address for the given service
-     * locator.
-     * This function may be called from worker threads and should contain any
-     * necessary synchronization.
-     * \param serviceLocator
-     *      See above.
-     * \return
-     *      An address that must be deleted later by the caller.
-     * \throw NoSuchKeyException
-     *      Service locator option missing.
-     * \throw BadValueException
-     *      Service locator option malformed.
-     */
-    virtual Address* newAddress(const ServiceLocator* serviceLocator) = 0;
-
-    /**
-     * Checks to see if any packets have arrived that have not already
-     * been returned by this method; if so, it returns some or all of
-     * them.
-     * \param maxPackets
-     *      The maximum number of packets that should be returned by
-     *      this application
-     * \param receivedPackets
-     *      Returned packets are appended to this vector, one Received
-     *      object per packet, in order of packet arrival.
-     */
-    virtual void receivePackets(uint32_t maxPackets,
-            std::vector<Received>* receivedPackets) = 0;
-
-    /**
-     * Associates a contiguous region of memory to a NIC so that the memory
-     * addresses within that region become direct memory accessible (DMA) for
-     * the NIC. This method must be implemented in the driver code if
-     * the NIC needs to do zero copy transmit of buffers within that region of
-     * memory.
-     * \param base
-     *     pointer to the beginning of the memory region that is to be
-     *     registered to the NIC.
-     * \param bytes
-     *     The total size in bytes of the memory region starting at \a base
-     *     that is to be registered with the NIC.
-     */
-    virtual void registerMemory(void* base, size_t bytes) {}
-
-    /**
-     * Send a single packet out over this Driver. The packet will not
-     * necessarily have been transmitted before this method returns.  If an
-     * error occurs, this method will log the error and return without
-     * sending anything; this method does not throw exceptions.
-     *
-     * header provides a means to slip data onto the front of the packet
-     * without having to pay for a prepend to the Buffer containing the
-     * packet payload data.
-     *
-     * \param recipient
-     *      The address the packet should go to.
-     * \param header
-     *      Bytes placed in the packet ahead of those from payload. The
-     *      driver will make a copy of this data, so the caller need not
-     *      preserve it after the method returns, even if the packet hasn't
-     *      yet been transmitted.
-     * \param headerLen
-     *      Length in bytes of the data in header.
-     * \param payload
-     *      A buffer iterator describing the bytes for the payload (the
-     *      portion of the packet after the header).  May be NULL to
-     *      indicate "no payload". Note: caller must preserve the buffer
-     *      data (but not the actual iterator) even after the method returns,
-     *      since the data may not yet have been transmitted.
-     * \param priority
-     *      The priority level of this packet. 0 is the lowest priority.
-     * \param[out] txQueueState
-     *      Used to retrieve state of the NIC's transmit queue just before
-     *      this packet was handed to the NIC. NULL means the caller doesn't
-     *      care about this value.
-     */
-    virtual void sendPacket(const Address* recipient,
-                            const void* header,
-                            uint32_t headerLen,
-                            Buffer::Iterator* payload,
-                            int priority = 0,
-                            TransmitQueueState* txQueueState = NULL) = 0;
-
-    /**
-     * Alternate form of sendPacket.
-     *
-     * \param recipient
-     *      Where to send the packet.
-     * \param header
-     *      Contents of this object will be placed in the packet ahead
-     *      of payload.  The driver will make a copy of this data, so
-     *      the caller need not preserve it after the method returns, even
-     *      if the packet hasn't yet been transmitted.
-     * \param payload
-     *      A buffer iterator positioned at the bytes for the payload to
-     *      follow the headerLen bytes from header.  May be NULL to
-     *      indicate "no payload". Note: caller must preserve the buffer
-     *      data (but not the actual iterator) even after the method returns,
-     *      since the data may not yet have been transmitted.
-     * \param priority
-     *      The priority level of this packet. 0 is the lowest priority.
-     * \param[out] txQueueState
-     *      Used to retrieve state of the NIC's transmit queue just before
-     *      this packet was handed to the NIC. NULL means the caller doesn't
-     *      care about this value.
-     */
-    template<typename T>
-    void sendPacket(const Address* recipient,
-                    const T* header,
-                    Buffer::Iterator* payload,
-                    int priority = 0,
-                    TransmitQueueState* txQueueState = NULL)
-    {
-        sendPacket(recipient, header, sizeof(T), payload, priority,
-                txQueueState);
-    }
-
-    /**
-     * Return the ServiceLocator for this Driver (which shouldn't contain
-     * any transport-level information). If the Driver was not provided
-     * static parameters (e.g. fixed TCP or UDP port), this function will
-     * return a SerivceLocator with those dynamically allocated attributes.
-     *
-     * Enlisting the dynamic ServiceLocator with the Coordinator permits
-     * other hosts to contact dynamically addressed services.
-     */
-    virtual string getServiceLocator() = 0;
-
-    /**
-     * The maximum amount of time it should take to drain the transmit
-     * queue for this driver when it is completely full (i.e.,
-     * getTransmitQueueSpace returns 0).  See the documentation for
-     * getTransmitQueueSpace for motivation. Specified in units of
-     * nanoseconds.
-     */
-    static const uint32_t MAX_DRAIN_TIME = 2000;
-
-  PROTECTED:
-    /// The most recent time that the driver handed a packet to the NIC,
-    /// in rdtsc ticks.
-    uint64_t lastTransmitTime;
-
-    /// Upper limit on how many bytes should be queued for transmission
-    /// at any given time.
-    uint32_t maxTransmitQueueSize;
-
-    /// Used to estimate # bytes outstanding in the NIC's transmit queue.
-    QueueEstimator queueEstimator;
+    virtual void poll() {}
 };
 
-/**
- * Thrown if a Driver cannot be initialized properly.
- */
-struct DriverException: public Exception {
-    explicit DriverException(const CodeLocation& where)
-        : Exception(where) {}
-    DriverException(const CodeLocation& where, std::string msg)
-        : Exception(where, msg) {}
-    DriverException(const CodeLocation& where, int errNo)
-        : Exception(where, errNo) {}
-    DriverException(const CodeLocation& where, string msg, int errNo)
-        : Exception(where, msg, errNo) {}
-};
+}  // namespace Homa
 
-
-}  // namespace RAMCloud
-
-#endif
+#endif  // HOMA_HOMA_H
