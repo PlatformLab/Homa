@@ -1,32 +1,36 @@
-/* Copyright (c) 2011-2015 Stanford University
+/* Copyright (c) 2011-2018, Stanford University
  *
- * Permission to use, copy, modify, and distribute this software for any
+ * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
  *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
  * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef RAMCLOUD_EXCEPTION_H
-#define RAMCLOUD_EXCEPTION_H
+#ifndef HOMA_EXCEPTION_H
+#define HOMA_EXCEPTION_H
 
 #include "CodeLocation.h"
-#include "Minimal.h"
 
-namespace RAMCloud {
+#include <cxxabi.h>
+#include <cstring>
+#include <exception>
+#include <memory>
+#include <string>
 
-// Imported from Common.h (don't want to include Common.h here, since
-// that would expose it to all RAMCloud clients).
-string demangle(const char* name);
+namespace Homa {
+
+// Forward declaration
+std::string demangle(const char* name);
 
 /**
- * The base class for all RAMCloud exceptions.
+ * The base class for all Homa exceptions.
  */
 struct Exception : public std::exception {
     explicit Exception(const CodeLocation& where)
@@ -35,31 +39,36 @@ struct Exception : public std::exception {
         : message(msg), errNo(0), where(where), whatCache() {}
     Exception(const CodeLocation& where, int errNo)
         : message(""), errNo(errNo), where(where), whatCache() {
-        message = strerror(errNo);
+        message = std::strerror(errNo);
     }
-    Exception(const CodeLocation& where, string msg, int errNo)
-        : message(msg + ": " + strerror(errNo)), errNo(errNo), where(where),
-          whatCache() {}
+    Exception(const CodeLocation& where, std::string msg, int errNo)
+        : message(msg + ": " + std::strerror(errNo))
+        , errNo(errNo)
+        , where(where)
+        , whatCache() {}
     Exception(const Exception& other)
-        : message(other.message), errNo(other.errNo), where(other.where),
-          whatCache() {}
+        : message(other.message)
+        , errNo(other.errNo)
+        , where(other.where)
+        , whatCache() {}
     virtual ~Exception() throw() {}
-    string str() const {
+    std::string str() const {
         return (demangle(typeid(*this).name()) + ": " + message +
                 ", thrown at " + where.str());
     }
     const char* what() const throw() {
         if (whatCache)
             return whatCache.get();
-        string s(str());
+        std::string s(str());
         char* cStr = new char[s.length() + 1];
         whatCache.reset(const_cast<const char*>(cStr));
         memcpy(cStr, s.c_str(), s.length() + 1);
         return cStr;
     }
-    string message;
+    std::string message;
     int errNo;
     CodeLocation where;
+
   private:
     mutable std::unique_ptr<const char[]> whatCache;
 };
@@ -68,56 +77,41 @@ struct Exception : public std::exception {
  * A fatal error that should exit the program.
  */
 struct FatalError : public Exception {
-    explicit FatalError(const CodeLocation& where)
-        : Exception(where) {}
+    explicit FatalError(const CodeLocation& where) : Exception(where) {}
     FatalError(const CodeLocation& where, std::string msg)
         : Exception(where, msg) {}
     FatalError(const CodeLocation& where, int errNo)
         : Exception(where, errNo) {}
-    FatalError(const CodeLocation& where, string msg, int errNo)
+    FatalError(const CodeLocation& where, std::string msg, int errNo)
         : Exception(where, msg, errNo) {}
 };
 
 /**
- * An exception that is thrown when someone tries to wait for an
- * RPC that has been canceled.
+ * Helper function to call __cxa_demangle. Has internal linkage.
+ * Handles the C-style memory management required.
+ * Returns a std::string with the long human-readable name of the
+ * type.
+ * @param name
+ *      The "name" of the type that needs to be demangled.
+ * @throw FatalError
+ *      The short internal type name could not be converted.
  */
-struct RpcCanceledException : public Exception {
-    explicit RpcCanceledException(const CodeLocation& where)
-        : Exception(where) {}
-};
-
-/// An exception used only for testing purposes.
-struct TestingException : public Exception {
-    explicit TestingException(const CodeLocation& where) : Exception(where) {}
-};
-
-/**
- * Throws an exception after a given certain number of calls.
- * Used for testing only.
- */
-template<typename E = TestingException>
-struct DelayedThrower {
-#if TESTING
-    explicit DelayedThrower(uint64_t tillThrow = ~0UL)
-        : tillThrow(tillThrow)
-    {
+// This was taken from the RAMCloud project.
+std::string
+demangle(const char* name) {
+    int status;
+    char* res = abi::__cxa_demangle(name, NULL, NULL, &status);
+    if (status != 0) {
+        throw FatalError(HERE, "cxxabi.h's demangle() could not demangle type");
     }
-    void operator()() {
-        if (tillThrow == 0) {
-            tillThrow = ~0UL;
-            throw E(HERE);
-        } else {
-            --tillThrow;
-        }
-    }
-    uint64_t tillThrow;
-#else
-    explicit DelayedThrower(uint64_t tillThrow = ~0UL) {}
-    void operator()() {}
-#endif
-};
+    // contruct a string with a copy of the C-style string returned.
+    std::string ret(res);
+    // __cxa_demangle would have used realloc() to allocate memory
+    // which should be freed now.
+    free(res);
+    return ret;
+}
 
-} // end RAMCloud
+}  // namespace Homa
 
-#endif  // RAMCLOUD__H
+#endif  // HOMA_EXCEPTION_H
