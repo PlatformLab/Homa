@@ -61,21 +61,21 @@ class Driver {
      * A Packet may be Driver specific and should not used interchangeably
      * between Driver instances or implementations.
      *
-     * This class is NOT thread-safe but should be implemented such that the
-     * Driver, Transport, and application can run on different threads. A Driver
-     * should only access Packet state at well defined times during sending
-     * and receiving. Transports The Transport should ensure the Driver is not
-     * operating on the Packet before access Packet state by calling
-     * waitPacketsDone();
+     * This class is NOT thread-safe but the Transport and Driver's use of
+     * Packet objects should be allow the Transport and the Driver to execute on
+     * different threads.
      *
      * @see Related Driver methods include: Driver::allocPacket(),
      *      Driver::releasePackets(), Driver::sendPackets(),
-     *      Driver::waitPacketsDone(), Driver::receivePackets(),
+     *      Driver::receivePackets().
      */
     class Packet {
       public:
-        /// Packet's source (for incomming) or destination (for outgoing).
+        /// Packet's source (receive) or destination (send).
         Address* address;
+
+        /// Packet's network priority (send only); 0 is the lowest priority.
+        int priority;
 
         /// Pointer to an array of bytes containing the payload of this Packet.
         void* const payload;
@@ -93,29 +93,18 @@ class Driver {
     virtual ~Driver() {}
 
     /**
-     * Return a new Driver specific network address for the given string
-     * representation of the address. Address strings are Driver specific.
-     * Address objects are potentally expensive to create so the transport
-     * should reuse addresses when possible.
+     * Return a Driver specific network address for the given string
+     * representation of the address. Address strings are also  Driver specific.
      *
      * @param addressString
      *      See above.
      * @return
-     *      An address that must be released later by the caller.
+     *      Pointer to an Address object that can be the source or destination
+     *      of a Packet.
      *
-     * @sa Driver::releaseAddress()
+     * @sa Driver::Packet
      */
-    virtual Address* getAddress(const std::string& addressString) = 0;
-
-    /**
-     * Release an Address back to the Driver.
-     *
-     * @param address
-     *      Pointer to Address object to be released.
-     *
-     * @sa Driver::getAddress()
-     */
-    virtual void releaseAddress(Address* address) = 0;
+    virtual Address* getAddress(std::string const* const addressString) = 0;
 
     /**
      * Allocate a new Packet object from the Driver's pool of resources. The
@@ -129,39 +118,24 @@ class Driver {
     /**
      * Send a burst of packets over the network.
      *
-     * Packet objects may be sent asynchornously by the Driver and should not be
-     * modified once while the Driver is in the process of sending the packet.
-     * If a Packet needs to be modified, e.g. to be resent, the caller should
-     * wait until the Driver finishes processing the Packet by calling the
-     * waitPacketsDone() method.
+     * The packets provide can be sent asynchrounously by the Driver.
+     *
+     * In general, Packet objects should be considered immutable once they are
+     * passed to this method. The Packet::address and Packet::priority fields
+     * are two exceptions; they can be modified after this call returns but not
+     * currently with this call since Packet objects are not thread-safe.
+     *
+     * A Packet can be resent by simply calling this method again passing the
+     * same Packet. However, the Driver may choose to ignore the resend request
+     * if a prior send request for the same Packet is still in progress.
      *
      * @param packets
-     *      Set of Packet objects to be sent over the network.
-     * @param priorities
-     *      Set of network priorities conresponding to the Packet objects in
-     *      the _packets_ vector.  0 is the lowest priority.
-     *
-     * @sa Driver::waitPacketsDone()
+     *      Array of Packet objects to be sent over the network.
+     * @param numPackets
+     *      Number of Packet objects in _packets_.
      */
-    virtual void sendPackets(std::vector<Packet*>& packets,
-                             std::vector<int> priorities) = 0;
-
-    /**
-     * Ensure a set of Packet objects are not in use by the Driver.
-     *
-     * Packet objects are not in general thread-safe and the Driver will access
-     * the contents of a Packet while the Packet is being sent. To prvent
-     * corruption, applications must NOT modify a Packet's contents while the
-     * Driver still has access. The waitPacketsDone() method can be used to
-     * ensure the Driver has finished using a Packet and is thus safe to modify.
-     *
-     * @param packets
-     *      Set of Packet objects that will be unused by the Driver when this
-     *      method returns.
-     *
-     * @sa Driver::Packet, Driver::sendPackets()
-     */
-    virtual void waitPacketsDone(std::vector<Packet*>& packets) = 0;
+    virtual void sendPackets(Packet const* const packets[],
+                             uint16_t numPackets) = 0;
 
     /**
      * Check to see if any packets have arrived that have not already been
@@ -173,7 +147,7 @@ class Driver {
      *      The maximum number of Packet objects that should be returned by this
      *      method.
      * @param[out] receivedPackets
-     *      Recevied packets are appended to this vector in order of arrival.
+     *      Recevied packets are appended to this array in order of arrival.
      *
      * @return
      *      Number of Packet objects being returned.
@@ -181,7 +155,7 @@ class Driver {
      * @sa Driver::releasePackets()
      */
     virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    std::vector<Packet*>& receivedPackets) = 0;
+                                    Packet* receivedPackets[]) = 0;
 
     /**
      * Release a collection of Packet objects back to the Driver. Every Packet
@@ -194,8 +168,10 @@ class Driver {
      *
      * @param packets
      *      Set of Packet objects which should be released back to the Driver.
+     * @param numPackets
+     *      Number of Packet objects in _packets_.
      */
-    virtual void releasePackets(std::vector<Packet*>& packets) = 0;
+    virtual void releasePackets(Packet* packets[], uint16_t numPackets) = 0;
 
     /**
      * Returns the highest packet priority level this Driver supports (0 is
@@ -210,19 +186,12 @@ class Driver {
     }
 
     /**
-     * Returns the bandwidth of the network in Mbits/second. If the
-     * driver cannot determine the network bandwidth, then it returns 0.
+     * Returns the bandwidth of the network in Mbits/second. If the driver
+     * cannot determine the network bandwidth, then it returns 0.
      */
     virtual uint32_t getBandwidth() {
         return 0;
     }
-
-    /**
-     * Perform any necessary background work that would be too expensive to
-     * perform inline in other Driver methods. Some implementation may require
-     * this method be called in order to make progress.
-     */
-    virtual void poll() {}
 };
 
 }  // namespace Homa
