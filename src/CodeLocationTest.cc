@@ -19,7 +19,14 @@
 
 namespace Homa {
 
-TEST(CodeLocation, relativeFile) {
+TEST(CodeLocationTest, str)
+{
+    CodeLocation where("src/FOO.cc", 42, "bar", "void FOO::bar(int i)");
+    EXPECT_EQ("FOO::bar at src/FOO.cc:42", where.str());
+}
+
+TEST(CodeLocationTest, relativeFile)
+{
     CodeLocation where = HERE;
     EXPECT_EQ("src/CodeLocationTest.cc", where.relativeFile());
 
@@ -30,7 +37,8 @@ TEST(CodeLocation, relativeFile) {
     EXPECT_EQ(where.file, where.relativeFile());
 }
 
-TEST(CodeLocation, qualifiedFunction) {
+TEST(CodeLocationTest, qualifiedFunction)
+{
     CodeLocation where("", 0, "", "");
 
     where.function = "func";

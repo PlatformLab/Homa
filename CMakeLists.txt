@@ -28,7 +28,8 @@ configure_file (
 
 ## lib Homa ####################################################################
 add_library(Homa
-    src/Homa.cc
+    src/CodeLocation.cc
+    src/Util.cc
 )
 add_library(Homa::Homa ALIAS Homa)
 target_include_directories(Homa
@@ -74,7 +75,7 @@ include(GoogleTest)
 enable_testing()
 
 add_executable(unitTest
-    src/HomaTest.cc
+    src/CodeLocationTest.cc
 )
 target_link_libraries(unitTest gtest_main Homa)
 gtest_discover_tests(unitTest)
