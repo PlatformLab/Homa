@@ -9,6 +9,9 @@ project(Homa VERSION 0.1.0.0 LANGUAGES CXX)
 # Tell CMake where to find our custom/3rd-party "Find" modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/modules)
 
+# Thread library
+find_package(Threads)
+
 # Doxygen documentation generation tool (http://www.doxygen.org)
 find_package(Doxygen OPTIONAL_COMPONENTS dot mscgen dia)
 
@@ -29,6 +32,7 @@ configure_file (
 ## lib Homa ####################################################################
 add_library(Homa
     src/CodeLocation.cc
+    src/ThreadId.cc
     src/Util.cc
 )
 add_library(Homa::Homa ALIAS Homa)
@@ -81,6 +85,13 @@ add_executable(unitTest
 target_link_libraries(unitTest gtest_main Homa)
 # -fno-access-control allows access to private members for testing
 target_compile_options(unitTest PRIVATE -fno-access-control)
+# optionally add the tests that need std::thread.
+if(Threads_FOUND)
+    target_sources(unitTest PRIVATE
+        src/ThreadIdTest.cc
+    )
+    target_link_libraries(unitTest Threads::Threads)
+endif()
 gtest_discover_tests(unitTest)
 
 ################################################################################
