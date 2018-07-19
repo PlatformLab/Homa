@@ -32,6 +32,7 @@ configure_file (
 ## lib Homa ####################################################################
 add_library(Homa
     src/CodeLocation.cc
+    src/MacAddress.cc
     src/ThreadId.cc
     src/Util.cc
 )
@@ -80,6 +81,7 @@ enable_testing()
 
 add_executable(unitTest
     src/CodeLocationTest.cc
+    src/MacAddressTest.cc
     src/UtilTest.cc
 )
 target_link_libraries(unitTest gtest_main Homa)
