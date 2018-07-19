@@ -16,6 +16,8 @@
 #ifndef HOMA_HOMA_H
 #define HOMA_HOMA_H
 
+#include "Exception.h"
+
 #include <string>
 #include <vector>
 
@@ -101,6 +103,8 @@ class Driver {
      * @return
      *      Pointer to an Address object that can be the source or destination
      *      of a Packet.
+     * @throw BadAddress
+     *      _addressString_ is malformed.
      *
      * @sa Driver::Packet
      */
@@ -194,6 +198,42 @@ class Driver {
     {
         return 0;
     }
+};
+
+/**
+ * Thrown if a Driver cannot be initialized properly.
+ */
+struct DriverInitFailure : public Exception {
+    explicit DriverInitFailure(const CodeLocation& where)
+        : Exception(where)
+    {}
+    DriverInitFailure(const CodeLocation& where, std::string msg)
+        : Exception(where, msg)
+    {}
+    DriverInitFailure(const CodeLocation& where, int errNo)
+        : Exception(where, errNo)
+    {}
+    DriverInitFailure(const CodeLocation& where, std::string msg, int errNo)
+        : Exception(where, msg, errNo)
+    {}
+};
+
+/**
+ * Thrown if the Address provided is malformed or in some way not useable.
+ */
+struct BadAddress : public Exception {
+    explicit BadAddress(const CodeLocation& where)
+        : Exception(where)
+    {}
+    BadAddress(const CodeLocation& where, std::string msg)
+        : Exception(where, msg)
+    {}
+    BadAddress(const CodeLocation& where, int errNo)
+        : Exception(where, errNo)
+    {}
+    BadAddress(const CodeLocation& where, std::string msg, int errNo)
+        : Exception(where, msg, errNo)
+    {}
 };
 
 }  // namespace Homa
