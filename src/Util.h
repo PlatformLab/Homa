@@ -49,6 +49,8 @@ downCast(const Large& large)
     return small;
 }
 
+std::string demangle(const char* name);
+
 std::string format(const char* format, ...)
     __attribute__((format(printf, 1, 2)));
 
