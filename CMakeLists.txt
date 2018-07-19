@@ -76,6 +76,7 @@ enable_testing()
 
 add_executable(unitTest
     src/CodeLocationTest.cc
+    src/UtilTest.cc
 )
 target_link_libraries(unitTest gtest_main Homa)
 gtest_discover_tests(unitTest)
