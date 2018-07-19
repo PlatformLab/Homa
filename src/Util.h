@@ -21,7 +21,17 @@
 #include <cstdio>
 #include <string>
 
+namespace Homa {
 namespace Util {
+
+/// Return the number of elements in a statically allocated array.
+// This was taken from the RAMCloud project.
+template <typename T, size_t length>
+constexpr uint32_t
+arrayLength(const T (&array)[length])
+{
+    return length;
+}
 
 /**
  * Cast one size of int down to another one.
@@ -30,7 +40,8 @@ namespace Util {
 // This was taken from the RAMCloud project.
 template <typename Small, typename Large>
 Small
-downCast(const Large& large) {
+downCast(const Large& large)
+{
     Small small = static_cast<Small>(large);
     // The following comparison (rather than "large==small") allows
     // this method to convert between signed and unsigned values.
@@ -38,47 +49,10 @@ downCast(const Large& large) {
     return small;
 }
 
-/**
- * A safe version of vprintf.
- */
-// This was taken from the RAMCloud project.
-std::string
-vformat(const char* format, va_list ap) {
-    std::string s;
-
-    // We're not really sure how big of a buffer will be necessary.
-    // Try 1K, if not the return value will tell us how much is necessary.
-    int bufSize = 1024;
-    while (true) {
-        char buf[bufSize];
-        // vsnprintf trashes the va_list, so copy it first
-        va_list aq;
-        __va_copy(aq, ap);
-        int r = std::vsnprintf(buf, bufSize, format, aq);
-        assert(r >= 0);  // old glibc versions returned -1
-        if (r < bufSize) {
-            s = buf;
-            break;
-        }
-        bufSize = r + 1;
-    }
-
-    return s;
-}
-
-/**
- * A safe version of sprintf.
- */
-// This was taken from the RAMCloud project.
-std::string
-format(const char* format, ...) {
-    va_list ap;
-    va_start(ap, format);
-    std::string s = vformat(format, ap);
-    va_end(ap);
-    return s;
-}
+std::string format(const char* format, ...)
+    __attribute__((format(printf, 1, 2)));
 
 };  // namespace Util
+};  // namespace Homa
 
 #endif  // HOMA_UTIL_H
