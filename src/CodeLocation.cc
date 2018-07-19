@@ -29,7 +29,8 @@ namespace {
  * directory of project repo.
  */
 int
-length__FILE__Prefix() {
+length__FILE__Prefix()
+{
     const char* start = __FILE__;
     const char* match = strstr(__FILE__, "src/CodeLocation.cc");
     assert(match != NULL);
@@ -42,7 +43,8 @@ length__FILE__Prefix() {
  * Return a string representation of the current location in the code.
  */
 std::string
-CodeLocation::str() const {
+CodeLocation::str() const
+{
     return Util::format("%s at %s:%d", qualifiedFunction().c_str(),
                         relativeFile().c_str(), line);
 }
@@ -52,7 +54,8 @@ CodeLocation::str() const {
  * file name, omitting any preceding directories).
  */
 const char*
-CodeLocation::baseFileName() const {
+CodeLocation::baseFileName() const
+{
     const char* lastSlash = strrchr(file, '/');
     if (lastSlash == NULL) {
         return file;
@@ -61,7 +64,8 @@ CodeLocation::baseFileName() const {
 }
 
 std::string
-CodeLocation::relativeFile() const {
+CodeLocation::relativeFile() const
+{
     static int lengthFilePrefix = length__FILE__Prefix();
     // Remove the prefix only if it matches that of __FILE__. This check is
     // needed in case someone compiles different files using different paths.
@@ -81,7 +85,8 @@ CodeLocation::relativeFile() const {
  * may not be much faster.
  */
 std::string
-CodeLocation::qualifiedFunction() const {
+CodeLocation::qualifiedFunction() const
+{
     std::smatch matches;
     const std::string pattern(Util::format("\\s(\\S*\\b%s)\\(", function));
     std::string prettyFunctionStr = prettyFunction;

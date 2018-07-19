@@ -34,29 +34,45 @@ std::string demangle(const char* name);
  */
 struct Exception : public std::exception {
     explicit Exception(const CodeLocation& where)
-        : message(""), errNo(0), where(where), whatCache() {}
+        : message("")
+        , errNo(0)
+        , where(where)
+        , whatCache()
+    {}
     Exception(const CodeLocation& where, std::string msg)
-        : message(msg), errNo(0), where(where), whatCache() {}
+        : message(msg)
+        , errNo(0)
+        , where(where)
+        , whatCache()
+    {}
     Exception(const CodeLocation& where, int errNo)
-        : message(""), errNo(errNo), where(where), whatCache() {
+        : message("")
+        , errNo(errNo)
+        , where(where)
+        , whatCache()
+    {
         message = std::strerror(errNo);
     }
     Exception(const CodeLocation& where, std::string msg, int errNo)
         : message(msg + ": " + std::strerror(errNo))
         , errNo(errNo)
         , where(where)
-        , whatCache() {}
+        , whatCache()
+    {}
     Exception(const Exception& other)
         : message(other.message)
         , errNo(other.errNo)
         , where(other.where)
-        , whatCache() {}
+        , whatCache()
+    {}
     virtual ~Exception() throw() {}
-    std::string str() const {
+    std::string str() const
+    {
         return (demangle(typeid(*this).name()) + ": " + message +
                 ", thrown at " + where.str());
     }
-    const char* what() const throw() {
+    const char* what() const throw()
+    {
         if (whatCache)
             return whatCache.get();
         std::string s(str());
@@ -77,13 +93,18 @@ struct Exception : public std::exception {
  * A fatal error that should exit the program.
  */
 struct FatalError : public Exception {
-    explicit FatalError(const CodeLocation& where) : Exception(where) {}
+    explicit FatalError(const CodeLocation& where)
+        : Exception(where)
+    {}
     FatalError(const CodeLocation& where, std::string msg)
-        : Exception(where, msg) {}
+        : Exception(where, msg)
+    {}
     FatalError(const CodeLocation& where, int errNo)
-        : Exception(where, errNo) {}
+        : Exception(where, errNo)
+    {}
     FatalError(const CodeLocation& where, std::string msg, int errNo)
-        : Exception(where, msg, errNo) {}
+        : Exception(where, msg, errNo)
+    {}
 };
 
 /**
@@ -98,7 +119,8 @@ struct FatalError : public Exception {
  */
 // This was taken from the RAMCloud project.
 std::string
-demangle(const char* name) {
+demangle(const char* name)
+{
     int status;
     char* res = abi::__cxa_demangle(name, NULL, NULL, &status);
     if (status != 0) {

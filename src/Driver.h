@@ -180,7 +180,8 @@ class Driver {
      * then the Driver has 8 priority levels, ranging from 0 (lowest priority)
      * to 7 (highest priority).
      */
-    virtual int getHighestPacketPriority() {
+    virtual int getHighestPacketPriority()
+    {
         // Default: support only one priority level.
         return 0;
     }
@@ -189,7 +190,8 @@ class Driver {
      * Returns the bandwidth of the network in Mbits/second. If the driver
      * cannot determine the network bandwidth, then it returns 0.
      */
-    virtual uint32_t getBandwidth() {
+    virtual uint32_t getBandwidth()
+    {
         return 0;
     }
 };

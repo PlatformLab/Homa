@@ -33,7 +33,8 @@ struct CodeLocation {
         : file(file)
         , line(line)
         , function(function)
-        , prettyFunction(prettyFunction) {}
+        , prettyFunction(prettyFunction)
+    {}
 
     std::string str() const;
     const char* baseFileName() const;
