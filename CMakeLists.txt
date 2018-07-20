@@ -79,6 +79,8 @@ add_executable(unitTest
     src/UtilTest.cc
 )
 target_link_libraries(unitTest gtest_main Homa)
+# -fno-access-control allows access to private members for testing
+target_compile_options(unitTest PRIVATE -fno-access-control)
 gtest_discover_tests(unitTest)
 
 ################################################################################
