@@ -1,12 +1,12 @@
-/* Copyright (c) 2011 Stanford University
+/* Copyright (c) 2011-2018, Stanford University
  *
- * Permission to use, copy, modify, and distribute this software for any
+ * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
  *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
  * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
@@ -18,11 +18,16 @@
  * Unit tests for ObjectPool.
  */
 
-#include "TestUtil.h"
-#include "Common.h"
 #include "ObjectPool.h"
 
-namespace RAMCloud {
+#include "Util.h"
+
+#include <gtest/gtest.h>
+
+#include <cstdlib>
+#include <ctime>
+
+namespace Homa {
 namespace {
 
 class TestObject {
@@ -36,8 +41,7 @@ class TestObject {
 
     explicit TestObject(bool* destroyed)
         : destroyed(destroyed)
-    {
-    }
+    {}
 
     ~TestObject()
     {
@@ -47,17 +51,17 @@ class TestObject {
 
   private:
     bool* destroyed;
-
-    DISALLOW_COPY_AND_ASSIGN(TestObject);
 };
-} //anonymous namespace
+}  // anonymous namespace
 
-TEST(ObjectPoolTest, constructor) {
+TEST(ObjectPoolTest, constructor)
+{
     ObjectPool<TestObject> pool;
     EXPECT_EQ(0U, pool.outstandingObjects);
 }
 
-TEST(ObjectPoolTest, destructor) {
+TEST(ObjectPoolTest, destructor)
+{
     // shouldn't throw
     {
         ObjectPool<TestObject> pool;
@@ -76,29 +80,34 @@ TEST(ObjectPoolTest, destructor) {
     }
 }
 
-TEST(ObjectPoolTest, destructor_objectsStillAllocated) {
-    // should throw
-    ObjectPool<TestObject>* pool = new ObjectPool<TestObject>();
-    TestObject* a = pool->construct();
-    (void)a;
+// TODO(cstlee): Support Test Logging.
+// TEST(ObjectPoolTest, destructor_objectsStillAllocated)
+// {
+//     // should throw
+//     ObjectPool<TestObject>* pool = new ObjectPool<TestObject>();
+//     TestObject* a = pool->construct();
+//     (void)a;
 
-    TestLog::Enable _;
-    delete pool;
-    EXPECT_EQ("~ObjectPool: Pool destroyed with 1 objects still outstanding!",
-            TestLog::get());
-}
+//     TestLog::Enable _;
+//     delete pool;
+//     EXPECT_EQ("~ObjectPool: Pool destroyed with 1 objects still
+//     outstanding!",
+//               TestLog::get());
+// }
 
-TEST(ObjectPoolTest, construct) {
+TEST(ObjectPoolTest, construct)
+{
     ObjectPool<TestObject> pool;
     EXPECT_THROW(pool.construct(true), Exception);
     EXPECT_EQ(1U, pool.pool.size());
-    TestObject*a = pool.construct();
+    TestObject* a = pool.construct();
     EXPECT_NE(static_cast<TestObject*>(NULL), a);
     EXPECT_EQ(1U, pool.outstandingObjects);
     pool.destroy(a);
 }
 
-TEST(ObjectPoolTests, destroy) {
+TEST(ObjectPoolTests, destroy)
+{
     ObjectPool<TestObject> pool;
     bool destroyed = false;
     pool.destroy(pool.construct(&destroyed));
@@ -107,45 +116,43 @@ TEST(ObjectPoolTests, destroy) {
     EXPECT_EQ(1U, pool.pool.size());
 }
 
-TEST(ObjectPoolTests, destroy_inOrder) {
+TEST(ObjectPoolTests, destroy_inOrder)
+{
     ObjectPool<TestObject> pool;
     int count = 100;
     TestObject* toDestroy[count];
 
-    for (int i = 0; i < count; i++)
-        toDestroy[i] = pool.construct();
-    for (int i = 0; i < count; i++)
-        pool.destroy(toDestroy[i]);
+    for (int i = 0; i < count; i++) toDestroy[i] = pool.construct();
+    for (int i = 0; i < count; i++) pool.destroy(toDestroy[i]);
 }
 
-TEST(ObjectPoolTests, destroy_reverseOrder) {
+TEST(ObjectPoolTests, destroy_reverseOrder)
+{
     ObjectPool<TestObject> pool;
     int count = 100;
     TestObject* toDestroy[count];
 
-    for (int i = 0; i < count; i++)
-        toDestroy[i] = pool.construct();
-    for (int i = count - 1; i >= 0; i--)
-        pool.destroy(toDestroy[i]);
+    for (int i = 0; i < count; i++) toDestroy[i] = pool.construct();
+    for (int i = count - 1; i >= 0; i--) pool.destroy(toDestroy[i]);
 }
 
-TEST(ObjectPoolTests, destroy_randomOrder) {
+TEST(ObjectPoolTests, destroy_randomOrder)
+{
     ObjectPool<TestObject> pool;
     int count = 100;
     TestObject* toDestroy[count];
+    std::srand(std::time(0));
 
-    for (int i = 0; i < count; i++)
-        toDestroy[i] = pool.construct();
+    for (int i = 0; i < count; i++) toDestroy[i] = pool.construct();
 
     int destroyed = 0;
     while (destroyed < count) {
-        int i = downCast<int>(generateRandom() % count);
-        while (toDestroy[i] == NULL)
-            i = (i + 1) % count;
+        int i = std::rand() % count;
+        while (toDestroy[i] == NULL) i = (i + 1) % count;
         pool.destroy(toDestroy[i]);
         toDestroy[i] = NULL;
         destroyed++;
     }
 }
 
-} // namespace RAMCloud
+}  // namespace Homa

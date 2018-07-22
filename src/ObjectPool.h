@@ -1,23 +1,25 @@
-/* Copyright (c) 2010,2011 Stanford University
+/* Copyright (c) 2010-2018, Stanford University
  *
- * Permission to use, copy, modify, and distribute this software for any
+ * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
  *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
  * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef RAMCLOUD_OBJECTPOOL_H
-#define RAMCLOUD_OBJECTPOOL_H
+#ifndef HOMA_OBJECTPOOL_H
+#define HOMA_OBJECTPOOL_H
 
-#include "Common.h"
-#include "Memory.h"
+#include "Exception.h"
+#include "Logger.h"
+
+#include <vector>
 
 /*
  * Notes on performance and efficiency:
@@ -36,11 +38,12 @@
  * is considerably slower.
  */
 
-namespace RAMCloud {
+namespace Homa {
 
 struct ObjectPoolException : public Exception {
     ObjectPoolException(const CodeLocation& where, std::string msg)
-        : Exception(where, msg) {}
+        : Exception(where, msg)
+    {}
 };
 
 /**
@@ -56,8 +59,7 @@ struct ObjectPoolException : public Exception {
  * objects that cannot be kept in a stack context.
  */
 template <typename T>
-class ObjectPool
-{
+class ObjectPool {
   public:
     /**
      * Construct a new ObjectPool. The pool begins life with no allocated
@@ -66,10 +68,9 @@ class ObjectPool
      * allocations. For simplicity, no bulk allocations are performed.
      */
     ObjectPool()
-        : outstandingObjects(0),
-          pool()
-    {
-    }
+        : outstandingObjects(0)
+        , pool()
+    {}
 
     /**
      * Destroy the ObjectPool. The pool expects that all objects allocated
@@ -78,16 +79,15 @@ class ObjectPool
      */
     ~ObjectPool()
     {
-        foreach(void* p, pool) {
-            free(p);
+        for (auto it = pool.begin(); it != pool.end(); ++it) {
+            free(*it);
         }
 
         // Catching this isn't intended, but could be done if the caller really
         // wants to, so make sure we free the pooled memory first.
         if (outstandingObjects > 0) {
-            RAMCLOUD_LOG(ERROR,
-                    "Pool destroyed with %lu objects still outstanding!",
-                    outstandingObjects);
+            LOG(ERROR, "Pool destroyed with %lu objects still outstanding!",
+                outstandingObjects);
         }
     }
 
@@ -101,13 +101,12 @@ class ObjectPool
      * \throw
      *      An exception is thrown if T's constructor throws.
      */
-    template<typename... Args>
-    T*
-    construct(Args&&... args)
+    template <typename... Args>
+    T* construct(Args&&... args)
     {
         void* backing = NULL;
         if (pool.size() == 0) {
-            backing = Memory::xmalloc(HERE, sizeof(T));
+            backing = operator new(sizeof(T));
         } else {
             backing = pool.back();
             pool.pop_back();
@@ -115,7 +114,7 @@ class ObjectPool
 
         T* object = NULL;
         try {
-            object = new(backing) T(static_cast<Args&&>(args)...);
+            object = new (backing) T(static_cast<Args&&>(args)...);
         } catch (...) {
             pool.push_back(backing);
             throw;
@@ -128,8 +127,7 @@ class ObjectPool
     /**
      * Destroy an object previously allocated by this pool.
      */
-    void
-    destroy(T* object)
+    void destroy(T* object)
     {
         assert(outstandingObjects > 0);
         object->~T();
@@ -137,15 +135,15 @@ class ObjectPool
         outstandingObjects--;
     }
 
-  PRIVATE:
+  private:
     /// Count of the number of objects for which construct() was called, but
     /// destroy() was not.
     uint64_t outstandingObjects;
 
     /// Pool of backing memory from previously destroyed objects.
-    vector<void*> pool;
+    std::vector<void*> pool;
 };
 
-} // end RAMCloud
+}  // namespace Homa
 
-#endif  // RAMCLOUD_OBJECTPOOL_H
+#endif  // HOMA_OBJECTPOOL_H
