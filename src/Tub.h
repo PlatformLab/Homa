@@ -1,24 +1,22 @@
-/* Copyright (c) 2010-2016 Stanford University
+/* Copyright (c) 2010-2018, Stanford University
  *
- * Permission to use, copy, modify, and distribute this software for any
+ * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
  *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
  * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef RAMCLOUD_TUB_H
-#define RAMCLOUD_TUB_H
+#ifndef HOMA_TUB_H
+#define HOMA_TUB_H
 
-#include "Minimal.h"
-
-namespace RAMCloud {
+namespace Homa {
 
 /**
  * A Tub holds an object that may be uninitialized; it allows the allocation of
@@ -51,12 +49,12 @@ namespace RAMCloud {
  * Tub is CopyConstructible if and only if ElementType is CopyConstructible,
  * and Tub is Assignable if and only if ElementType is Assignable.
  *
- * \tparam ElementType
+ * @tparam ElementType
  *      The type of the object to be stored within the Tub.
  */
-template<typename ElementType>
+template <typename ElementType>
 class Tub {
-  PUBLIC:
+  public:
     /// The type of the object to be stored within the Tub.
     typedef ElementType element_type;
 
@@ -70,12 +68,12 @@ class Tub {
     /**
      * Construct an occupied Tub, whose contained object is initialized
      * with a copy of the given object.
-     * \pre
+     * @pre
      *      ElementType is CopyConstructible.
-     * \param other
+     * @param other
      *      Source of the copy.
      */
-    Tub(const ElementType& other) // NOLINT
+    Tub(const ElementType& other)  // NOLINT
         : occupied(false)
     {
         construct(other);
@@ -85,33 +83,34 @@ class Tub {
      * Copy constructor.
      * The object will be initialized if and only if the source of the copy is
      * initialized.
-     * \pre
+     * @pre
      *      ElementType is CopyConstructible.
-     * \param other
+     * @param other
      *      Source of the copy.
      */
-    Tub(const Tub<ElementType>& other) // NOLINT
+    Tub(const Tub<ElementType>& other)  // NOLINT
         : occupied(false)
     {
         if (other.occupied)
-            construct(*other.object); // use ElementType's copy constructor
+            construct(*other.object);  // use ElementType's copy constructor
     }
 
     /**
      * Destructor: destroy the object if it was initialized.
      */
-    ~Tub() {
+    ~Tub()
+    {
         destroy();
     }
 
     /**
      * Assignment: destroy current object if initialized, replace with
      * source.  Result will be uninitialized if source is uninitialized.
-     * \pre
+     * @pre
      *      ElementType is Assignable.
      */
-    Tub<ElementType>&
-    operator=(const Tub<ElementType>& other) {
+    Tub<ElementType>& operator=(const Tub<ElementType>& other)
+    {
         if (this != &other) {
             if (other.occupied) {
                 if (occupied) {
@@ -119,7 +118,7 @@ class Tub {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
 #endif
-                    *object = *other.object; // use ElementType's assignment
+                    *object = *other.object;  // use ElementType's assignment
 #if __GNUC__ && ((__GNUC__ >= 4 && __GNUC_MINOR__ >= 7) || (__GNUC__ > 4))
 #pragma GCC diagnostic pop
 #endif
@@ -136,18 +135,18 @@ class Tub {
     /**
      * Initialize the object.
      * If the object was already initialized, it will be destroyed first.
-     * \param args
+     * @param args
      *      Arguments to ElementType's constructor.
-     * \return
+     * @return
      *      A pointer to the newly initialized object.
-     * \post
+     * @post
      *      The object is initialized.
      */
-    template<typename... Args>
-    ElementType*
-    construct(Args&&... args) {
+    template <typename... Args>
+    ElementType* construct(Args&&... args)
+    {
         destroy();
-        new(object) ElementType(static_cast<Args&&>(args)...);
+        new (object) ElementType(static_cast<Args&&>(args)...);
         occupied = true;
         return object;
     }
@@ -156,11 +155,11 @@ class Tub {
      * Destroy the object, leaving the Tub in the same state
      * as after the no-argument constructor.
      * If the object was not initialized, this will have no effect.
-     * \post
+     * @post
      *      The object is uninitialized.
      */
-    void
-    destroy() {
+    void destroy()
+    {
         if (occupied) {
             object->~ElementType();
             occupied = false;
@@ -168,57 +167,58 @@ class Tub {
     }
 
     /// See #get().
-    const ElementType&
-    operator*() const {
+    const ElementType& operator*() const
+    {
         return *get();
     }
 
     /// See #get().
-    ElementType&
-    operator*() {
+    ElementType& operator*()
+    {
         return *get();
     }
 
     /// See #get().
-    const ElementType*
-    operator->() const {
+    const ElementType* operator->() const
+    {
         return get();
     }
 
     /// See #get().
-    ElementType*
-    operator->() {
+    ElementType* operator->()
+    {
         return get();
     }
 
     /**
      * Return a pointer to the object.
-     * \pre
+     * @pre
      *      The object is initialized.
      */
-    ElementType*
-    get() {
+    ElementType* get()
+    {
         if (!occupied)
-            return NULL;
+            return nullptr;
         return object;
     }
 
     /// See #get().
-    const ElementType*
-    get() const {
+    const ElementType* get() const
+    {
         if (!occupied)
-            return NULL;
+            return nullptr;
         return object;
     }
 
     /**
      * Return whether the object is initialized.
      */
-    operator bool() const {
+    operator bool() const
+    {
         return occupied;
     }
 
-  PRIVATE:
+  private:
     /**
      * A pointer to where the object is, if it is initialized.
      * This must directly precede #raw in the struct.
@@ -236,6 +236,6 @@ class Tub {
     bool occupied;
 };
 
-} // end RAMCloud
+}  // namespace Homa
 
-#endif  // RAMCLOUD_TUB_H
+#endif  // HOMA_TUB_H

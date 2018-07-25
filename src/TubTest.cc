@@ -1,38 +1,44 @@
-/* Copyright (c) 2010 Stanford University
+/* Copyright (c) 2010-2018, Stanford University
  *
- * Permission to use, copy, modify, and distribute this software for any
+ * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
  *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
  * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "TestUtil.h"
 #include "Tub.h"
 
-namespace RAMCloud {
+#include <gtest/gtest.h>
 
-static_assert(__alignof__(Tub<char>) == 1,
-              "Alignment of Tub<char> is wrong");
+#include <vector>
+
+namespace Homa {
+
+static_assert(__alignof__(Tub<char>) == 1, "Alignment of Tub<char> is wrong");
 static_assert(__alignof__(Tub<uint64_t>) == 8,
               "Alignment of Tub<uint64_t> is wrong");
 
 struct Foo {
     Foo(int x, int y, int z = 0)
-        : x(x) , y(y) , z(z)
+        : x(x)
+        , y(y)
+        , z(z)
     {
         ++liveCount;
     }
-    ~Foo() {
+    ~Foo()
+    {
         --liveCount;
     }
-    int getX() {
+    int getX()
+    {
         return x;
     }
     int x, y, z;
@@ -41,8 +47,11 @@ struct Foo {
 int Foo::liveCount = 0;
 
 struct Bar {
-    Bar() : x(123456789) {}
-    Bar& operator=(const Bar& other) {
+    Bar()
+        : x(123456789)
+    {}
+    Bar& operator=(const Bar& other)
+    {
         if (this == &other)
             return *this;
         EXPECT_EQ(123456789, x);
@@ -56,7 +65,8 @@ struct Bar {
 typedef Tub<Foo> FooTub;
 typedef Tub<int> IntTub;
 
-TEST(Tub, basics) {
+TEST(Tub, basics)
+{
     {
         FooTub fooTub;
         EXPECT_FALSE(fooTub);
@@ -78,7 +88,8 @@ TEST(Tub, basics) {
     EXPECT_EQ(0, Foo::liveCount);
 }
 
-TEST(Tub, copyAndAssign) {
+TEST(Tub, copyAndAssign)
+{
     IntTub x;
     x.construct(5);
     IntTub y;
@@ -99,8 +110,9 @@ TEST(Tub, copyAndAssign) {
     b1 = b2;
 }
 
-TEST(Tub, putInVector) {
-    vector<IntTub> v;
+TEST(Tub, putInVector)
+{
+    std::vector<IntTub> v;
     v.push_back(IntTub());
     IntTub eight;
     eight.construct(8);
@@ -113,11 +125,12 @@ TEST(Tub, putInVector) {
     EXPECT_EQ(8, *v[2]);
 }
 
-TEST(Tub, boolConversion) {
+TEST(Tub, boolConversion)
+{
     IntTub x;
     EXPECT_FALSE(x);
     x.construct(5);
     EXPECT_TRUE(x);
 }
 
-}  // namespace RAMCloud
+}  // namespace Homa
