@@ -85,8 +85,23 @@ class Driver {
         /// Number of bytes the payload holds.
         uint16_t len;
 
-        /// Maxumum number of bytes the payload can hold.
-        uint16_t const MAX_PAYLOAD_SIZE;
+        /// Return the maxumum number of bytes the payload can hold.
+        virtual uint16_t getMaxPayloadSize() = 0;
+
+      protected:
+        /**
+         * Construct a Packet. Only called by Packet subclasses.
+         */
+        explicit Packet(void* payload, uint16_t len)
+            : address(NULL)
+            , priority(0)
+            , payload(payload)
+            , len(len)
+        {}
+
+        // DISALLOW_COPY_AND_ASSIGN
+        Packet(const Packet& Packet) = delete;
+        Packet& operator=(const Packet&) = delete;
     };
 
     /**
@@ -96,13 +111,14 @@ class Driver {
 
     /**
      * Return a Driver specific network address for the given string
-     * representation of the address. Address strings are also  Driver specific.
+     * representation of the address. Address strings are also  Driver
+     * specific.
      *
      * @param addressString
      *      See above.
      * @return
-     *      Pointer to an Address object that can be the source or destination
-     *      of a Packet.
+     *      Pointer to an Address object that can be the source or
+     * destination of a Packet.
      * @throw BadAddress
      *      _addressString_ is malformed.
      *
@@ -124,22 +140,23 @@ class Driver {
      *
      * The packets provide can be sent asynchrounously by the Driver.
      *
-     * In general, Packet objects should be considered immutable once they are
-     * passed to this method. The Packet::address and Packet::priority fields
-     * are two exceptions; they can be modified after this call returns but not
-     * currently with this call since Packet objects are not thread-safe.
+     * In general, Packet objects should be considered immutable once they
+     * are passed to this method. The Packet::address and Packet::priority
+     * fields are two exceptions; they can be modified after this call
+     * returns but not currently with this call since Packet objects are not
+     * thread-safe.
      *
-     * A Packet can be resent by simply calling this method again passing the
-     * same Packet. However, the Driver may choose to ignore the resend request
-     * if a prior send request for the same Packet is still in progress.
+     * A Packet can be resent by simply calling this method again passing
+     * the same Packet. However, the Driver may choose to ignore the resend
+     * request if a prior send request for the same Packet is still in
+     * progress.
      *
      * @param packets
      *      Array of Packet objects to be sent over the network.
      * @param numPackets
      *      Number of Packet objects in _packets_.
      */
-    virtual void sendPackets(Packet const* const packets[],
-                             uint16_t numPackets) = 0;
+    virtual void sendPackets(Packet* packets[], uint16_t numPackets) = 0;
 
     /**
      * Check to see if any packets have arrived that have not already been
@@ -148,8 +165,8 @@ class Driver {
      * eventually released back to the Driver; see Driver::releasePackets().
      *
      * @param maxPackets
-     *      The maximum number of Packet objects that should be returned by this
-     *      method.
+     *      The maximum number of Packet objects that should be returned by
+     * this method.
      * @param[out] receivedPackets
      *      Recevied packets are appended to this array in order of arrival.
      *
@@ -162,16 +179,18 @@ class Driver {
                                     Packet* receivedPackets[]) = 0;
 
     /**
-     * Release a collection of Packet objects back to the Driver. Every Packet
-     * allocated using allocPacket() or recieved using receivePackets() must
-     * eventually be released back to the Driver using this method. While in
-     * general it is safe for applications to keep Packet objects for an
-     * indeterminate period of time, doing so may be resource inefficent and
-     * adversely affect Driver performance.  As such, it is recommended that
-     * Packet objects be released in a timely manner.
+     * Release a collection of Packet objects back to the Driver. Every
+     * Packet allocated using allocPacket() or recieved using
+     * receivePackets() must eventually be released back to the Driver using
+     * this method. While in general it is safe for applications to keep
+     * Packet objects for an indeterminate period of time, doing so may be
+     * resource inefficent and adversely affect Driver performance.  As
+     * such, it is recommended that Packet objects be released in a timely
+     * manner.
      *
      * @param packets
-     *      Set of Packet objects which should be released back to the Driver.
+     *      Set of Packet objects which should be released back to the
+     * Driver.
      * @param numPackets
      *      Number of Packet objects in _packets_.
      */
@@ -181,8 +200,8 @@ class Driver {
      * Returns the highest packet priority level this Driver supports (0 is
      * the lowest priority level). The larger the number, the more priority
      * levels are available. For example, if the highest priority level is 7
-     * then the Driver has 8 priority levels, ranging from 0 (lowest priority)
-     * to 7 (highest priority).
+     * then the Driver has 8 priority levels, ranging from 0 (lowest
+     * priority) to 7 (highest priority).
      */
     virtual int getHighestPacketPriority()
     {
@@ -198,6 +217,12 @@ class Driver {
     {
         return 0;
     }
+
+    /**
+     * Return this Driver's local network Address which it uses as the source
+     * Address for outgoing packets.
+     */
+    virtual Address* getLocalAddress() = 0;
 };
 
 /**
