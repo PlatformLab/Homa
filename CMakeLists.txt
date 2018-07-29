@@ -15,6 +15,8 @@ find_package(Threads)
 # Doxygen documentation generation tool (http://www.doxygen.org)
 find_package(Doxygen OPTIONAL_COMPONENTS dot mscgen dia)
 
+find_package(Dpdk REQUIRED)
+
 ################################################################################
 ## Source Configuration ########################################################
 ################################################################################
@@ -32,6 +34,7 @@ configure_file (
 ## lib Homa ####################################################################
 add_library(Homa
     src/CodeLocation.cc
+    src/Logger.cc
     src/MacAddress.cc
     src/ThreadId.cc
     src/Util.cc
@@ -44,14 +47,32 @@ target_include_directories(Homa
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
         $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(Homa
-)
 target_compile_features(Homa
     PUBLIC
         cxx_std_11
 )
 set_target_properties(Homa PROPERTIES
     VERSION ${Homa_VERSION}
+)
+
+## lib DpdkDriver ##############################################################
+add_library(DpdkDriver
+    src/DpdkDriver.cc
+)
+add_library(Homa::DpdkDriver ALIAS DpdkDriver)
+target_include_directories(DpdkDriver
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(DpdkDriver
+    PUBLIC
+        -Wl,--whole-archive Dpdk::Dpdk -Wl,--no-whole-archive
+        Homa
+)
+target_compile_options(DpdkDriver
+    PRIVATE
+        -mssse3
 )
 
 ################################################################################
@@ -82,6 +103,8 @@ enable_testing()
 add_executable(unitTest
     src/CodeLocationTest.cc
     src/MacAddressTest.cc
+    src/ObjectPoolTest.cc
+    src/TubTest.cc
     src/UtilTest.cc
 )
 target_link_libraries(unitTest gtest_main Homa)
