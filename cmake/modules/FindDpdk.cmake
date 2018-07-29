@@ -34,6 +34,7 @@ find_path(Dpdk_INCLUDE_DIR rte_config.h
 find_library(Dpdk_LIBRARY dpdk)
 find_library(Numa_LIBRARY numa)
 find_library(Dl_LIBRARY dl)
+find_library(Pcap_LIBRARY pcap)
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Dpdk
@@ -43,6 +44,7 @@ find_package_handle_standard_args(Dpdk
         Dpdk_LIBRARY
         Numa_LIBRARY
         Dl_LIBRARY
+        Pcap_LIBRARY
 )
 
 if(Dpdk_FOUND AND NOT TARGET Dpdk::Dpdk)
@@ -51,6 +53,6 @@ if(Dpdk_FOUND AND NOT TARGET Dpdk::Dpdk)
         IMPORTED_LOCATION "${Dpdk_LIBRARY}"
         INTERFACE_COMPILE_OPTIONS ""
         INTERFACE_INCLUDE_DIRECTORIES "${Dpdk_INCLUDE_DIR}"
-        INTERFACE_LINK_LIBRARIES "${Numa_LIBRARY};${Dl_LIBRARY}"
+        INTERFACE_LINK_LIBRARIES "${Numa_LIBRARY};${Dl_LIBRARY};${Pcap_LIBRARY}"
     )
 endif()
