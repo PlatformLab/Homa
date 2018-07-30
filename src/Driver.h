@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_HOMA_H
-#define HOMA_HOMA_H
+#ifndef HOMA_DRIVER_H
+#define HOMA_DRIVER_H
 
 #include "Exception.h"
 
@@ -263,4 +263,4 @@ struct BadAddress : public Exception {
 
 }  // namespace Homa
 
-#endif  // HOMA_HOMA_H
+#endif  // HOMA_DRIVER_H
