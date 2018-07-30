@@ -16,6 +16,8 @@
 #ifndef HOMA_HOMA_H
 #define HOMA_HOMA_H
 
+#include "Driver.h"
+
 #include <bitset>
 #include <vector>
 
@@ -158,6 +160,21 @@ class Transport {
          *      The pointer to the memory region whose
          */
         void set(uint32_t offset, const void* source, uint32_t num);
+
+        /**
+         * Return the network address associated with this Message. For an
+         * incomming Message this is the source address. For an outgoing Message
+         * this is the destination address.
+         */
+        Driver::Address* getAddress();
+
+        /**
+         * Set the destiation network address for this Message.
+         *
+         * This operation cannot be performed on a received Message or one that
+         * has already been sent.
+         */
+        void setDestination(Driver::Address* destination);
 
       private:
         friend Transport;
