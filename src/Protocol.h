@@ -139,19 +139,18 @@ struct GrantHeader {
 struct DataHeader {
     CommonHeader common;   // Common header fields.
     uint32_t totalLength;  // Total # bytes in the message (*not* this packet!).
-    uint32_t offset;       // Offset within the message of the first byte of
-                           // data in this packet.
-    uint16_t length;       // Length of data in this packet.
+    uint16_t index;  // Index of this packet in the array of packets that form
+                     // the message. With the know packet data length, the index
+                     // can by computed given the packet's byte offset into the
+                     // message and vice versa.
 
     // The remaining packet bytes after the header constitute message data
-    // starting at the given offset.
+    // starting at the offset corresponding to the given packet index.
 
-    DataHeader(MessageId msgId, uint32_t totalLength, uint32_t offset,
-               uint16_t length)
+    DataHeader(MessageId msgId, uint32_t totalLength, uint16_t index)
         : common(PacketOpcode::DATA, msgId)
         , totalLength(totalLength)
-        , offset(offset)
-        , length(length)
+        , index(index)
     {}
 } __attribute__((packed));
 
