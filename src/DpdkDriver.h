@@ -139,6 +139,9 @@ class DpdkDriver : public Driver {
     /// See Driver::getHighestPacketPriority()
     virtual int getHighestPacketPriority();
 
+    /// See Driver::getMaxPayloadSize()
+    virtual uint32_t getMaxPayloadSize();
+
     /// See Driver::getBandwidth()
     virtual uint32_t getBandwidth();
 

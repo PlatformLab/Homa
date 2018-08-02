@@ -210,6 +210,12 @@ class Driver {
     }
 
     /**
+     * The maximum number of bytes this Driver can send in the payload of a
+     * single packet.
+     */
+    virtual uint32_t getMaxPayloadSize() = 0;
+
+    /**
      * Returns the bandwidth of the network in Mbits/second. If the driver
      * cannot determine the network bandwidth, then it returns 0.
      */

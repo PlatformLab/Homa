@@ -500,6 +500,13 @@ DpdkDriver::getHighestPacketPriority()
     return Util::arrayLength(PRIORITY_TO_PCP) - 1;
 }
 
+// See Driver::getMaxPayloadSize()
+uint32_t
+DpdkDriver::getMaxPayloadSize()
+{
+    return MAX_PAYLOAD_SIZE;
+}
+
 // See Driver::getBandwidth()
 uint32_t
 DpdkDriver::getBandwidth()
