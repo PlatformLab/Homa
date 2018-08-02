@@ -56,6 +56,33 @@ std::string format(const char* format, ...)
 
 std::string hexDump(const void* buf, uint64_t bytes);
 
+/**
+ * This class is used to temporarily release lock in a safe fashion. Creating
+ * an object of this class will unlock its associated mutex; when the object
+ * is deleted, the mutex will be locked again. The template class T must be
+ * a mutex-like class that supports lock and unlock operations.
+ */
+// This was taken from the RAMCloud project.
+template <typename MutexType>
+class unlock_guard {
+  public:
+    explicit unlock_guard(MutexType& mutex)
+        : mutex(mutex)
+    {
+        mutex.unlock();
+    }
+    ~unlock_guard()
+    {
+        mutex.lock();
+    }
+
+  private:
+    MutexType& mutex;
+
+    unlock_guard(const unlock_guard&) = delete;
+    unlock_guard& operator=(const unlock_guard&) = delete;
+};
+
 };  // namespace Util
 };  // namespace Homa
 
