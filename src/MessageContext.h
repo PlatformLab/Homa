@@ -18,6 +18,7 @@
 
 #include "Driver.h"
 #include "ObjectPool.h"
+#include "Protocol.h"
 #include "SpinLock.h"
 
 #include <atomic>
@@ -42,7 +43,8 @@ class MessageContext {
     /// Define the maximum number of packets that a message can hold.
     static const uint16_t MAX_MESSAGE_PACKETS = 1024;
 
-    explicit MessageContext(uint16_t dataHeaderLength, Driver* driver,
+    explicit MessageContext(Protocol::MessageId msgId,
+                            uint16_t dataHeaderLength, Driver* driver,
                             MessagePool* messagePool);
     ~MessageContext();
 
@@ -50,6 +52,9 @@ class MessageContext {
     bool setPacket(uint16_t index, Driver::Packet* packet);
     void retain();
     void release();
+
+    /// Contains the unique identifier for this message.
+    const Protocol::MessageId msgId;
 
     /// Contains the source address for a recevied message and and the
     /// destination for an sent message.
@@ -102,7 +107,8 @@ class MessagePool {
     MessagePool();
     ~MessagePool() {}
 
-    MessageContext* construct(uint16_t dataHeaderLength, Driver* driver);
+    MessageContext* construct(Protocol::MessageId msgId,
+                              uint16_t dataHeaderLength, Driver* driver);
     void destroy(MessageContext* messageContext);
 
   private:

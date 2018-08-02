@@ -25,6 +25,8 @@ namespace Core {
  *
  * MessageContext objects are constructed with a refCount of 1.
  *
+ * @param msgId
+ *      Unique identifier for this message.
  * @param dataHeaderLength
  *      Number of bytes at the beginning of every packet used to hold the Homa
  *      protocol DataHeader. This should be the same for every packet in a given
@@ -39,9 +41,11 @@ namespace Core {
  *
  * @sa MessageContext::release()
  */
-MessageContext::MessageContext(uint16_t dataHeaderLength, Driver* driver,
+MessageContext::MessageContext(Protocol::MessageId msgId,
+                               uint16_t dataHeaderLength, Driver* driver,
                                MessagePool* messagePool)
-    : address(nullptr)
+    : msgId(msgId)
+    , address(nullptr)
     , messageLength(0)
     , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() - dataHeaderLength)
     , DATA_HEADER_LENGTH(dataHeaderLength)
@@ -155,12 +159,15 @@ MessagePool::MessagePool()
 
 /**
  * Construct a new MessageContext object in the pool and return a pointer to it.
+ *
+ * \sa MessageContext()
  */
 MessageContext*
-MessagePool::construct(uint16_t dataHeaderLength, Driver* driver)
+MessagePool::construct(Protocol::MessageId msgId, uint16_t dataHeaderLength,
+                       Driver* driver)
 {
     std::lock_guard<SpinLock> lock(mutex);
-    return pool.construct(dataHeaderLength, driver, this);
+    return pool.construct(msgId, dataHeaderLength, driver, this);
 }
 
 /**
