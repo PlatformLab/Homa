@@ -119,6 +119,15 @@ MessageContext::setPacket(uint16_t index, Driver::Packet* packet)
 }
 
 /**
+ * Return the number of packet this message currently holds.
+ */
+uint16_t
+MessageContext::getNumPackets()
+{
+    return numPackets;
+}
+
+/**
  * Used by a module to indicate that it would like to retain access to this
  * MessageContext. When the module no longer needs access, it should call
  * MessageContext::release().

@@ -50,6 +50,7 @@ class MessageContext {
 
     Driver::Packet* getPacket(uint16_t index);
     bool setPacket(uint16_t index, Driver::Packet* packet);
+    uint16_t getNumPackets();
     void retain();
     void release();
 
