@@ -15,6 +15,8 @@
 
 #include "MessageContext.h"
 
+#include <mutex>
+
 namespace Homa {
 namespace Core {
 
@@ -141,6 +143,35 @@ MessageContext::release()
         messagePool->destroy(this);
         // can't do anything after this, the object is destroyed
     }
+}
+
+/**
+ * MessagePool constructor.
+ */
+MessagePool::MessagePool()
+    : mutex()
+    , pool()
+{}
+
+/**
+ * Construct a new MessageContext object in the pool and return a pointer to it.
+ */
+MessageContext*
+MessagePool::construct(uint16_t dataHeaderLength, Driver* driver)
+{
+    std::lock_guard<SpinLock> lock(mutex);
+    return pool.construct(dataHeaderLength, driver, this);
+}
+
+/**
+ * Destory the given MessageContext object previously allocated by this
+ * MessagePool.
+ */
+void
+MessagePool::destroy(MessageContext* messageContext)
+{
+    std::lock_guard<SpinLock> lock(mutex);
+    pool.destroy(messageContext);
 }
 
 }  // namespace Core

@@ -18,6 +18,7 @@
 
 #include "Driver.h"
 #include "ObjectPool.h"
+#include "SpinLock.h"
 
 #include <atomic>
 #include <bitset>
@@ -26,10 +27,7 @@ namespace Homa {
 namespace Core {
 
 // forward declaration
-class MessageContext;
-
-/// A memory allocator for MessageConetxt objects.
-typedef ObjectPool<MessageContext> MessagePool;
+class MessagePool;
 
 /**
  * Holds the contents and metadata from a Transport::Message.
@@ -67,7 +65,7 @@ class MessageContext {
     const uint16_t DATA_HEADER_LENGTH;
 
   private:
-    /// ObjectPool from which this MessageContext was allocated and to which it
+    /// Memory pool from which this MessageContext was allocated and to which it
     /// should be returned on destruction.
     MessagePool* messagePool;
 
@@ -92,6 +90,30 @@ class MessageContext {
 
     MessageContext(const MessageContext&) = delete;
     MessageContext& operator=(const MessageContext&) = delete;
+};
+
+/**
+ * Provides a pool allocator for MessageContext objects.
+ *
+ * This class is thread-safe.
+ */
+class MessagePool {
+  public:
+    MessagePool();
+    ~MessagePool() {}
+
+    MessageContext* construct(uint16_t dataHeaderLength, Driver* driver);
+    void destroy(MessageContext* messageContext);
+
+  private:
+    /// Monitor style lock for the pool.
+    SpinLock mutex;
+
+    /// Actual memory allocator for MessageContext objects.
+    ObjectPool<MessageContext> pool;
+
+    MessagePool(const MessagePool&) = delete;
+    MessagePool& operator=(const MessagePool&) = delete;
 };
 
 }  // namespace Core
