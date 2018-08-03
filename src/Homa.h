@@ -26,6 +26,11 @@
  */
 namespace Homa {
 
+// forward declare to avoid having to include the headers.
+namespace Core {
+class MessageContext;
+}  // namespace Core
+
 /// Defines a set of flags that set optional behavior in the Transport.
 /// @sa #SendFlag, #SEND_NO_FLAGS, #SEND_NO_ACK, #SEND_DETACHED,
 /// #SEND_EXPECT_RESPONSE.
@@ -178,6 +183,9 @@ class Transport {
 
       private:
         friend Transport;
+
+        /// Contains the metadata and access to the message contents.
+        Core::MessageContext* context;
     };
 
     /**
