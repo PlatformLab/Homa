@@ -61,6 +61,10 @@ class MessageContext {
     /// destination for an sent message.
     Driver::Address* address;
 
+    /// Driver from which packets were allocated and to which they should be
+    /// returned when this message is no longer needed.
+    Driver* const driver;
+
     /// Total length of the message.
     uint32_t messageLength;
 
@@ -74,10 +78,6 @@ class MessageContext {
     /// Memory pool from which this MessageContext was allocated and to which it
     /// should be returned on destruction.
     MessagePool* messagePool;
-
-    /// Driver from which packets were allocated and to which they should be
-    /// returned when this message is no longer needed.
-    Driver* driver;
 
     /// Number of times this context has been retained (see retain()).
     /// Constructing a instances of MessageCountext set the refCount to 1.
