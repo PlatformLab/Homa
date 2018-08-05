@@ -18,6 +18,7 @@
 
 #include "Driver.h"
 
+#include <atomic>
 #include <bitset>
 #include <vector>
 
@@ -29,6 +30,10 @@ namespace Homa {
 // forward declare to avoid having to include the headers.
 namespace Core {
 class MessageContext;
+class MessagePool;
+class Receiver;
+class Scheduler;
+class Sender;
 }  // namespace Core
 
 /// Defines a set of flags that set optional behavior in the Transport.
@@ -100,9 +105,19 @@ class Transport {
         Message();
 
         /**
+         * Move constructor.
+         */
+        Message(Message&& other);
+
+        /**
          * Default destructor for a Message object.
          */
         ~Message();
+
+        /**
+         * Move assignment.
+         */
+        Message& operator=(Message&& other);
 
         /**
          * Returns true if the Message in initialized; false otherwise.
@@ -186,7 +201,26 @@ class Transport {
 
         /// Contains the metadata and access to the message contents.
         Core::MessageContext* context;
+
+        Message(const Message&) = delete;
+        Message& operator=(const Message&) = delete;
     };
+
+    /**
+     * Construct and instances of a Homa-based transport.
+     *
+     * @param driver
+     *      Driver with which this transport should send and receive packets.
+     * @param transportId
+     *      This transport's unique identifier in the group of transports among
+     *      which this transport will communicate.
+     */
+    explicit Transport(Driver* driver, uint64_t transportId);
+
+    /**
+     * Transport Destructor.
+     */
+    ~Transport();
 
     /**
      * Create a new Message that can be sent over Homa::Transport.
@@ -228,6 +262,28 @@ class Transport {
      * be called frequently to ensure timely progress.
      */
     void poll();
+
+  private:
+    /// Driver from which this transport will send and receive packets.
+    Driver* driver;
+
+    /// Pool from which this transport will allocation MessageContext objects.
+    Core::MessagePool* messagePool;
+
+    /// Module which controls the sending of message.
+    Core::Sender* sender;
+
+    /// Module which schendules incoming packets.
+    Core::Scheduler* scheduler;
+
+    /// Module which receives packets and forms them into messages.
+    Core::Receiver* receiver;
+
+    /// Unique identifier for this transport.
+    const uint64_t transportId;
+
+    /// Unique identifier for the next message this transport sends.
+    std::atomic<uint64_t> nextMessgeId;
 };
 
 }  // namespace Homa

@@ -16,19 +16,38 @@
 #include "Homa.h"
 
 #include "MessageContext.h"
+#include "Protocol.h"
+#include "Receiver.h"
+#include "Scheduler.h"
+#include "Sender.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace Homa {
 Transport::Message::Message()
     : context(nullptr)
 {}
 
+Transport::Message::Message(Transport::Message&& other)
+    : context(std::move(other.context))
+{
+    other.context = nullptr;
+}
+
 Transport::Message::~Message()
 {
     if (context != nullptr) {
         context->release();
     }
+}
+
+Transport::Message&
+Transport::Message::operator=(Transport::Message&& other)
+{
+    context = std::move(other.context);
+    other.context = nullptr;
+    return *this;
 }
 
 Transport::Message::operator bool()
@@ -98,6 +117,7 @@ Transport::Message::set(uint32_t offset, const void* source, uint32_t num)
             assert(packet->len == 0);
             assert(packet->getMaxPayloadSize() >=
                    context->DATA_HEADER_LENGTH + context->PACKET_DATA_LENGTH);
+            assert(context->getPacket(packetIndex) != nullptr);
         }
 
         uint16_t rawOffset = context->DATA_HEADER_LENGTH + packetOffset;
@@ -113,6 +133,8 @@ Transport::Message::set(uint32_t offset, const void* source, uint32_t num)
         packetIndex++;
         packetOffset = 0;
     }
+
+    context->messageLength = std::max(context->messageLength, offset + num);
 }
 
 Driver::Address*
@@ -125,6 +147,81 @@ void
 Transport::Message::setDestination(Driver::Address* destination)
 {
     context->address = destination;
+}
+
+Transport::Transport(Driver* driver, uint64_t transportId)
+    : driver(driver)
+    , messagePool(new Core::MessagePool())
+    , sender(new Core::Sender())
+    , scheduler(new Core::Scheduler(driver))
+    , receiver(new Core::Receiver(scheduler, messagePool))
+    , transportId(transportId)
+    , nextMessgeId(1)
+{}
+
+Transport::~Transport()
+{
+    if (receiver != nullptr)
+        delete receiver;
+    if (scheduler != nullptr)
+        delete scheduler;
+    if (sender != nullptr)
+        delete sender;
+    if (messagePool != nullptr)
+        delete messagePool;
+}
+
+Transport::Message
+Transport::newMessage()
+{
+    Transport::Message message;
+    message.context = messagePool->construct(
+        Protocol::MessageId(transportId, nextMessgeId.fetch_add(1)),
+        sizeof(Protocol::DataHeader), driver);
+    return std::move(message);
+}
+
+Transport::Message
+Transport::receiveMessage()
+{
+    Transport::Message message;
+    message.context = receiver->receiveMessage();
+    return std::move(message);
+}
+
+void
+Transport::sendMessage(Message* message, SendFlag flags, Message* completes[],
+                       uint16_t numCompletes)
+{
+    // TODO(cstlee): actually use the flags and completes
+    sender->sendMessage(message->context);
+}
+
+void
+Transport::poll()
+{
+    const int MAX_BURST = 32;
+    Driver::Packet* packets[MAX_BURST];
+    int numPackets = driver->receivePackets(MAX_BURST, packets);
+    for (int i = 0; i < numPackets; ++i) {
+        Driver::Packet* packet = packets[i];
+        assert(packet->len >= sizeof(Protocol::CommonHeader));
+        Protocol::CommonHeader* header =
+            static_cast<Protocol::CommonHeader*>(packet->payload);
+
+        switch (header->opcode) {
+            case Protocol::DATA:
+                LOG(DEBUG, "Handle DataPacket");
+                receiver->handleDataPacket(packet, driver);
+                break;
+            case Protocol::GRANT:
+                LOG(DEBUG, "Handle GrantPacket");
+                sender->handleGrantPacket(packet, driver);
+                break;
+        }
+    }
+    sender->poll();
+    receiver->poll();
 }
 
 }  // namespace Homa
