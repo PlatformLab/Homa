@@ -73,7 +73,8 @@ class Driver {
      */
     class Packet {
       public:
-        /// Packet's source (receive) or destination (send).
+        /// Packet's source (receive) or destination (send). This pointer is
+        /// only valid for the lifetime of this Packet.
         Address* address;
 
         /// Packet's network priority (send only); 0 is the lowest priority.
@@ -117,8 +118,8 @@ class Driver {
      * @param addressString
      *      See above.
      * @return
-     *      Pointer to an Address object that can be the source or
-     * destination of a Packet.
+     *      Pointer to an Address object that can be the source or destination
+     *      of a Packet. The pointer is valid for the lifetime of this Driver.
      * @throw BadAddress
      *      _addressString_ is malformed.
      *
@@ -226,7 +227,8 @@ class Driver {
 
     /**
      * Return this Driver's local network Address which it uses as the source
-     * Address for outgoing packets.
+     * Address for outgoing packets. The pointer returned is valid for the
+     * lifetime of this Driver.
      */
     virtual Address* getLocalAddress() = 0;
 };
