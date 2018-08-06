@@ -83,7 +83,10 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             MessageContext* context =
                 contextPool->construct(msgId, dataHeaderLength, driver);
             message = inboundPool.construct(context);
-            message->context->address = packet->address;
+            // Get an address pointer from the driver; the one in the packet
+            // may disappear when the packet goes away.
+            std::string addrStr = packet->address->toString();
+            message->context->address = driver->getAddress(&addrStr);
             message->context->messageLength = header->totalLength;
             messageMap.insert({msgId, message});
         }
@@ -100,7 +103,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Things that must be true (sanity check)
-    assert(message->context->address == packet->address);
+    assert(message->context->address->toString() ==
+           packet->address->toString());
     assert(message->context->messageLength == header->totalLength);
 
     // Add the packet
