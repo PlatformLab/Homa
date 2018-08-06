@@ -400,7 +400,6 @@ DpdkDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
         incomingPkts = rte_eth_rx_burst(portId, 0, mPkts,
                                         Util::downCast<uint16_t>(maxPackets));
     }
-    LOG(DEBUG, "rte_eth_rx_burst returned %u packets", incomingPkts);
 
     uint32_t loopbackPkts = rte_ring_count(loopbackRing);
     if (incomingPkts + loopbackPkts > maxPackets) {
@@ -410,7 +409,6 @@ DpdkDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
         rte_ring_dequeue(loopbackRing,
                          reinterpret_cast<void**>(&mPkts[incomingPkts + i]));
     }
-    LOG(DEBUG, "loopback returned %u packets", loopbackPkts);
     uint32_t totalPkts = incomingPkts + loopbackPkts;
 
     // Process received packets by constructing appropriate Received objects.
@@ -519,6 +517,14 @@ Driver::Address*
 DpdkDriver::getLocalAddress()
 {
     return localMac.get();
+}
+
+void
+DpdkDriver::setLocalAddress(std::string const* const addressString)
+{
+    localMac.construct(addressString->c_str());
+    LOG(NOTICE, "Driver address override; new address: %s",
+        localMac->toString().c_str());
 }
 
 /**

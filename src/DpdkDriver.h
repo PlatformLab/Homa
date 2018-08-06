@@ -148,6 +148,15 @@ class DpdkDriver : public Driver {
     /// See Driver::getLocalAddress()
     virtual Driver::Address* getLocalAddress();
 
+    /**
+     * Override the local address provided to by the NIC. Used in testing when
+     * the virtual NICs address is not actually routable.
+     *
+     * @param addressString
+     *      String representing the local address that this driver should use.
+     */
+    void setLocalAddress(std::string const* const addressString);
+
   private:
     /// Provides thread safety for Address operations.
     SpinLock addressLock;
