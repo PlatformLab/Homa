@@ -81,6 +81,23 @@ target_compile_options(DpdkDriver
         -mssse3
 )
 
+## lib Rpc #####################################################################
+add_library(Rpc
+    src/Rpc.cc
+    src/RpcManager.cc
+    src/ServerRpc.cc
+)
+add_library(Homa::Rpc ALIAS Rpc)
+target_include_directories(Rpc
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(Rpc
+    PUBLIC
+        Homa
+)
+
 ################################################################################
 ## Tests #######################################################################
 ################################################################################
