@@ -33,9 +33,14 @@ configure_file (
 
 ## lib Homa ####################################################################
 add_library(Homa
+    src/Homa.cc
+    src/Scheduler.cc
+    src/Sender.cc
     src/CodeLocation.cc
     src/Logger.cc
     src/MacAddress.cc
+    src/MessageContext.cc
+    src/Receiver.cc
     src/ThreadId.cc
     src/Util.cc
 )
