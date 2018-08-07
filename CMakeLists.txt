@@ -74,6 +74,7 @@ target_link_libraries(DpdkDriver
     PUBLIC
         -Wl,--whole-archive Dpdk::Dpdk -Wl,--no-whole-archive
         Homa
+        Threads::Threads
 )
 target_compile_options(DpdkDriver
     PRIVATE
