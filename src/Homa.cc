@@ -194,6 +194,7 @@ Transport::sendMessage(Message* message, SendFlag flags, Message* completes[],
                        uint16_t numCompletes)
 {
     // TODO(cstlee): actually use the flags and completes
+    assert(message->context->address != nullptr);
     sender->sendMessage(message->context);
 }
 
