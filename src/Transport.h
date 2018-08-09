@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_HOMA_H
-#define HOMA_HOMA_H
+#ifndef HOMA_TRANSPORT_H
+#define HOMA_TRANSPORT_H
 
 #include "Driver.h"
 
@@ -288,4 +288,4 @@ class Transport {
 
 }  // namespace Homa
 
-#endif  // HOMA_HOMA_H
+#endif  // HOMA_TRANSPORT_H
