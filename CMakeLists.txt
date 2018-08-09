@@ -33,12 +33,11 @@ configure_file (
 
 ## lib Homa ####################################################################
 add_library(Homa
-    src/Homa.cc
+    src/Transport.cc
     src/Scheduler.cc
     src/Sender.cc
     src/CodeLocation.cc
     src/Logger.cc
-    src/MacAddress.cc
     src/MessageContext.cc
     src/Receiver.cc
     src/ThreadId.cc
@@ -60,27 +59,6 @@ set_target_properties(Homa PROPERTIES
     VERSION ${Homa_VERSION}
 )
 
-## lib DpdkDriver ##############################################################
-add_library(DpdkDriver
-    src/DpdkDriver.cc
-)
-add_library(Homa::DpdkDriver ALIAS DpdkDriver)
-target_include_directories(DpdkDriver
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-        $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(DpdkDriver
-    PUBLIC
-        -Wl,--whole-archive Dpdk::Dpdk -Wl,--no-whole-archive
-        Homa
-        Threads::Threads
-)
-target_compile_options(DpdkDriver
-    PRIVATE
-        -mssse3
-)
-
 ## lib Rpc #####################################################################
 add_library(Rpc
     src/Rpc.cc
@@ -98,49 +76,15 @@ target_link_libraries(Rpc
         Homa
 )
 
+## lib Drivers #################################################################
+
+add_subdirectory(src/drivers)
+
 ################################################################################
 ## Tests #######################################################################
 ################################################################################
 
-include(FetchContent)
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        ba96d0b1161f540656efdaed035b3c062b60e006
-)
-
-FetchContent_GetProperties(googletest)
-if(NOT googletest_POPULATED)
-    FetchContent_Populate(googletest)
-    add_subdirectory(
-        ${googletest_SOURCE_DIR}
-        ${googletest_BINARY_DIR}
-        EXCLUDE_FROM_ALL
-    )
-endif()
-
-include(GoogleTest)
-
-enable_testing()
-
-add_executable(unitTest
-    src/CodeLocationTest.cc
-    src/MacAddressTest.cc
-    src/ObjectPoolTest.cc
-    src/TubTest.cc
-    src/UtilTest.cc
-)
-target_link_libraries(unitTest gtest_main Homa)
-# -fno-access-control allows access to private members for testing
-target_compile_options(unitTest PRIVATE -fno-access-control)
-# optionally add the tests that need std::thread.
-if(Threads_FOUND)
-    target_sources(unitTest PRIVATE
-        src/ThreadIdTest.cc
-    )
-    target_link_libraries(unitTest Threads::Threads)
-endif()
-gtest_discover_tests(unitTest)
+add_subdirectory(test)
 
 ################################################################################
 ## Generate Docs ###############################################################
