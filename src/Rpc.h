@@ -17,7 +17,7 @@
 #define HOMA_RPC_H
 
 #include "Driver.h"
-#include "Homa.h"
+#include "Transport.h"
 
 namespace Homa {
 

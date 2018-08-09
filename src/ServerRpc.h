@@ -16,7 +16,7 @@
 #ifndef HOMA_SERVERRPC_H
 #define HOMA_SERVERRPC_H
 
-#include "Homa.h"
+#include "Transport.h"
 
 namespace Homa {
 

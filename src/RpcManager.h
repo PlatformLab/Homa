@@ -16,9 +16,9 @@
 #ifndef HOMA_RPCMANAGER_H
 #define HOMA_RPCMANAGER_H
 
-#include "Homa.h"
 #include "RpcProtocol.h"
 #include "SpinLock.h"
+#include "Transport.h"
 
 #include <atomic>
 #include <deque>
