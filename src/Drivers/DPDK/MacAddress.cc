@@ -18,6 +18,8 @@
 #include "Util.h"
 
 namespace Homa {
+namespace Drivers {
+namespace DPDK {
 
 /**
  * Create a new address from 6 bytes.
@@ -78,4 +80,6 @@ MacAddress::isNull() const
         return false;
 }
 
+}  // namespace DPDK
+}  // namespace Drivers
 }  // namespace Homa

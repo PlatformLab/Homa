@@ -13,12 +13,14 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_MACADDRESS_H
-#define HOMA_MACADDRESS_H
+#ifndef HOMA_DRIVERS_DPDK_MACADDRESS_H
+#define HOMA_DRIVERS_DPDK_MACADDRESS_H
 
 #include "Driver.h"
 
 namespace Homa {
+namespace Drivers {
+namespace DPDK {
 
 /**
  * A container for an Ethernet hardware address.
@@ -34,6 +36,8 @@ struct MacAddress : public Driver::Address {
     uint8_t address[6];
 };
 
+}  // namespace DPDK
+}  // namespace Drivers
 }  // namespace Homa
 
-#endif  // HOMA_MACADDRESS_H
+#endif  // HOMA_DRIVERS_DPDK_MACADDRESS_H

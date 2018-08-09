@@ -1,6 +1,7 @@
 ## lib DpdkDriver ##############################################################
 add_library(DpdkDriver
     DpdkDriver.cc
+    DpdkDriverImpl.cc
     MacAddress.cc
 )
 add_library(Homa::DpdkDriver ALIAS DpdkDriver)
