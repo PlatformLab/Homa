@@ -15,6 +15,7 @@
 
 #include "MacAddress.h"
 
+#include "CodeLocation.h"
 #include "Util.h"
 
 namespace Homa {
@@ -46,7 +47,7 @@ MacAddress::MacAddress(const char* macStr)
                    &bytes[0], &bytes[1], &bytes[2], &bytes[3], &bytes[4],
                    &bytes[5]);
     if (r != 6 || macStr[17] != '\0')
-        throw BadAddress(HERE, Util::format("Bad MAC address: %s", macStr));
+        throw BadAddress(HERE_STR, Util::format("Bad MAC address: %s", macStr));
     for (uint32_t i = 0; i < 6; ++i)
         address[i] = Util::downCast<uint8_t>(bytes[i]);
 }

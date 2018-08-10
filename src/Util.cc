@@ -15,6 +15,7 @@
 
 #include "Util.h"
 
+#include "CodeLocation.h"
 #include "Exception.h"
 
 #include <cinttypes>
@@ -40,7 +41,8 @@ demangle(const char* name)
     int status;
     char* res = abi::__cxa_demangle(name, NULL, NULL, &status);
     if (status != 0) {
-        throw FatalError(HERE, "cxxabi.h's demangle() could not demangle type");
+        throw FatalError(HERE_STR,
+                         "cxxabi.h's demangle() could not demangle type");
     }
     // contruct a string with a copy of the C-style string returned.
     std::string ret(res);

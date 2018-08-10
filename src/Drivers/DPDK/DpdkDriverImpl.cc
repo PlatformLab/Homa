@@ -19,6 +19,7 @@
 
 #include "DpdkDriverImpl.h"
 
+#include "CodeLocation.h"
 #include "Util.h"
 
 #include <rte_common.h>
@@ -233,7 +234,8 @@ DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
     CPU_ZERO(&cpuset);
     s = pthread_getaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
     if (s != 0) {
-        throw DriverInitFailure(HERE, "Unable to get existing thread affinity");
+        throw DriverInitFailure(HERE_STR,
+                                "Unable to get existing thread affinity");
     }
 
     _eal_init(argc, argv);
@@ -242,7 +244,7 @@ DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
     // restore the original thread affinity
     s = pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
     if (s != 0) {
-        throw DriverInitFailure(HERE,
+        throw DriverInitFailure(HERE_STR,
                                 "Unable to restore original thread affinity");
     }
 }
@@ -600,7 +602,7 @@ DpdkDriverImpl::_eal_init(int argc, char* argv[])
 {
     int ret = rte_eal_init(argc, argv);
     if (ret < 0) {
-        throw DriverInitFailure(HERE,
+        throw DriverInitFailure(HERE_STR,
                                 "rte_eal_init failed; Invalid EAL arguments");
     }
 }
@@ -636,7 +638,7 @@ DpdkDriverImpl::_init(int port)
                                 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
     if (!mbufPool) {
         throw DriverInitFailure(
-            HERE,
+            HERE_STR,
             Util::format("Failed to allocate memory for packet buffers: %s",
                          rte_strerror(rte_errno)));
     }
@@ -646,7 +648,7 @@ DpdkDriverImpl::_init(int port)
 
     if (numPorts <= portId) {
         throw DriverInitFailure(
-            HERE,
+            HERE_STR,
             Util::format("Ethernet port %u doesn't exist (%u ports available)",
                          portId, numPorts));
     }
@@ -694,18 +696,19 @@ DpdkDriverImpl::_init(int port)
     ret = rte_eth_dev_get_mtu(portId, &mtu);
     if (ret < 0) {
         throw DriverInitFailure(
-            HERE, Util::format("rte_eth_dev_get_mtu on port %u returned "
-                               "ENODEV; unable to read current mtu",
-                               portId));
+            HERE_STR, Util::format("rte_eth_dev_get_mtu on port %u returned "
+                                   "ENODEV; unable to read current mtu",
+                                   portId));
     }
     // set the MTU that the NIC port should support
     if (mtu != MAX_PAYLOAD_SIZE) {
         ret = rte_eth_dev_set_mtu(portId, MAX_PAYLOAD_SIZE);
         if (ret != 0) {
             throw DriverInitFailure(
-                HERE, Util::format("Failed to set the MTU on Ethernet port %u: "
-                                   "%s; current MTU is %u",
-                                   portId, strerror(ret), mtu));
+                HERE_STR,
+                Util::format("Failed to set the MTU on Ethernet port %u: "
+                             "%s; current MTU is %u",
+                             portId, strerror(ret), mtu));
         }
         mtu = MAX_PAYLOAD_SIZE;
     }
@@ -713,8 +716,8 @@ DpdkDriverImpl::_init(int port)
     ret = rte_eth_dev_start(portId);
     if (ret != 0) {
         throw DriverInitFailure(
-            HERE, Util::format("Couldn't start port %u, error %d (%s)", portId,
-                               ret, strerror(ret)));
+            HERE_STR, Util::format("Couldn't start port %u, error %d (%s)",
+                                   portId, ret, strerror(ret)));
     }
 
     // Retrieve the link speed and compute information based on it.
@@ -722,8 +725,9 @@ DpdkDriverImpl::_init(int port)
     rte_eth_link_get(portId, &link);
     if (!link.link_status) {
         throw DriverInitFailure(
-            HERE, Util::format("Failed to detect a link on Ethernet port %u",
-                               portId));
+            HERE_STR,
+            Util::format("Failed to detect a link on Ethernet port %u",
+                         portId));
     }
     if (link.link_speed != ETH_SPEED_NUM_NONE) {
         // Be conservative about the link speed. We use bandwidth in
@@ -744,8 +748,8 @@ DpdkDriverImpl::_init(int port)
     loopbackRing = rte_ring_create(ringName.c_str(), 4096, SOCKET_ID_ANY, 0);
     if (NULL == loopbackRing) {
         throw DriverInitFailure(
-            HERE, Util::format("Failed to allocate loopback ring: %s",
-                               rte_strerror(rte_errno)));
+            HERE_STR, Util::format("Failed to allocate loopback ring: %s",
+                                   rte_strerror(rte_errno)));
     }
 
     LOG(NOTICE,

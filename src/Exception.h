@@ -16,8 +16,6 @@
 #ifndef HOMA_EXCEPTION_H
 #define HOMA_EXCEPTION_H
 
-#include "CodeLocation.h"
-
 #include "Util.h"
 
 #include <cxxabi.h>
@@ -32,19 +30,19 @@ namespace Homa {
  * The base class for all Homa exceptions.
  */
 struct Exception : public std::exception {
-    explicit Exception(const CodeLocation& where)
+    explicit Exception(const std::string& where)
         : message("")
         , errNo(0)
         , where(where)
         , whatCache()
     {}
-    Exception(const CodeLocation& where, std::string msg)
+    Exception(const std::string& where, std::string msg)
         : message(msg)
         , errNo(0)
         , where(where)
         , whatCache()
     {}
-    Exception(const CodeLocation& where, int errNo)
+    Exception(const std::string& where, int errNo)
         : message("")
         , errNo(errNo)
         , where(where)
@@ -52,7 +50,7 @@ struct Exception : public std::exception {
     {
         message = std::strerror(errNo);
     }
-    Exception(const CodeLocation& where, std::string msg, int errNo)
+    Exception(const std::string& where, std::string msg, int errNo)
         : message(msg + ": " + std::strerror(errNo))
         , errNo(errNo)
         , where(where)
@@ -68,7 +66,7 @@ struct Exception : public std::exception {
     std::string str() const
     {
         return (Util::demangle(typeid(*this).name()) + ": " + message +
-                ", thrown at " + where.str());
+                ", thrown at " + where);
     }
     const char* what() const throw()
     {
@@ -82,7 +80,7 @@ struct Exception : public std::exception {
     }
     std::string message;
     int errNo;
-    CodeLocation where;
+    std::string where;
 
   private:
     mutable std::unique_ptr<const char[]> whatCache;
@@ -92,16 +90,16 @@ struct Exception : public std::exception {
  * A fatal error that should exit the program.
  */
 struct FatalError : public Exception {
-    explicit FatalError(const CodeLocation& where)
+    explicit FatalError(const std::string& where)
         : Exception(where)
     {}
-    FatalError(const CodeLocation& where, std::string msg)
+    FatalError(const std::string& where, std::string msg)
         : Exception(where, msg)
     {}
-    FatalError(const CodeLocation& where, int errNo)
+    FatalError(const std::string& where, int errNo)
         : Exception(where, errNo)
     {}
-    FatalError(const CodeLocation& where, std::string msg, int errNo)
+    FatalError(const std::string& where, std::string msg, int errNo)
         : Exception(where, msg, errNo)
     {}
 };

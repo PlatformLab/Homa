@@ -41,7 +41,7 @@
 namespace Homa {
 
 struct ObjectPoolException : public Exception {
-    ObjectPoolException(const CodeLocation& where, std::string msg)
+    ObjectPoolException(const std::string& where, std::string msg)
         : Exception(where, msg)
     {}
 };

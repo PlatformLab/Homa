@@ -237,16 +237,16 @@ class Driver {
  * Thrown if a Driver cannot be initialized properly.
  */
 struct DriverInitFailure : public Exception {
-    explicit DriverInitFailure(const CodeLocation& where)
+    explicit DriverInitFailure(const std::string& where)
         : Exception(where)
     {}
-    DriverInitFailure(const CodeLocation& where, std::string msg)
+    DriverInitFailure(const std::string& where, std::string msg)
         : Exception(where, msg)
     {}
-    DriverInitFailure(const CodeLocation& where, int errNo)
+    DriverInitFailure(const std::string& where, int errNo)
         : Exception(where, errNo)
     {}
-    DriverInitFailure(const CodeLocation& where, std::string msg, int errNo)
+    DriverInitFailure(const std::string& where, std::string msg, int errNo)
         : Exception(where, msg, errNo)
     {}
 };
@@ -255,16 +255,16 @@ struct DriverInitFailure : public Exception {
  * Thrown if the Address provided is malformed or in some way not useable.
  */
 struct BadAddress : public Exception {
-    explicit BadAddress(const CodeLocation& where)
+    explicit BadAddress(const std::string& where)
         : Exception(where)
     {}
-    BadAddress(const CodeLocation& where, std::string msg)
+    BadAddress(const std::string& where, std::string msg)
         : Exception(where, msg)
     {}
-    BadAddress(const CodeLocation& where, int errNo)
+    BadAddress(const std::string& where, int errNo)
         : Exception(where, errNo)
     {}
-    BadAddress(const CodeLocation& where, std::string msg, int errNo)
+    BadAddress(const std::string& where, std::string msg, int errNo)
         : Exception(where, msg, errNo)
     {}
 };

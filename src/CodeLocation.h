@@ -57,6 +57,13 @@ struct CodeLocation {
 #define HERE \
     Homa::CodeLocation(__FILE__, __LINE__, __func__, __PRETTY_FUNCTION__)
 
+/**
+ * Constructs a string representation of #CodeLocation destrcibing the line
+ * from where this macro is invoked.
+ */
+#define HERE_STR \
+    Homa::CodeLocation(__FILE__, __LINE__, __func__, __PRETTY_FUNCTION__).str()
+
 }  // namespace Homa
 
 #endif  // HOMA_CODELOCATION_H
