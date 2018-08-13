@@ -82,16 +82,16 @@ target_include_directories(DpdkDriver
         $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(DpdkDriver
-    PUBLIC
+    PRIVATE
         -Wl,--whole-archive Dpdk::Dpdk -Wl,--no-whole-archive
-        Homa
         Threads::Threads
+    PUBLIC
+        Homa
 )
 target_compile_options(DpdkDriver
     PRIVATE
         -mssse3
 )
-
 
 ################################################################################
 ## Tests #######################################################################
@@ -113,24 +113,17 @@ endif()
 ## Install & Export ############################################################
 ################################################################################
 
-install(TARGETS Homa EXPORT HomaTargets 
+install(TARGETS Homa DpdkDriver EXPORT HomaTargets 
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
     INCLUDES DESTINATION include
 )
 install(
-    FILES
-        include/Homa/Driver.h
-        include/Homa/Exception.h
-        include/Homa/Message.h
-        include/Homa/Rpc.h
-        include/Homa/RpcManager.h
-        include/Homa/ServerRpc.h
-        include/Homa/Transport.h
-        include/Homa/Util.h
-    DESTINATION
+    DIRECTORY
         include/Homa
+    DESTINATION
+        include
 )
 
 include(CMakePackageConfigHelpers)
@@ -141,12 +134,14 @@ write_basic_package_version_file(
 )
 
 export(EXPORT HomaTargets
+    NAMESPACE Homa::
     FILE "${CMAKE_CURRENT_BINARY_DIR}/Homa/HomaTargets.cmake"
 )
 
 install(EXPORT HomaTargets
-    FILE HomaTargets.cmake
     DESTINATION lib/cmake/Homa
+    NAMESPACE Homa::
+    FILE HomaTargets.cmake
 )
 
 configure_file(cmake/HomaConfig.cmake
