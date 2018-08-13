@@ -15,8 +15,9 @@
 
 #include "MacAddress.h"
 
-#include "CodeLocation.h"
-#include "Util.h"
+#include "Homa/Util.h"
+
+#include "../../CodeLocation.h"
 
 namespace Homa {
 namespace Drivers {

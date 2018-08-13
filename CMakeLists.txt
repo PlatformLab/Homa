@@ -33,22 +33,28 @@ configure_file (
 
 ## lib Homa ####################################################################
 add_library(Homa
-    src/Transport.cc
-    src/Scheduler.cc
-    src/Sender.cc
     src/CodeLocation.cc
     src/Logger.cc
     src/MessageContext.cc
     src/Receiver.cc
+    src/Rpc.cc
+    src/RpcManager.cc
+    src/RpcManagerImpl.cc
+    src/Scheduler.cc
+    src/Sender.cc
+    src/ServerRpc.cc
     src/ThreadId.cc
+    src/Transport.cc
+    src/TransportImpl.cc
     src/Util.cc
 )
 add_library(Homa::Homa ALIAS Homa)
 target_include_directories(Homa
     PRIVATE
         ${PROJECT_BINARY_DIR}   # include so that we will find HomaConfig.h
+        # ${CMAKE_CURRENT_SOURCE_DIR}/src     # for internal implementation
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 target_compile_features(Homa
@@ -57,23 +63,6 @@ target_compile_features(Homa
 )
 set_target_properties(Homa PROPERTIES
     VERSION ${Homa_VERSION}
-)
-
-## lib Rpc #####################################################################
-add_library(Rpc
-    src/Rpc.cc
-    src/RpcManager.cc
-    src/ServerRpc.cc
-)
-add_library(Homa::Rpc ALIAS Rpc)
-target_include_directories(Rpc
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-        $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(Rpc
-    PUBLIC
-        Homa
 )
 
 ## lib Drivers #################################################################

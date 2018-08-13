@@ -19,8 +19,9 @@
 
 #include "DpdkDriverImpl.h"
 
-#include "CodeLocation.h"
-#include "Util.h"
+#include "Homa/Util.h"
+
+#include "../../CodeLocation.h"
 
 #include <rte_common.h>
 #include <rte_config.h>

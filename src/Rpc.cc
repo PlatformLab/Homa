@@ -13,9 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "Rpc.h"
+#include "Homa/Rpc.h"
 
-#include "RpcManager.h"
+#include "Homa/RpcManager.h"
 
 namespace Homa {
 

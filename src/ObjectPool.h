@@ -16,7 +16,8 @@
 #ifndef HOMA_OBJECTPOOL_H
 #define HOMA_OBJECTPOOL_H
 
-#include "Exception.h"
+#include "Homa/Exception.h"
+
 #include "Logger.h"
 
 #include <vector>

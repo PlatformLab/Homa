@@ -16,7 +16,7 @@
 #ifndef HOMA_DRIVER_H
 #define HOMA_DRIVER_H
 
-#include "Exception.h"
+#include "Homa/Exception.h"
 
 #include <string>
 #include <vector>

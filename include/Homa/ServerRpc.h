@@ -16,7 +16,8 @@
 #ifndef HOMA_SERVERRPC_H
 #define HOMA_SERVERRPC_H
 
-#include "Transport.h"
+#include "Homa/Message.h"
+#include "Homa/Transport.h"
 
 namespace Homa {
 
@@ -72,13 +73,13 @@ class ServerRpc {
      * Contains the request for this RPC. The first part this message is the
      * RpcHeader.
      */
-    Transport::Message request;
+    Message request;
 
     /**
      * Used by the caller to construct the RPC's response. The first part this
      * message must be reserved for the RpcHeader.
      */
-    Transport::Message response;
+    Message response;
 
     /// Manager responsible for receiving the request and sending the response.
     RpcManager* manager;

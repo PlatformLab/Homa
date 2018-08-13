@@ -16,8 +16,9 @@
 #ifndef HOMA_RPC_H
 #define HOMA_RPC_H
 
-#include "Driver.h"
-#include "Transport.h"
+#include "Homa/Driver.h"
+#include "Homa/Message.h"
+#include "Homa/Transport.h"
 
 namespace Homa {
 
@@ -84,7 +85,7 @@ class Rpc {
      *
      * WARNING: Do not modify the request after calling send().
      */
-    Transport::Message request;
+    Message request;
 
     /**
      * Contains the response for this RPC. The first part this message is the
@@ -92,7 +93,7 @@ class Rpc {
      *
      * WARNING: Do not access the response until after calling wait().
      */
-    Transport::Message response;
+    Message response;
 
     /**
      * Invoked by the RpcManager when the RpcManager has fill out the response

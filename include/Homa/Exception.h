@@ -16,7 +16,7 @@
 #ifndef HOMA_EXCEPTION_H
 #define HOMA_EXCEPTION_H
 
-#include "Util.h"
+#include "Homa/Util.h"
 
 #include <cxxabi.h>
 #include <cstring>

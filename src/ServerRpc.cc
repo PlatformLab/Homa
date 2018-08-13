@@ -13,9 +13,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "ServerRpc.h"
+#include "Homa/ServerRpc.h"
 
-#include "RpcManager.h"
+#include "Homa/RpcManager.h"
 
 #include <algorithm>
 

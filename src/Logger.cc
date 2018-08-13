@@ -15,8 +15,9 @@
 
 #include "Logger.h"
 
+#include "Homa/Util.h"
+
 #include "ThreadId.h"
-#include "Util.h"
 
 #include <time.h>
 #include <cstdarg>

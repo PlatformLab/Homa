@@ -16,7 +16,8 @@
 #ifndef HOMA_CORE_RECEIVER_H
 #define HOMA_CORE_RECEIVER_H
 
-#include "Driver.h"
+#include "Homa/Driver.h"
+
 #include "MessageContext.h"
 #include "Protocol.h"
 #include "Scheduler.h"

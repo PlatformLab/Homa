@@ -16,7 +16,8 @@
 #ifndef HOMA_CORE_MESSAGECONTEXT_H
 #define HOMA_CORE_MESSAGECONTEXT_H
 
-#include "Driver.h"
+#include "Homa/Driver.h"
+
 #include "ObjectPool.h"
 #include "Protocol.h"
 #include "SpinLock.h"

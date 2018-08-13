@@ -16,7 +16,7 @@
 #ifndef HOMA_DRIVERS_DPDK_MACADDRESS_H
 #define HOMA_DRIVERS_DPDK_MACADDRESS_H
 
-#include "Driver.h"
+#include "Homa/Driver.h"
 
 namespace Homa {
 namespace Drivers {

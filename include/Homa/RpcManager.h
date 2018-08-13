@@ -16,13 +16,9 @@
 #ifndef HOMA_RPCMANAGER_H
 #define HOMA_RPCMANAGER_H
 
-#include "RpcProtocol.h"
-#include "SpinLock.h"
-#include "Transport.h"
-
-#include <atomic>
-#include <deque>
-#include <unordered_map>
+#include "Homa/Driver.h"
+#include "Homa/Message.h"
+#include "Homa/Transport.h"
 
 namespace Homa {
 
@@ -32,33 +28,32 @@ class ServerRpc;
 
 /**
  * RpcManager coordinates the sending and receiving of request and response
- * Transport::Message objects for Rpc objects and ServerRpc objects.
+ * Message objects for Rpc objects and ServerRpc objects.
  *
  * This class is thread-safe;
  */
 class RpcManager {
   public:
     /**
-     * RpcManager contstructor.
+     * Return a newly constructed RpcManager.
+     *
+     * Caller is responsible for calling delete on the RpcManager.
      *
      * @param transport
      *      Transport with which messages will be sent and received.
      * @param managerId
      *      Unique identifier for this RpcManager.
+     * @return
+     *      Pointer to new RpcManager.
      */
-    explicit RpcManager(Transport* transport, uint64_t managerId);
-
-    /**
-     * RpcManager destructor.
-     */
-    ~RpcManager();
+    static RpcManager* newRpcManager(Transport* transport, uint64_t managerId);
 
     /**
      * Return an incoming ServerRpc if an incoming request is available.
      *
      * Called by server implmentations.
      */
-    ServerRpc receiveServerRpc();
+    virtual ServerRpc receiveServerRpc() = 0;
 
     /**
      * Make incremental progress mananging all incoming and outgoing RPCs. Must
@@ -66,7 +61,7 @@ class RpcManager {
      *
      * Called by both client and server implmentations.
      */
-    void poll();
+    virtual void poll() = 0;
 
     /**
      * Return a new Transport::Message that can be used for an RPC request.
@@ -76,7 +71,7 @@ class RpcManager {
      * @param address
      *      Network address to which the RPC request should be sent.
      */
-    Transport::Message newRequest(Driver::Address* address);
+    virtual Message newRequest(Driver::Address* address) = 0;
 
     /**
      * Send an RPC.
@@ -86,7 +81,7 @@ class RpcManager {
      * @parma rpc
      *      Pointer to the RPC to be sent.
      */
-    void sendRpc(Rpc* rpc);
+    virtual void sendRpc(Rpc* rpc) = 0;
 
     /**
      * Send the response for a ServerRpc.
@@ -96,30 +91,7 @@ class RpcManager {
      * @param serverRpc
      *      ServerRpc's whose response should be sent.
      */
-    void sendServerRpcResponse(ServerRpc* serverRpc);
-
-  private:
-    /// Transport with which this RpcManager will send and receive messages.
-    Transport* const transport;
-
-    /// Unique identifer for this RpcManager.
-    const uint64_t managerId;
-
-    /// RPC sequence number that should be used for the next outgoing RpcId.
-    std::atomic<uint64_t> nextRpcId;
-
-    /// Protects access to the _rpcMap_.
-    SpinLock rpcMapMutex;
-
-    /// Collection of outgoing RPC's awaiting responses.
-    std::unordered_map<RpcProtocol::RpcId, Rpc*, RpcProtocol::RpcId::Hasher>
-        rpcMap;
-
-    /// Protects access to the _requestQueue_.
-    SpinLock requestQueueMutex;
-
-    /// Queue of incoming requests awaiting processing.
-    std::deque<Transport::Message> requestQueue;
+    virtual void sendServerRpcResponse(ServerRpc* serverRpc) = 0;
 };
 
 }  // namespace Homa

@@ -18,12 +18,14 @@
 #ifndef HOMA_DRIVERS_DPDK_DPDKDRIVERIMPL_H
 #define HOMA_DRIVERS_DPDK_DPDKDRIVERIMPL_H
 
-#include "DpdkDriver.h"
-#include "Driver.h"
+#include "Homa/Driver.h"
+#include "Homa/Drivers/DPDK/DpdkDriver.h"
+
+#include "../../ObjectPool.h"
+#include "../../SpinLock.h"
+#include "../../Tub.h"
+
 #include "MacAddress.h"
-#include "ObjectPool.h"
-#include "SpinLock.h"
-#include "Tub.h"
 
 #include <unordered_map>
 #include <vector>

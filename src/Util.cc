@@ -13,10 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "Util.h"
+#include "Homa/Util.h"
+
+#include "Homa/Exception.h"
 
 #include "CodeLocation.h"
-#include "Exception.h"
 
 #include <cinttypes>
 #include <sstream>

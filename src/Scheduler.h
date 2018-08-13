@@ -16,7 +16,8 @@
 #ifndef HOMA_CORE_SCHEDULER_H
 #define HOMA_CORE_SCHEDULER_H
 
-#include "Driver.h"
+#include "Homa/Driver.h"
+
 #include "Protocol.h"
 
 namespace Homa {
