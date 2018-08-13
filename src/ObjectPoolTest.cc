@@ -20,7 +20,9 @@
 
 #include "ObjectPool.h"
 
-#include "Util.h"
+#include "CodeLocation.h"
+
+#include <Homa/Util.h>
 
 #include <gtest/gtest.h>
 
@@ -36,7 +38,7 @@ class TestObject {
         : destroyed(NULL)
     {
         if (throwException)
-            throw Exception(HERE, "Yes, me Lord.");
+            throw Exception(HERE_STR, "Yes, me Lord.");
     }
 
     explicit TestObject(bool* destroyed)

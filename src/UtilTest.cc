@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "Util.h"
+#include <Homa/Util.h>
 
 #include <gtest/gtest.h>
 
