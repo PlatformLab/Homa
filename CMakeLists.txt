@@ -187,7 +187,7 @@ add_executable(unit_test
     src/TubTest.cc
     src/UtilTest.cc
 )
-target_link_libraries(unit_test gtest_main Homa)
+target_link_libraries(unit_test gmock_main Homa)
 # -fno-access-control allows access to private members for testing
 target_compile_options(unit_test PRIVATE -fno-access-control)
 # optionally add the tests that need std::thread.
