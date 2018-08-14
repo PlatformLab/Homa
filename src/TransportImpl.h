@@ -16,14 +16,12 @@
 #ifndef HOMA_TRANSPORTIMPL_H
 #define HOMA_TRANSPORTIMPL_H
 
-#include "Homa/Driver.h"
-#include "Homa/Message.h"
-#include "Homa/Transport.h"
-
 #include "MessageContext.h"
 #include "Receiver.h"
 #include "Scheduler.h"
 #include "Sender.h"
+
+#include <Homa/Homa.h>
 
 #include <atomic>
 #include <bitset>
@@ -33,28 +31,28 @@
  * Homa
  */
 namespace Homa {
+namespace Core {
 
 /**
  * Provides the implementation of Homa::Transport.
  *
  * This class is thread-safe.
  */
-class TransportImpl : public Transport {
+class TransportImpl {
   public:
     explicit TransportImpl(Driver* driver, uint64_t transportId);
 
-    virtual ~TransportImpl();
-    virtual Message newMessage();
-    virtual Message receiveMessage();
-    virtual void sendMessage(Message* message, SendFlag flags = SEND_NO_FLAGS,
-                             Message* completes[] = nullptr,
-                             uint16_t numCompletes = 0);
-    virtual void poll();
+    ~TransportImpl();
+    Message newMessage();
+    Message receiveMessage();
+    void sendMessage(Message* message, SendFlag flags = SEND_NO_FLAGS,
+                     Message* completes[] = nullptr, uint16_t numCompletes = 0);
+    void poll();
+
+    /// Driver from which this transport will send and receive packets.
+    Driver* const driver;
 
   private:
-    /// Driver from which this transport will send and receive packets.
-    Driver* driver;
-
     /// Pool from which this transport will allocation MessageContext objects.
     Core::MessagePool messagePool;
 
@@ -74,6 +72,7 @@ class TransportImpl : public Transport {
     std::atomic<uint64_t> nextMessgeId;
 };
 
+}  // namespace Core
 }  // namespace Homa
 
 #endif  // HOMA_TRANSPORTIMPL_H

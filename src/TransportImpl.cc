@@ -21,6 +21,7 @@
 #include <utility>
 
 namespace Homa {
+namespace Core {
 
 /**
  * Construct an instances of a Homa-based transport.
@@ -54,15 +55,20 @@ TransportImpl::newMessage()
     Core::MessageContext* context = messagePool.construct(
         Protocol::MessageId(transportId, nextMessgeId.fetch_add(1)),
         sizeof(Protocol::DataHeader), driver);
-    return Message(context);
+    message.context = context;
+    message.transportImpl = this;
+    return message;
 }
 
 /// See Homa::Transport::receiveMessage()
 Message
 TransportImpl::receiveMessage()
 {
+    Message message;
     Core::MessageContext* context = receiver.receiveMessage();
-    return Message(context);
+    message.context = context;
+    message.transportImpl = this;
+    return message;
 }
 
 /// See Homa::Transport::sendMessage()
@@ -71,8 +77,8 @@ TransportImpl::sendMessage(Message* message, SendFlag flags,
                            Message* completes[], uint16_t numCompletes)
 {
     // TODO(cstlee): actually use the flags and completes
-    assert(message->getContext()->address != nullptr);
-    sender.sendMessage(message->getContext());
+    assert(message->context->address != nullptr);
+    sender.sendMessage(message->context);
 }
 
 /// See Homa::Transport::poll()
@@ -103,4 +109,5 @@ TransportImpl::poll()
     receiver.poll();
 }
 
+}  // namespace Core
 }  // namespace Homa

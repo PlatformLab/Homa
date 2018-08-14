@@ -34,6 +34,7 @@ configure_file (
 ## lib Homa ####################################################################
 add_library(Homa
     src/CodeLocation.cc
+    src/Homa.cc
     src/Logger.cc
     src/MessageContext.cc
     src/Receiver.cc
@@ -44,7 +45,6 @@ add_library(Homa
     src/Sender.cc
     src/ServerRpc.cc
     src/ThreadId.cc
-    src/Transport.cc
     src/TransportImpl.cc
     src/Util.cc
 )

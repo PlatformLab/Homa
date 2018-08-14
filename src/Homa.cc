@@ -13,26 +13,24 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "Homa/Message.h"
+#include <Homa/Homa.h>
 
 #include "MessageContext.h"
+#include "TransportImpl.h"
 
 namespace Homa {
 
 Message::Message()
     : context(nullptr)
+    , transportImpl(nullptr)
 {}
-
-Message::Message(Core::MessageContext* context)
-    : context(context)
-{
-    assert(context != nullptr);
-}
 
 Message::Message(Message&& other)
     : context(std::move(other.context))
+    , transportImpl(std::move(other.transportImpl))
 {
     other.context = nullptr;
+    other.transportImpl = nullptr;
 }
 
 Message::~Message()
@@ -46,11 +44,13 @@ Message&
 Message::operator=(Message&& other)
 {
     context = std::move(other.context);
+    transportImpl = std::move(other.transportImpl);
     other.context = nullptr;
+    other.transportImpl = nullptr;
     return *this;
 }
 
-Message::operator bool()
+Message::operator bool() const
 {
     if (context != nullptr) {
         return true;
@@ -144,15 +144,50 @@ Message::getAddress() const
 }
 
 void
-Message::setDestination(Driver::Address* destination)
+Message::send(SendFlag flags, Message* completes[], uint16_t numCompletes)
 {
-    context->address = destination;
+    transportImpl->sendMessage(this, flags, completes, numCompletes);
 }
 
-Core::MessageContext*
-Message::getContext() const
+void
+Message::send(Driver::Address* destination, SendFlag flags,
+              Message* completes[], uint16_t numCompletes)
 {
-    return context;
+    context->address = destination;
+    transportImpl->sendMessage(this, flags, completes, numCompletes);
+}
+
+Transport::Transport(Driver* driver, uint64_t transportId)
+    : transportImpl(new Core::TransportImpl(driver, transportId))
+{}
+
+Transport::~Transport()
+{
+    delete transportImpl;
+}
+
+Message
+Transport::newMessage()
+{
+    return transportImpl->newMessage();
+}
+
+Message
+Transport::receiveMessage()
+{
+    return transportImpl->receiveMessage();
+}
+
+Driver::Address*
+Transport::getAddress(std::string const* const addressString)
+{
+    return transportImpl->driver->getAddress(addressString);
+}
+
+void
+Transport::poll()
+{
+    transportImpl->poll();
 }
 
 }  // namespace Homa
