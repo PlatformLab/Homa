@@ -16,8 +16,7 @@
 #ifndef HOMA_SERVERRPC_H
 #define HOMA_SERVERRPC_H
 
-#include "Homa/Message.h"
-#include "Homa/Transport.h"
+#include <Homa/Homa.h>
 
 namespace Homa {
 

@@ -17,10 +17,11 @@
 #define HOMA_RPCMANAGERIMPL_H
 
 #include "Homa/RpcManager.h"
-#include "Homa/Transport.h"
 
 #include "RpcProtocol.h"
 #include "SpinLock.h"
+
+#include <Homa/Homa.h>
 
 #include <atomic>
 #include <deque>

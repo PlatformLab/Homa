@@ -16,9 +16,7 @@
 #ifndef HOMA_RPCMANAGER_H
 #define HOMA_RPCMANAGER_H
 
-#include "Homa/Driver.h"
-#include "Homa/Message.h"
-#include "Homa/Transport.h"
+#include <Homa/Homa.h>
 
 namespace Homa {
 

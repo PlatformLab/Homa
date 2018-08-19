@@ -131,7 +131,7 @@ RpcManagerImpl::sendRpc(Rpc* rpc)
         }
     }
     // Don't need to hold the rpcMapMutex while sending.
-    transport->sendMessage(&(rpc->request), SEND_NO_ACK | SEND_EXPECT_RESPONSE);
+    rpc->request.send(SEND_NO_ACK | SEND_EXPECT_RESPONSE);
 }
 
 /// See Homa::RpcManager::sendServerRpcResponse()
@@ -140,7 +140,7 @@ RpcManagerImpl::sendServerRpcResponse(ServerRpc* serverRpc)
 {
     Message* request = &(serverRpc->request);
     Message* response = &(serverRpc->response);
-    transport->sendMessage(response, SEND_NO_ACK | SEND_DETACHED, &request, 1);
+    response->send(SEND_NO_ACK | SEND_DETACHED, &request, 1);
 }
 
 }  // namespace Homa
