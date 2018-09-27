@@ -25,6 +25,12 @@ TEST(CodeLocationTest, str)
     EXPECT_EQ("FOO::bar at src/FOO.cc:42", where.str());
 }
 
+TEST(CodeLocationTest, baseFileName)
+{
+    CodeLocation where("src/FOO.cc", 42, "bar", "void FOO::bar(int i)");
+    EXPECT_STREQ("FOO.cc", where.baseFileName());
+}
+
 TEST(CodeLocationTest, relativeFile)
 {
     CodeLocation where = HERE;
