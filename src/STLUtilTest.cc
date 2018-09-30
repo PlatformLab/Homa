@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012 Stanford University
+/* Copyright (c) 2011-2018 Stanford University
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -13,15 +13,14 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <gtest/gtest.h>
 #include <map>
 #include <string>
 #include <vector>
-#include <gtest/gtest.h>
 
-#include "Core/STLUtil.h"
+#include "STLUtil.h"
 
-namespace LogCabin {
-namespace Core {
+namespace Homa {
 namespace STLUtil {
 namespace {
 
@@ -30,47 +29,43 @@ using std::pair;
 using std::string;
 using std::vector;
 
-const map<int, string> empty {};
+const map<int, string> empty{};
 
-const map<int, string> digits {
-    { 1, "one" },
-    { 2, "two" },
-    { 3, "three" },
+const map<int, string> digits{
+    {1, "one"},
+    {2, "two"},
+    {3, "three"},
 };
 
-TEST(CoreSTLUtilTest, sorted) {
-    EXPECT_EQ((vector<int> {}),
-              sorted(vector<int> {}));
-    EXPECT_EQ((vector<int> { 1, 5, 7}),
-              sorted(vector<int> {5, 1, 7}));
+TEST(STLUtilTest, sorted)
+{
+    EXPECT_EQ((vector<int>{}), sorted(vector<int>{}));
+    EXPECT_EQ((vector<int>{1, 5, 7}), sorted(vector<int>{5, 1, 7}));
 }
 
-TEST(CoreSTLUtilTest, getKeys) {
-    EXPECT_EQ((vector<int>{}),
-              getKeys(empty));
-    EXPECT_EQ((vector<int>{ 1, 2, 3 }),
-              getKeys(digits));
+TEST(STLUtilTest, getKeys)
+{
+    EXPECT_EQ((vector<int>{}), getKeys(empty));
+    EXPECT_EQ((vector<int>{1, 2, 3}), getKeys(digits));
 }
 
-TEST(CoreSTLUtilTest, getValues) {
-    EXPECT_EQ((vector<string>{}),
-              getValues(empty));
-    EXPECT_EQ((vector<string>{ "one", "two", "three" }),
-              getValues(digits));
+TEST(STLUtilTest, getValues)
+{
+    EXPECT_EQ((vector<string>{}), getValues(empty));
+    EXPECT_EQ((vector<string>{"one", "two", "three"}), getValues(digits));
 }
 
-TEST(CoreSTLUtilTest, getItems) {
-    EXPECT_EQ((vector<pair<int, string>>{}),
-              getItems(empty));
+TEST(STLUtilTest, getItems)
+{
+    EXPECT_EQ((vector<pair<int, string>>{}), getItems(empty));
     EXPECT_EQ((vector<pair<int, string>>{
-                    {1, "one"},
-                    {2, "two"},
-                    {3, "three"},
-               }),
+                  {1, "one"},
+                  {2, "two"},
+                  {3, "three"},
+              }),
               getItems(digits));
 }
 
-} // namespace LogCabin::Core::STLUtil::<anonymous>
-} // namespace LogCabin::Core::STLUtil
-} // namespace LogCabin::Core
-} // namespace LogCabin
+}  // namespace
+}  // namespace STLUtil
+}  // namespace Homa

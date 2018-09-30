@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012 Stanford University
+/* Copyright (c) 2011-2018 Stanford University
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,11 +16,10 @@
 #include <algorithm>
 #include <vector>
 
-#ifndef LOGCABIN_CORE_STLUTIL_H
-#define LOGCABIN_CORE_STLUTIL_H
+#ifndef HOMA_STLUTIL_H
+#define HOMA_STLUTIL_H
 
-namespace LogCabin {
-namespace Core {
+namespace Homa {
 namespace STLUtil {
 
 /**
@@ -30,7 +29,7 @@ namespace STLUtil {
  * \return
  *      The sorted input.
  */
-template<typename Container>
+template <typename Container>
 Container
 sorted(Container container)
 {
@@ -41,7 +40,7 @@ sorted(Container container)
 /**
  * Return a copy of the keys of a map.
  */
-template<typename Map>
+template <typename Map>
 std::vector<typename Map::key_type>
 getKeys(const Map& map)
 {
@@ -54,7 +53,7 @@ getKeys(const Map& map)
 /**
  * Return a copy of the values of a map.
  */
-template<typename Map>
+template <typename Map>
 std::vector<typename Map::mapped_type>
 getValues(const Map& map)
 {
@@ -67,20 +66,17 @@ getValues(const Map& map)
 /**
  * Return a copy of the key-value pairs of a map.
  */
-template<typename Map>
-std::vector<std::pair<typename Map::key_type,
-                      typename Map::mapped_type>>
+template <typename Map>
+std::vector<std::pair<typename Map::key_type, typename Map::mapped_type>>
 getItems(const Map& map)
 {
-    std::vector<std::pair<typename Map::key_type,
-                          typename Map::mapped_type>> items;
-    for (auto it = map.begin(); it != map.end(); ++it)
-        items.push_back(*it);
+    std::vector<std::pair<typename Map::key_type, typename Map::mapped_type>>
+        items;
+    for (auto it = map.begin(); it != map.end(); ++it) items.push_back(*it);
     return items;
 }
 
-} // namespace LogCabin::Core::STLUtil
-} // namespace LogCabin::Core
-} // namespace LogCabin
+}  // namespace STLUtil
+}  // namespace Homa
 
-#endif /* LOGCABIN_CORE_STLUTIL_H */
+#endif  // HOMA_STLUTIL_H
