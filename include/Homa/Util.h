@@ -50,10 +50,6 @@ downCast(const Large& large)
 }
 
 std::string demangle(const char* name);
-
-std::string format(const char* format, ...)
-    __attribute__((format(printf, 1, 2)));
-
 std::string hexDump(const void* buf, uint64_t bytes);
 
 /**

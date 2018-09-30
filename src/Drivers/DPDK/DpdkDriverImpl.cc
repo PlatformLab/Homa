@@ -19,7 +19,7 @@
 
 #include "DpdkDriverImpl.h"
 
-#include "Homa/Util.h"
+#include "StringUtil.h"
 
 #include "../../CodeLocation.h"
 
@@ -628,8 +628,8 @@ DpdkDriverImpl::_init(int port)
     uint16_t mtu;
 
     portId = Util::downCast<uint8_t>(port);
-    std::string poolName = Util::format("homa_mbuf_pool_%u", portId);
-    std::string ringName = Util::format("homa_loopback_ring_%u", portId);
+    std::string poolName = StringUtil::format("homa_mbuf_pool_%u", portId);
+    std::string ringName = StringUtil::format("homa_loopback_ring_%u", portId);
 
     NOTICE("Using DPDK version %s", rte_version());
 
@@ -639,9 +639,9 @@ DpdkDriverImpl::_init(int port)
                                 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
     if (!mbufPool) {
         throw DriverInitFailure(
-            HERE_STR,
-            Util::format("Failed to allocate memory for packet buffers: %s",
-                         rte_strerror(rte_errno)));
+            HERE_STR, StringUtil::format(
+                          "Failed to allocate memory for packet buffers: %s",
+                          rte_strerror(rte_errno)));
     }
 
     // ensure that DPDK was able to detect a compatible and available NIC
@@ -649,9 +649,9 @@ DpdkDriverImpl::_init(int port)
 
     if (numPorts <= portId) {
         throw DriverInitFailure(
-            HERE_STR,
-            Util::format("Ethernet port %u doesn't exist (%u ports available)",
-                         portId, numPorts));
+            HERE_STR, StringUtil::format(
+                          "Ethernet port %u doesn't exist (%u ports available)",
+                          portId, numPorts));
     }
 
     // Read the MAC address from the NIC via DPDK.
@@ -697,9 +697,10 @@ DpdkDriverImpl::_init(int port)
     ret = rte_eth_dev_get_mtu(portId, &mtu);
     if (ret < 0) {
         throw DriverInitFailure(
-            HERE_STR, Util::format("rte_eth_dev_get_mtu on port %u returned "
-                                   "ENODEV; unable to read current mtu",
-                                   portId));
+            HERE_STR,
+            StringUtil::format("rte_eth_dev_get_mtu on port %u returned "
+                               "ENODEV; unable to read current mtu",
+                               portId));
     }
     // set the MTU that the NIC port should support
     if (mtu != MAX_PAYLOAD_SIZE) {
@@ -707,9 +708,9 @@ DpdkDriverImpl::_init(int port)
         if (ret != 0) {
             throw DriverInitFailure(
                 HERE_STR,
-                Util::format("Failed to set the MTU on Ethernet port %u: "
-                             "%s; current MTU is %u",
-                             portId, strerror(ret), mtu));
+                StringUtil::format("Failed to set the MTU on Ethernet port %u: "
+                                   "%s; current MTU is %u",
+                                   portId, strerror(ret), mtu));
         }
         mtu = MAX_PAYLOAD_SIZE;
     }
@@ -717,8 +718,9 @@ DpdkDriverImpl::_init(int port)
     ret = rte_eth_dev_start(portId);
     if (ret != 0) {
         throw DriverInitFailure(
-            HERE_STR, Util::format("Couldn't start port %u, error %d (%s)",
-                                   portId, ret, strerror(ret)));
+            HERE_STR,
+            StringUtil::format("Couldn't start port %u, error %d (%s)", portId,
+                               ret, strerror(ret)));
     }
 
     // Retrieve the link speed and compute information based on it.
@@ -727,8 +729,8 @@ DpdkDriverImpl::_init(int port)
     if (!link.link_status) {
         throw DriverInitFailure(
             HERE_STR,
-            Util::format("Failed to detect a link on Ethernet port %u",
-                         portId));
+            StringUtil::format("Failed to detect a link on Ethernet port %u",
+                               portId));
     }
     if (link.link_speed != ETH_SPEED_NUM_NONE) {
         // Be conservative about the link speed. We use bandwidth in
@@ -749,8 +751,8 @@ DpdkDriverImpl::_init(int port)
     loopbackRing = rte_ring_create(ringName.c_str(), 4096, SOCKET_ID_ANY, 0);
     if (NULL == loopbackRing) {
         throw DriverInitFailure(
-            HERE_STR, Util::format("Failed to allocate loopback ring: %s",
-                                   rte_strerror(rte_errno)));
+            HERE_STR, StringUtil::format("Failed to allocate loopback ring: %s",
+                                         rte_strerror(rte_errno)));
     }
 
     NOTICE(

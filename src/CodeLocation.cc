@@ -15,6 +15,8 @@
 
 #include "CodeLocation.h"
 
+#include "StringUtil.h"
+
 #include "Homa/Util.h"
 
 #include <regex>
@@ -45,8 +47,8 @@ length__FILE__Prefix()
 std::string
 CodeLocation::str() const
 {
-    return Util::format("%s at %s:%d", qualifiedFunction().c_str(),
-                        relativeFile().c_str(), line);
+    return StringUtil::format("%s at %s:%d", qualifiedFunction().c_str(),
+                              relativeFile().c_str(), line);
 }
 
 /**
@@ -88,7 +90,8 @@ std::string
 CodeLocation::qualifiedFunction() const
 {
     std::smatch matches;
-    const std::string pattern(Util::format("\\s(\\S*\\b%s)\\(", function));
+    const std::string pattern(
+        StringUtil::format("\\s(\\S*\\b%s)\\(", function));
     std::string prettyFunctionStr = prettyFunction;
     std::regex re(pattern);
     std::regex_search(prettyFunctionStr, matches, re);

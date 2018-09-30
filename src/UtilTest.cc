@@ -33,18 +33,4 @@ TEST(UtilTest, downCast)
     EXPECT_EQ(64, c);
 }
 
-TEST(Util, format_basic)
-{
-    EXPECT_EQ("rofl3", Util::format("rofl3"));
-    EXPECT_EQ("rofl3", Util::format("r%sl%d", "of", 3));
-}
-
-TEST(Util, format_long)
-{
-    char x[3000];
-    memset(x, 0xcc, sizeof(x));
-    x[sizeof(x) - 1] = '\0';
-    EXPECT_EQ(x, Util::format("%s", x));
-}
-
 }  // namespace Homa

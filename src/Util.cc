@@ -18,6 +18,7 @@
 #include "Homa/Exception.h"
 
 #include "CodeLocation.h"
+#include "StringUtil.h"
 
 #include <cinttypes>
 #include <sstream>
@@ -51,38 +52,6 @@ demangle(const char* name)
     // which should be freed now.
     free(res);
     return ret;
-}
-
-/**
- * A safe version of sprintf.
- */
-// This was taken from the RAMCloud project.
-std::string
-format(const char* format, ...)
-{
-    std::string s;
-    va_list ap;
-    va_start(ap, format);
-
-    // We're not really sure how big of a buffer will be necessary.
-    // Try 1K, if not the return value will tell us how much is necessary.
-    int bufSize = 1024;
-    while (true) {
-        char buf[bufSize];
-        // vsnprintf trashes the va_list, so copy it first
-        va_list aq;
-        __va_copy(aq, ap);
-        int r = std::vsnprintf(buf, bufSize, format, aq);
-        assert(r >= 0);  // old glibc versions returned -1
-        if (r < bufSize) {
-            s = buf;
-            break;
-        }
-        bufSize = r + 1;
-    }
-
-    va_end(ap);
-    return s;
 }
 
 /**
@@ -121,7 +90,7 @@ hexDump(const void* buf, uint64_t bytes)
         }
         ascii[sizeof(ascii) - 1] = '\0';
 
-        output << format(
+        output << StringUtil::format(
             "%s  %s %s %s %s %s %s %s %s  %s %s %s %s %s %s %s %s  "
             "|%s|\n",
             offset, hex[0], hex[1], hex[2], hex[3], hex[4], hex[5], hex[6],
