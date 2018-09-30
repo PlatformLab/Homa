@@ -1,52 +1,65 @@
-/* Copyright (c) 2011-2018, Stanford University
+/* Copyright (c) 2011-2012 Stanford University
  *
- * Permission to use, copy, modify, and/or distribute this software for any
+ * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
  *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR(S) DISCLAIM ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL AUTHORS BE LIABLE FOR
  * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_THREADID_H
-#define HOMA_THREADID_H
+#include <cinttypes>
+#include <string>
 
-#include <mutex>
+#ifndef LOGCABIN_CORE_THREADID_H
+#define LOGCABIN_CORE_THREADID_H
 
-namespace Homa {
+namespace LogCabin {
+namespace Core {
 
 /**
- * This class provides a single static method #get, which returns a unique
- * identifier for the current thread. This class is implemented using the
- * gcc "__thread" storage class, which makes it much faster than other
- * mechanisms such as Boost thread-specific variables. For example, here
- * are some approximate times for various approaches, as of 6/2011:
- *
- * boost::this_thread::get_id():  75ns
- * read boost thread-specific variable: 27ns
- * read gcc __thread variable: < 2ns
+ * Provides a convenient way to get identifiers for threads.
+ * This is better than std::this_thread::get_id() in a few ways:
+ * - It returns to you an integer, not some opaque type.
+ * - The integer it returns is usually short, which is nice for log messages.
+ * - It's probably faster, since it uses gcc's __thread keyword.
  */
-class ThreadId {
-  public:
-    static int get();
+namespace ThreadId {
 
-  private:
-    explicit ThreadId();
-    static int assign();
-    static __thread int id;
-    static int highestId;
-    static std::mutex mutex;
+/**
+ * A thread ID that will never be assigned to any thread.
+ */
+const uint64_t NONE = 0;
 
-    // DISALLOW_COPY_AND_ASSIGN(ThreadId)
-    ThreadId(const ThreadId&) = delete;
-    ThreadId& operator=(const ThreadId&) = delete;
-};
+/**
+ * Returns a unique identifier for the current thread.
+ */
+uint64_t getId();
 
-}  // namespace Homa
+/**
+ * Set the friendly name for the current thread.
+ * This can be later retrieved with getName().
+ * Calling setName with an empty string will reset the thread to its default
+ * name.
+ */
+void setName(const std::string& name);
 
-#endif  // HOMA_THREADID_H
+/**
+ * Get the friendly name for the current thread.
+ * This is useful in messages to users.
+ *
+ * You should arrange for setName() to be called when the thread is
+ * created; otherwise you'll see an unhelpful name like "thread 3".
+ */
+std::string getName();
+
+} // namespace LogCabin::Core::ThreadId
+} // namespace LogCabin::Core
+} // namespace LogCabin
+
+#endif  // LOGCABIN_CORE_THREADID_H
