@@ -107,7 +107,7 @@ Sender::sendMessage(MessageContext* context)
     for (uint16_t i = 0; i < context->getNumPackets(); ++i) {
         Driver::Packet* packet = context->getPacket(i);
         if (packet == nullptr) {
-            LOG(ERROR,
+            ERROR(
                 "Incomplete message with id (%ul:%ul); missing packet at "
                 "offset %u; send request dropped.",
                 context->msgId.transportId, context->msgId.sequence,
@@ -136,7 +136,7 @@ Sender::sendMessage(MessageContext* context)
         auto it = messageMap.find(context->msgId);
         if (it != messageMap.end()) {
             // found message with the same msgId. Drop this request.
-            LOG(WARNING,
+            WARNING(
                 "Duplicate call to sendMessage for msgId (%ul:%ul); send "
                 "request dropped.",
                 context->msgId.transportId, context->msgId.sequence);

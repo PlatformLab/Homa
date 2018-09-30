@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012 Stanford University
+/* Copyright (c) 2011-2018 Stanford University
  * Copyright (c) 2014-2015 Diego Ongaro
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -14,26 +14,26 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "Debug.h"
+
+#include "StringUtil.h"
+#include "ThreadId.h"
+
+#include <strings.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <cassert>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <mutex>
-#include <strings.h>
-#include <sys/types.h>
-#include <unistd.h>
 #include <unordered_map>
 
-#include "Core/Debug.h"
-#include "Core/StringUtil.h"
-#include "Core/ThreadId.h"
-#include "include/LogCabin/Debug.h"
-
-namespace LogCabin {
-namespace Core {
+namespace Homa {
 namespace Debug {
 
+// See <Homa/Debug.h>
 DebugMessage::DebugMessage()
     : filename()
     , linenum()
@@ -43,9 +43,9 @@ DebugMessage::DebugMessage()
     , processName()
     , threadName()
     , message()
-{
-}
+{}
 
+// See <Homa/Debug.h>
 DebugMessage::DebugMessage(const DebugMessage& other)
     : filename(other.filename)
     , linenum(other.linenum)
@@ -55,9 +55,9 @@ DebugMessage::DebugMessage(const DebugMessage& other)
     , processName(other.processName)
     , threadName(other.threadName)
     , message(other.message)
-{
-}
+{}
 
+// See <Homa/Debug.h>
 DebugMessage::DebugMessage(DebugMessage&& other)
     : filename(other.filename)
     , linenum(other.linenum)
@@ -67,13 +67,12 @@ DebugMessage::DebugMessage(DebugMessage&& other)
     , processName(std::move(other.processName))
     , threadName(std::move(other.threadName))
     , message(std::move(other.message))
-{
-}
+{}
 
-DebugMessage::~DebugMessage()
-{
-}
+// See <Homa/Debug.h>
+DebugMessage::~DebugMessage() {}
 
+// See <Homa/Debug.h>
 DebugMessage&
 DebugMessage::operator=(const DebugMessage& other)
 {
@@ -88,6 +87,7 @@ DebugMessage::operator=(const DebugMessage& other)
     return *this;
 }
 
+// See <Homa/Debug.h>
 DebugMessage&
 DebugMessage::operator=(DebugMessage&& other)
 {
@@ -102,8 +102,8 @@ DebugMessage::operator=(DebugMessage&& other)
     return *this;
 }
 
-
-std::string processName = Core::StringUtil::format("%u", getpid());
+// See "Debug.h"
+std::string processName = StringUtil::format("%u", getpid());
 
 namespace Internal {
 
@@ -160,15 +160,21 @@ const char*
 logLevelToString(LogLevel level)
 {
     switch (level) {
-        case LogLevel::SILENT:  return "SILENT";
-        case LogLevel::ERROR:   return "ERROR";
-        case LogLevel::WARNING: return "WARNING";
-        case LogLevel::NOTICE:  return "NOTICE";
-        case LogLevel::VERBOSE: return "VERBOSE";
+        case LogLevel::SILENT:
+            return "SILENT";
+        case LogLevel::ERROR:
+            return "ERROR";
+        case LogLevel::WARNING:
+            return "WARNING";
+        case LogLevel::NOTICE:
+            return "NOTICE";
+        case LogLevel::VERBOSE:
+            return "VERBOSE";
     }
     log(LogLevel::ERROR, __FILE__, __LINE__, __FUNCTION__,
-        Core::StringUtil::format("%d is not a valid log level",
-                                 static_cast<int>(level)).c_str());
+        StringUtil::format("%d is not a valid log level",
+                           static_cast<int>(level))
+            .c_str());
     abort();
 }
 
@@ -179,14 +185,19 @@ logLevelToString(LogLevel level)
 LogLevel
 logLevelFromString(const std::string& level)
 {
-    if (strcasecmp(level.c_str(), "SILENT")  == 0)  return LogLevel::SILENT;
-    if (strcasecmp(level.c_str(), "ERROR")   == 0)   return LogLevel::ERROR;
-    if (strcasecmp(level.c_str(), "WARNING") == 0) return LogLevel::WARNING;
-    if (strcasecmp(level.c_str(), "NOTICE")  == 0)  return LogLevel::NOTICE;
-    if (strcasecmp(level.c_str(), "VERBOSE") == 0) return LogLevel::VERBOSE;
+    if (strcasecmp(level.c_str(), "SILENT") == 0)
+        return LogLevel::SILENT;
+    if (strcasecmp(level.c_str(), "ERROR") == 0)
+        return LogLevel::ERROR;
+    if (strcasecmp(level.c_str(), "WARNING") == 0)
+        return LogLevel::WARNING;
+    if (strcasecmp(level.c_str(), "NOTICE") == 0)
+        return LogLevel::NOTICE;
+    if (strcasecmp(level.c_str(), "VERBOSE") == 0)
+        return LogLevel::VERBOSE;
     log(LogLevel::ERROR, __FILE__, __LINE__, __FUNCTION__,
-        Core::StringUtil::format("'%s' is not a valid log level",
-                                 level.c_str()).c_str());
+        StringUtil::format("'%s' is not a valid log level", level.c_str())
+            .c_str());
     abort();
 }
 
@@ -197,7 +208,7 @@ logLevelFromString(const std::string& level)
  *
  * Must be called with #mutex held.
  *
- * \param fileName
+ * @param fileName
  *      Relative filename.
  */
 LogLevel
@@ -206,8 +217,8 @@ getLogLevel(const char* fileName)
     for (auto it = logPolicy.begin(); it != logPolicy.end(); ++it) {
         const std::string& pattern = it->first;
         const std::string& logLevel = it->second;
-        if (Core::StringUtil::startsWith(fileName, pattern) ||
-            Core::StringUtil::endsWith(fileName, pattern)) {
+        if (StringUtil::startsWith(fileName, pattern) ||
+            StringUtil::endsWith(fileName, pattern)) {
             return logLevelFromString(logLevel);
         }
     }
@@ -223,7 +234,7 @@ size_t
 calculateLengthFilePrefix()
 {
     const char* start = __FILE__;
-    const char* match = strstr(__FILE__, "Core/Debug.cc");
+    const char* match = strstr(__FILE__, "src/Debug.cc");
     assert(match != NULL);
     return size_t(match - start);
 }
@@ -234,11 +245,11 @@ const size_t lengthFilePrefix = calculateLengthFilePrefix();
 /**
  * Strip out the common prefix of a filename to get a path from the project's
  * root directory.
- * \param fileName
+ * @param fileName
  *      An absolute or relative filename, usually the value of __FILE__.
- * \return
+ * @return
  *      A nicer way to show display 'fileName' to the user.
- *      For example, this file would yield "Core/Debug.cc".
+ *      For example, this file would yield "src/Debug.cc".
  */
 const char*
 relativeFileName(const char* fileName)
@@ -251,9 +262,10 @@ relativeFileName(const char* fileName)
         return fileName;
 }
 
-} // namespace Internal
-using namespace Internal; // NOLINT
+}  // namespace Internal
+using namespace Internal;  // NOLINT
 
+// See <Homa/Debug.h>
 std::string
 getLogFilename()
 {
@@ -261,15 +273,15 @@ getLogFilename()
     return logFilename;
 }
 
+// See <Homa/Debug.h>
 std::string
 setLogFilename(const std::string& filename)
 {
     FILE* next = fopen(filename.c_str(), "a");
     if (next == NULL) {
-        return Core::StringUtil::format(
+        return StringUtil::format(
             "Could not open %s for writing debug log messages: %s",
-            filename.c_str(),
-            strerror(errno));
+            filename.c_str(), strerror(errno));
     }
     FILE* old;
     {
@@ -287,6 +299,7 @@ setLogFilename(const std::string& filename)
     return {};
 }
 
+// See <Homa/Debug.h>
 std::string
 reopenLogFromFilename()
 {
@@ -297,6 +310,7 @@ reopenLogFromFilename()
         return setLogFilename(filename);
 }
 
+// See <Homa/Debug.h>
 FILE*
 setLogFile(FILE* newFile)
 {
@@ -307,6 +321,7 @@ setLogFile(FILE* newFile)
     return old;
 }
 
+// See <Homa/Debug.h>
 std::function<void(DebugMessage)>
 setLogHandler(std::function<void(DebugMessage)> handler)
 {
@@ -316,6 +331,7 @@ setLogHandler(std::function<void(DebugMessage)> handler)
     return old;
 }
 
+// See <Homa/Debug.h>
 std::vector<std::pair<std::string, std::string>>
 getLogPolicy()
 {
@@ -323,30 +339,31 @@ getLogPolicy()
     return logPolicy;
 }
 
+// See <Homa/Debug.h>
 void
-setLogPolicy(const std::vector<std::pair<std::string,
-                                         std::string>>& newPolicy)
+setLogPolicy(const std::vector<std::pair<std::string, std::string>>& newPolicy)
 {
     std::lock_guard<std::mutex> lockGuard(mutex);
     logPolicy = newPolicy;
     isLoggingCache.clear();
 }
 
+// See <Homa/Debug.h>
 void
-setLogPolicy(const std::initializer_list<std::pair<std::string,
-                                         std::string>>& newPolicy)
+setLogPolicy(
+    const std::initializer_list<std::pair<std::string, std::string>>& newPolicy)
 {
-    setLogPolicy(std::vector<std::pair<std::string,
-                                         std::string>>(newPolicy));
+    setLogPolicy(std::vector<std::pair<std::string, std::string>>(newPolicy));
 }
 
+// See <Homa/Debug.h>
 std::vector<std::pair<std::string, std::string>>
 logPolicyFromString(const std::string& in)
 {
     std::vector<std::pair<std::string, std::string>> policy;
-    std::vector<std::string> rules = Core::StringUtil::split(in, ',');
+    std::vector<std::string> rules = StringUtil::split(in, ',');
     for (auto it = rules.begin(); it != rules.end(); ++it) {
-        std::vector<std::string> pair = Core::StringUtil::split(*it, '@');
+        std::vector<std::string> pair = StringUtil::split(*it, '@');
         if (pair.size() == 1) {
             policy.emplace_back("", pair.at(0));
         } else if (pair.size() == 2) {
@@ -356,16 +373,16 @@ logPolicyFromString(const std::string& in)
             assert(pair.size() >= 3);
             std::string level = pair.back();
             pair.pop_back();
-            policy.emplace_back(Core::StringUtil::join(pair, "@"),
-                                level);
+            policy.emplace_back(StringUtil::join(pair, "@"), level);
         }
     }
     return policy;
 }
 
+// See <Homa/Debug.h>
 std::string
-logPolicyToString(const std::vector<std::pair<std::string,
-                                              std::string>>& policy)
+logPolicyToString(
+    const std::vector<std::pair<std::string, std::string>>& policy)
 {
     std::stringstream ss;
     if (policy.empty()) {
@@ -392,6 +409,9 @@ logPolicyToString(const std::vector<std::pair<std::string,
     return ss.str();
 }
 
+/**
+ * Output a LogLevel to a stream. Having this improves gtest error messages.
+ */
 std::ostream&
 operator<<(std::ostream& ostream, LogLevel level)
 {
@@ -399,6 +419,19 @@ operator<<(std::ostream& ostream, LogLevel level)
     return ostream;
 }
 
+/**
+ * Return whether the current logging configuration includes messages of
+ * the given level for the given filename.
+ * This is normally called by LOG().
+ * @warning
+ *      fileName must be a string literal!
+ * @param level
+ *      The log level to query.
+ * @param fileName
+ *      This should be a string literal, probably __FILE__, since the result of
+ *      this call will be cached based on the memory address pointed to by
+ *      'fileName'.
+ */
 bool
 isLogging(LogLevel level, const char* fileName)
 {
@@ -414,10 +447,24 @@ isLogging(LogLevel level, const char* fileName)
     return uint32_t(level) <= uint32_t(verbosity);
 }
 
+/**
+ * Unconditionally log the given message to stderr.
+ * This is normally called by LOG().
+ * @param level
+ *      The level of importance of the message.
+ * @param fileName
+ *      The output of __FILE__.
+ * @param lineNum
+ *      The output of __LINE__.
+ * @param functionName
+ *      The output of __FUNCTION__.
+ * @param message
+ *      A descriptive message to print, which should not include a line break
+ *      at the end.
+ */
 void
-log(LogLevel level,
-    const char* fileName, uint32_t lineNum, const char* functionName,
-    const char* message)
+log(LogLevel level, const char* fileName, uint32_t lineNum,
+    const char* functionName, const char* message)
 {
     if (logHandler) {
         DebugMessage d;
@@ -433,41 +480,33 @@ log(LogLevel level,
         return;
     }
 
-    // Don't use Core::Time here since it could potentially call PANIC.
     struct timespec now;
     clock_gettime(CLOCK_REALTIME, &now);
 
     // Failures are a little annoying here, since we can't exactly log
     // errors that come up.
-    char formattedSeconds[64]; // a human-readable string now.tv_sec
+    char formattedSeconds[64];  // a human-readable string now.tv_sec
     bool ok = false;
-    { // First, try gmtime and strftime.
+    {  // First, try gmtime and strftime.
         struct tm calendarTime;
         if (gmtime_r(&now.tv_sec, &calendarTime) != NULL) {
-            ok = (strftime(formattedSeconds,
-                           sizeof(formattedSeconds),
-                           "%F %T",
+            ok = (strftime(formattedSeconds, sizeof(formattedSeconds), "%F %T",
                            &calendarTime) > 0);
         }
     }
-    if (!ok) { // If that failed, use the raw number.
-        snprintf(formattedSeconds,
-                 sizeof(formattedSeconds),
-                 "%010lu",
+    if (!ok) {  // If that failed, use the raw number.
+        snprintf(formattedSeconds, sizeof(formattedSeconds), "%010lu",
                  now.tv_sec);
         formattedSeconds[sizeof(formattedSeconds) - 1] = '\0';
     }
 
-    fprintf(stream, "%s.%06lu %s:%d in %s() %s[%s:%s]: %s\n",
-            formattedSeconds, now.tv_nsec / 1000,
-            relativeFileName(fileName), lineNum, functionName,
-            logLevelToString(level),
-            processName.c_str(), ThreadId::getName().c_str(),
-            message);
+    fprintf(stream, "%s.%06lu %s:%d in %s() %s[%s:%s]: %s\n", formattedSeconds,
+            now.tv_nsec / 1000, relativeFileName(fileName), lineNum,
+            functionName, logLevelToString(level), processName.c_str(),
+            ThreadId::getName().c_str(), message);
 
     fflush(stream);
 }
 
-} // namespace LogCabin::Core::Debug
-} // namespace LogCabin::Core
-} // namespace LogCabin
+}  // namespace Debug
+}  // namespace Homa

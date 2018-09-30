@@ -18,7 +18,7 @@
 
 #include "Homa/Exception.h"
 
-#include "Logger.h"
+#include "Debug.h"
 
 #include <vector>
 
@@ -87,8 +87,8 @@ class ObjectPool {
         // Catching this isn't intended, but could be done if the caller really
         // wants to, so make sure we free the pooled memory first.
         if (outstandingObjects > 0) {
-            LOG(ERROR, "Pool destroyed with %lu objects still outstanding!",
-                outstandingObjects);
+            ERROR("Pool destroyed with %lu objects still outstanding!",
+                  outstandingObjects);
         }
     }
 
@@ -97,7 +97,7 @@ class ObjectPool {
      * from the pool if possible. If the pool is empty, it mallocs more space.
      * If malloc fails, the process is terminated.
      *
-     * \param args
+     * @param args
      *      Arguments to provide to T's constructor.
      * \throw
      *      An exception is thrown if T's constructor throws.

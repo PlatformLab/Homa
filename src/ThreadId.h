@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012 Stanford University
+/* Copyright (c) 2011-2018 Stanford University
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,11 +16,10 @@
 #include <cinttypes>
 #include <string>
 
-#ifndef LOGCABIN_CORE_THREADID_H
-#define LOGCABIN_CORE_THREADID_H
+#ifndef HOMA_THREADID_H
+#define HOMA_THREADID_H
 
-namespace LogCabin {
-namespace Core {
+namespace Homa {
 
 /**
  * Provides a convenient way to get identifiers for threads.
@@ -36,30 +35,11 @@ namespace ThreadId {
  */
 const uint64_t NONE = 0;
 
-/**
- * Returns a unique identifier for the current thread.
- */
 uint64_t getId();
-
-/**
- * Set the friendly name for the current thread.
- * This can be later retrieved with getName().
- * Calling setName with an empty string will reset the thread to its default
- * name.
- */
 void setName(const std::string& name);
-
-/**
- * Get the friendly name for the current thread.
- * This is useful in messages to users.
- *
- * You should arrange for setName() to be called when the thread is
- * created; otherwise you'll see an unhelpful name like "thread 3".
- */
 std::string getName();
 
-} // namespace LogCabin::Core::ThreadId
-} // namespace LogCabin::Core
-} // namespace LogCabin
+}  // namespace ThreadId
+}  // namespace Homa
 
-#endif  // LOGCABIN_CORE_THREADID_H
+#endif  // HOMA_THREADID_H

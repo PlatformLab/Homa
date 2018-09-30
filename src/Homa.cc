@@ -100,7 +100,8 @@ Message::set(uint32_t offset, const void* source, uint32_t num)
     uint32_t maxMessageLength =
         context->PACKET_DATA_LENGTH * context->MAX_MESSAGE_PACKETS;
     if (offset + num > maxMessageLength) {
-        LOG(ERROR,
+        ERROR(
+            "Max message size limit (%uB) reached; "
             "Max message size limit (%uB) reached; "
             "trying to set bytes %u - %u; "
             "message will be truncated",

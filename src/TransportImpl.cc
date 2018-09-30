@@ -96,11 +96,11 @@ TransportImpl::poll()
 
         switch (header->opcode) {
             case Protocol::DATA:
-                LOG(DEBUG, "Handle DataPacket");
+                VERBOSE("Handle DataPacket");
                 receiver.handleDataPacket(packet, driver);
                 break;
             case Protocol::GRANT:
-                LOG(DEBUG, "Handle GrantPacket");
+                VERBOSE("Handle GrantPacket");
                 sender.handleGrantPacket(packet, driver);
                 break;
         }

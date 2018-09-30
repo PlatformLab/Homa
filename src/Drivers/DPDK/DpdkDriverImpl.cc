@@ -327,7 +327,7 @@ DpdkDriverImpl::allocPacket()
         std::lock_guard<SpinLock> lock(packetLock);
         OverflowBuffer* buf = overflowBufferPool.construct();
         packet = packetPool.construct(buf);
-        LOG(NOTICE, "OverflowBuffer used.");
+        NOTICE("OverflowBuffer used.");
     }
     return packet;
 }
@@ -353,7 +353,8 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
             if (unlikely(NULL == mbuf)) {
                 uint32_t numMbufsAvail = rte_mempool_avail_count(mbufPool);
                 uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
-                LOG(WARNING,
+                WARNING(
+                    "Failed to allocate a packet buffer; dropping packet; "
                     "Failed to allocate a packet buffer; dropping packet; "
                     "%u mbufs available, %u mbufs in use",
                     numMbufsAvail, numMbufsInUse);
@@ -362,7 +363,7 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
             header = rte_pktmbuf_append(
                 mbuf, Util::downCast<uint16_t>(PACKET_HDR_LEN + packet->len));
             if (unlikely(NULL == header)) {
-                LOG(WARNING, "rte_pktmbuf_append call failed; dropping packet");
+                WARNING("rte_pktmbuf_append call failed; dropping packet");
                 rte_pktmbuf_free(mbuf);
                 continue;
             }
@@ -397,7 +398,7 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
         uint32_t mbufDataLength = rte_pktmbuf_pkt_len(mbuf);
         if (actualLength < mbufDataLength) {
             if (rte_pktmbuf_trim(mbuf, mbufDataLength - actualLength) < 0) {
-                LOG(WARNING,
+                WARNING(
                     "Couldn't trim packet from length %u to %u; sending "
                     "anyway.",
                     mbufDataLength, actualLength);
@@ -409,13 +410,12 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
                     localMac->address, 6)) {
             struct rte_mbuf* mbuf_clone = rte_pktmbuf_clone(mbuf, mbufPool);
             if (unlikely(mbuf_clone == NULL)) {
-                LOG(WARNING,
-                    "Failed to clone packet for loopback; dropping packet");
+                WARNING("Failed to clone packet for loopback; dropping packet");
             }
             int ret = rte_ring_enqueue(loopbackRing, mbuf_clone);
             if (unlikely(ret != 0)) {
-                LOG(WARNING,
-                    "rte_ring_enqueue returned %d; packet may be lost?", ret);
+                WARNING("rte_ring_enqueue returned %d; packet may be lost?",
+                        ret);
                 rte_pktmbuf_free(mbuf_clone);
             }
             continue;
@@ -477,8 +477,8 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
         struct rte_mbuf* m = mPkts[i];
         rte_prefetch0(rte_pktmbuf_mtod(m, void*));
         if (unlikely(m->nb_segs > 1)) {
-            LOG(WARNING, "Can't handle packet with %u segments; discarding",
-                m->nb_segs);
+            WARNING("Can't handle packet with %u segments; discarding",
+                    m->nb_segs);
             rte_pktmbuf_free(m);
             continue;
         }
@@ -498,7 +498,7 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
             // Perform packet filtering by software to skip irrelevant
             // packets such as ipmi or kernel TCP/IP traffics.
             if (ether_type != rte_cpu_to_be_16(EthPayloadType::HOMA)) {
-                LOG(DEBUG, "packet filtered; ether_type = %x", ether_type);
+                VERBOSE("packet filtered; ether_type = %x", ether_type);
                 rte_pktmbuf_free(m);
                 continue;
             }
@@ -512,7 +512,7 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
         MacAddress* sender = reinterpret_cast<MacAddress*>(m->buf_addr);
         if (unlikely(reinterpret_cast<char*>(sender + 1) >
                      rte_pktmbuf_mtod(m, char*))) {
-            LOG(ERROR,
+            ERROR(
                 "Not enough headroom in the packet mbuf; "
                 "dropping packet");
             rte_pktmbuf_free(m);
@@ -584,8 +584,8 @@ void
 DpdkDriverImpl::setLocalAddress(std::string const* const addressString)
 {
     localMac.construct(addressString->c_str());
-    LOG(NOTICE, "Driver address override; new address: %s",
-        localMac->toString().c_str());
+    NOTICE("Driver address override; new address: %s",
+           localMac->toString().c_str());
 }
 
 /**
@@ -631,7 +631,7 @@ DpdkDriverImpl::_init(int port)
     std::string poolName = Util::format("homa_mbuf_pool_%u", portId);
     std::string ringName = Util::format("homa_loopback_ring_%u", portId);
 
-    LOG(NOTICE, "Using DPDK version %s", rte_version());
+    NOTICE("Using DPDK version %s", rte_version());
 
     // create an memory pool for accommodating packet buffers
     mbufPool =
@@ -668,14 +668,14 @@ DpdkDriverImpl::_init(int port)
     struct rte_eth_ethertype_filter filter;
     ret = rte_eth_dev_filter_supported(portId, RTE_ETH_FILTER_ETHERTYPE);
     if (ret < 0) {
-        LOG(NOTICE, "ethertype filter is not supported on port %u.", portId);
+        NOTICE("ethertype filter is not supported on port %u.", portId);
         hasHardwareFilter = false;
     } else {
         memset(&filter, 0, sizeof(filter));
         ret = rte_eth_dev_filter_ctrl(portId, RTE_ETH_FILTER_ETHERTYPE,
                                       RTE_ETH_FILTER_ADD, &filter);
         if (ret < 0) {
-            LOG(WARNING, "failed to add ethertype filter\n");
+            WARNING("failed to add ethertype filter\n");
             hasHardwareFilter = false;
         }
     }
@@ -738,7 +738,7 @@ DpdkDriverImpl::_init(int port)
         // and build up a queue in the TX queue.
         bandwidthMbps = (uint32_t)(link.link_speed * 0.98);
     } else {
-        LOG(WARNING,
+        WARNING(
             "Can't retrieve network bandwidth from DPDK; "
             "using default of %d Mbps",
             bandwidthMbps);
@@ -753,7 +753,7 @@ DpdkDriverImpl::_init(int port)
                                    rte_strerror(rte_errno)));
     }
 
-    LOG(NOTICE,
+    NOTICE(
         "DpdkDriverImpl address: %s, bandwidth: %d Mbits/sec, MTU: %u, "
         "lock-free "
         "tx support: %s",
@@ -775,7 +775,7 @@ DpdkDriverImpl::_allocMbufPacket()
     uint32_t numMbufsAvail = rte_mempool_avail_count(mbufPool);
     if (unlikely(numMbufsAvail <= NB_MBUF_RESERVED)) {
         uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
-        LOG(NOTICE,
+        NOTICE(
             "Driver is running low on mbuf packet buffers; "
             "%u mbufs available, %u mbufs in use",
             numMbufsAvail, numMbufsInUse);
@@ -787,7 +787,7 @@ DpdkDriverImpl::_allocMbufPacket()
     if (unlikely(NULL == mbuf)) {
         uint32_t numMbufsAvail = rte_mempool_avail_count(mbufPool);
         uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
-        LOG(NOTICE,
+        NOTICE(
             "Failed to allocate an mbuf packet buffer; "
             "%u mbufs available, %u mbufs in use",
             numMbufsAvail, numMbufsInUse);
@@ -798,7 +798,7 @@ DpdkDriverImpl::_allocMbufPacket()
         mbuf, Util::downCast<uint16_t>(PACKET_HDR_LEN + MAX_PAYLOAD_SIZE));
 
     if (unlikely(NULL == buf)) {
-        LOG(NOTICE, "rte_pktmbuf_append call failed; dropping packet");
+        NOTICE("rte_pktmbuf_append call failed; dropping packet");
         rte_pktmbuf_free(mbuf);
         return nullptr;
     }
@@ -827,7 +827,7 @@ DpdkDriverImpl::_sendPackets(struct rte_mbuf* tx_pkts[], uint16_t nb_pkts)
     uint16_t ret = 0;
     while (pkts_sent < nb_pkts) {
         if (unlikely(attempts++ > 0)) {
-            LOG(NOTICE,
+            NOTICE(
                 "rte_eth_tx_burst sent %u packets on attempt %u; %u of %u "
                 "packets sent; trying again on remaining packets",
                 ret, attempts, pkts_sent, nb_pkts);

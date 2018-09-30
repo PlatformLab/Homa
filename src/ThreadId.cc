@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012 Stanford University
+/* Copyright (c) 2011-2018 Stanford University
  *
  * Permission to use, copy, modify, and distribute this software for any purpose
  * with or without fee is hereby granted, provided that the above copyright
@@ -13,14 +13,14 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "ThreadId.h"
+
+#include "StringUtil.h"
+
 #include <mutex>
 #include <unordered_map>
 
-#include "Core/ThreadId.h"
-#include "Core/StringUtil.h"
-
-namespace LogCabin {
-namespace Core {
+namespace Homa {
 namespace ThreadId {
 namespace Internal {
 
@@ -59,7 +59,7 @@ assign()
     ++nextId;
 }
 
-} // namespace LogCabin::Core::ThreadId::Internal
+}  // namespace Internal
 
 /**
  * Return a unique identifier associated with this thread.  The
@@ -76,6 +76,12 @@ getId()
     return Internal::id;
 }
 
+/**
+ * Set the friendly name for the current thread.
+ * This can be later retrieved with getName().
+ * Calling setName with an empty string will reset the thread to its default
+ * name.
+ */
 void
 setName(const std::string& name)
 {
@@ -88,6 +94,13 @@ setName(const std::string& name)
         Internal::threadNames[id] = name;
 }
 
+/**
+ * Get the friendly name for the current thread.
+ * This is useful in messages to users.
+ *
+ * You should arrange for setName() to be called when the thread is
+ * created; otherwise you'll see an unhelpful name like "thread 3".
+ */
 std::string
 getName()
 {
@@ -101,6 +114,5 @@ getName()
         return it->second;
 }
 
-} // namespace LogCabin::Core::ThreadId
-} // namespace LogCabin::Core
-} // namespace LogCabin
+}  // namespace ThreadId
+}  // namespace Homa

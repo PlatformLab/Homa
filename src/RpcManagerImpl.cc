@@ -18,7 +18,7 @@
 #include "Homa/Rpc.h"
 #include "Homa/ServerRpc.h"
 
-#include "Logger.h"
+#include "Debug.h"
 
 #include <mutex>
 
@@ -124,7 +124,7 @@ RpcManagerImpl::sendRpc(Rpc* rpc)
         if (it == rpcMap.end()) {
             rpcMap.insert({header.rpcId, rpc});
         } else {
-            LOG(WARNING,
+            WARNING(
                 "duplicate call to sendRpc for id (%u:%u); request dropped.",
                 header.rpcId.managerId, header.rpcId.sequence);
             return;
