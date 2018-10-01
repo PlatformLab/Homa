@@ -184,6 +184,7 @@ enable_testing()
 
 add_executable(unit_test
     src/CodeLocationTest.cc
+    src/DebugTest.cc
     src/ObjectPoolTest.cc
     src/STLUtilTest.cc
     src/TubTest.cc
