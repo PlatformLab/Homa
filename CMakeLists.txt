@@ -186,6 +186,7 @@ add_executable(unit_test
     src/CodeLocationTest.cc
     src/DebugTest.cc
     src/ObjectPoolTest.cc
+    src/SpinLockTest.cc
     src/STLUtilTest.cc
     src/StringUtilTest.cc
     src/ThreadIdTest.cc
