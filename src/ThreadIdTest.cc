@@ -33,9 +33,9 @@ extern std::unordered_map<uint64_t, std::string> threadNames;
 
 namespace {
 
-class CoreThreadIdTest : public ::testing::Test {
+class ThreadIdTest : public ::testing::Test {
   public:
-    CoreThreadIdTest()
+    ThreadIdTest()
     {
         ThreadId::Internal::id = 0;
         ThreadId::Internal::nextId = 1;
@@ -51,7 +51,7 @@ readThreadId(uint64_t* p)
     *p = ThreadId::getId();
 }
 
-TEST_F(CoreThreadIdTest, basics)
+TEST_F(ThreadIdTest, basics)
 {
     uint64_t value;
     EXPECT_EQ(1U, ThreadId::getId());
@@ -64,7 +64,7 @@ TEST_F(CoreThreadIdTest, basics)
     EXPECT_EQ(3U, value);
 }
 
-TEST_F(CoreThreadIdTest, names)
+TEST_F(ThreadIdTest, names)
 {
     EXPECT_EQ("thread 1", ThreadId::getName());
     ThreadId::setName("foo");

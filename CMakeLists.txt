@@ -187,17 +187,12 @@ add_executable(unit_test
     src/DebugTest.cc
     src/ObjectPoolTest.cc
     src/STLUtilTest.cc
+    src/StringUtilTest.cc
+    src/ThreadIdTest.cc
     src/TubTest.cc
     src/UtilTest.cc
 )
 target_link_libraries(unit_test gmock_main Homa)
 # -fno-access-control allows access to private members for testing
 target_compile_options(unit_test PRIVATE -fno-access-control)
-# optionally add the tests that need std::thread.
-if(Threads_FOUND)
-    target_sources(unit_test PRIVATE
-        src/ThreadIdTest.cc
-    )
-    target_link_libraries(unit_test Threads::Threads)
-endif()
 gtest_discover_tests(unit_test)
