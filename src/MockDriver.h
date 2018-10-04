@@ -26,10 +26,34 @@ namespace Homa {
  * MockDriver is a gmock supported mock driver implmentation that is used
  * in unit testing.
  *
- * \sa Driver
+ * @sa Driver
  */
 class MockDriver : public Driver {
   public:
+    /**
+     * Used in unit test to mock calls to Driver::Address.
+     *
+     * @sa Driver::Address
+     */
+    class MockAddress : public Driver::Address {
+      public:
+        MOCK_CONST_METHOD0(toString, std::string());
+    };
+
+    /**
+     * Used in unit tests to mock calls to Driver::Packet.
+     *
+     * @sa Driver::Packet.
+     */
+    class MockPacket : public Driver::Packet {
+      public:
+        MockPacket(void* payload, uint16_t len)
+            : Packet(payload, len)
+        {}
+
+        MOCK_METHOD0(getMaxPayloadSize, uint16_t());
+    };
+
     MOCK_METHOD1(getAddress, Address*(std::string const* const addressString));
     MOCK_METHOD0(allocPacket, Packet*());
     MOCK_METHOD2(sendPackets, void(Packet* packets[], uint16_t numPackets));
