@@ -32,7 +32,9 @@ namespace Core {
 class MessagePool;
 
 /**
- * Holds the contents and metadata from a Transport::Message.
+ * The MessageContext holds the Driver::Packet objects and metadata that make up
+ * a Homa::Message.  The MessageContext also manages the lifetimes of held
+ * Packet objects on behalf of a Homa::Message.
  *
  * The lifetime of instances of this class are controlled with reference counts.
  *
@@ -85,14 +87,15 @@ class MessageContext {
     /// When the refCount reaches 0, the instance will be destroyed.
     std::atomic<int> refCount;
 
-    /// Number of packets contained in this message.
+    /// Number of packets contained in this context.
     uint16_t numPackets;
 
     /// Bit array representing which entires in the _packets_ array are set.
     /// Used to avoid having to zero out the entire _packets_ array.
     std::bitset<MAX_MESSAGE_PACKETS> occupied;
 
-    /// Collection of packets that form this message.
+    /// Collection of Packet objects that make up this context's Message.
+    /// These Packets will be released when this context is destroyed.
     Driver::Packet* packets[MAX_MESSAGE_PACKETS];
 
     MessageContext(const MessageContext&) = delete;

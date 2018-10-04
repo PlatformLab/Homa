@@ -62,8 +62,8 @@ MessageContext::MessageContext(Protocol::MessageId msgId,
  */
 MessageContext::~MessageContext()
 {
-    // if the message is complete, we can release all the packets all at once.
-    if (messageLength <= numPackets * PACKET_DATA_LENGTH) {
+    // If the packets are all continguous, we can release them all at once.
+    if ((occupied >> numPackets).none()) {
         driver->releasePackets(packets, numPackets);
     } else {  // otherwise, we need to find which packets need to be released.
         for (uint16_t i = 0; i < MAX_MESSAGE_PACKETS && numPackets > 0; ++i) {
@@ -96,6 +96,9 @@ MessageContext::getPacket(uint16_t index)
 /**
  * Store the given packet as the Packet of the given index if one does not
  * already exist.
+ *
+ * Responsibly for releasing the given Packet is passed to this context if the
+ * Packet is stored (returns true).
  *
  * @param index
  *      The Packet's index in the array of packets that form the message.
