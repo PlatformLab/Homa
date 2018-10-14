@@ -21,6 +21,7 @@
 #include "ObjectPool.h"
 
 #include "CodeLocation.h"
+#include "Debug.h"
 
 #include <Homa/Util.h>
 
@@ -64,7 +65,6 @@ TEST(ObjectPoolTest, constructor)
 
 TEST(ObjectPoolTest, destructor)
 {
-    // shouldn't throw
     {
         ObjectPool<TestObject> pool;
         TestObject* a = pool.construct();
@@ -82,20 +82,38 @@ TEST(ObjectPoolTest, destructor)
     }
 }
 
-// TODO(cstlee): Support Test Logging.
-// TEST(ObjectPoolTest, destructor_objectsStillAllocated)
-// {
-//     // should throw
-//     ObjectPool<TestObject>* pool = new ObjectPool<TestObject>();
-//     TestObject* a = pool->construct();
-//     (void)a;
+// Used to capture log output.
+struct VectorHandler {
+    VectorHandler()
+        : messages()
+    {}
+    void operator()(Debug::DebugMessage message)
+    {
+        messages.push_back(message);
+    }
+    std::vector<Debug::DebugMessage> messages;
+};
 
-//     TestLog::Enable _;
-//     delete pool;
-//     EXPECT_EQ("~ObjectPool: Pool destroyed with 1 objects still
-//     outstanding!",
-//               TestLog::get());
-// }
+TEST(ObjectPoolTest, destructor_objectsStillAllocated)
+{
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    ObjectPool<TestObject>* pool = new ObjectPool<TestObject>();
+    TestObject* a = pool->construct();
+    (void)a;
+
+    delete pool;
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/ObjectPool.h", m.filename);
+    EXPECT_STREQ("~ObjectPool", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::ERROR), m.logLevel);
+    EXPECT_EQ("Pool destroyed with 1 objects still outstanding!", m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+}
 
 TEST(ObjectPoolTest, construct)
 {
