@@ -123,8 +123,10 @@ Sender::sendMessage(MessageContext* context)
     }
 
     // perform sanity checks.
-    assert(context->getNumPackets() ==
-           1 + (context->messageLength / context->PACKET_DATA_LENGTH));
+    assert(context->messageLength <=
+           context->getNumPackets() * context->PACKET_DATA_LENGTH);
+    assert(context->messageLength >
+           (context->getNumPackets() - 1) * context->PACKET_DATA_LENGTH);
     assert(context->messageLength == actualMessageLen);
     assert(context->DATA_HEADER_LENGTH == sizeof(Protocol::DataHeader));
 
@@ -155,7 +157,7 @@ Sender::sendMessage(MessageContext* context)
     // additional outbound message setup.
     std::lock_guard<SpinLock> messageLock(message->mutex, std::adopt_lock);
     message->grantOffset =
-        std::min(unscheduledBytes, message->context->messageLength - 1);
+        std::min(unscheduledBytes - 1, message->context->messageLength - 1);
     message->grantIndex =
         message->grantOffset / message->context->PACKET_DATA_LENGTH;
 }
@@ -234,7 +236,7 @@ Sender::cleanup()
     std::lock_guard<SpinLock> lockQueue(queueMutex, std::adopt_lock);
     while (!sendQueue.empty()) {
         OutboundMessage* message = sendQueue.front();
-        if (message->sentIndex < message->context->getNumPackets()) {
+        if (message->sentIndex + 1 < message->context->getNumPackets()) {
             // Found an incomplete message, easier to just skip the reset of
             // cleanup ranther than dealing with erasing somewhere in the middle
             // of the sendQueue.
@@ -243,6 +245,7 @@ Sender::cleanup()
         message->context->release();
         sendQueue.pop_front();
         messageMap.erase(message->context->msgId);
+        outboundPool.destroy(message);
     }
 }
 
