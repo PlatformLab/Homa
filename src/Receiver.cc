@@ -48,10 +48,6 @@ Receiver::~Receiver()
         it->second->context->release();
         inboundPool.destroy(it->second);
     }
-    while (messageQueue.size() > 0) {
-        messageQueue.front()->release();
-        messageQueue.pop_front();
-    }
 }
 
 /**
