@@ -195,6 +195,7 @@ add_executable(unit_test
     src/STLUtilTest.cc
     src/StringUtilTest.cc
     src/ThreadIdTest.cc
+    src/TransportImplTest.cc
     src/TubTest.cc
     src/UtilTest.cc
 )
