@@ -69,21 +69,37 @@ Message::append(const void* source, uint32_t num)
 uint32_t
 Message::get(uint32_t offset, void* destination, uint32_t num) const
 {
-    uint16_t packetIndex = offset / context->PACKET_DATA_LENGTH;
-    uint16_t packetOffset = offset % context->PACKET_DATA_LENGTH;
+    const uint32_t PACKET_DATA_LENGTH = context->PACKET_DATA_LENGTH;
+    uint32_t packetIndex = offset / PACKET_DATA_LENGTH;
+    uint32_t packetOffset = offset % PACKET_DATA_LENGTH;
     uint32_t bytesCopied = 0;
+
+    // Offset is passed the end of the message.
+    if (offset >= context->messageLength) {
+        return 0;
+    }
+
     if (offset + num > context->messageLength) {
         num = context->messageLength - offset;
     }
+
     while (bytesCopied < num) {
-        uint16_t rawOffset = context->DATA_HEADER_LENGTH + packetOffset;
-        char* source =
-            static_cast<char*>(context->getPacket(packetIndex)->payload);
-        source += rawOffset;
-        uint16_t bytesToCopy =
-            std::min(Util::downCast<uint16_t>(num - bytesCopied),
-                     context->PACKET_DATA_LENGTH);
-        std::memcpy(destination, source, bytesToCopy);
+        Driver::Packet* packet = context->getPacket(packetIndex);
+        if (packet == nullptr) {
+            WARNING(
+                "Copy cut short; message (%lu:%lu) of length %uB has no "
+                "packet at offset %u (index %u)",
+                context->msgId.transportId, context->msgId.sequence,
+                context->messageLength, packetIndex * PACKET_DATA_LENGTH,
+                packetIndex);
+            break;
+        }
+        char* source = static_cast<char*>(packet->payload);
+        source += packetOffset + context->DATA_HEADER_LENGTH;
+        uint32_t bytesToCopy =
+            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+        std::memcpy(static_cast<char*>(destination) + bytesCopied, source,
+                    bytesToCopy);
         bytesCopied += bytesToCopy;
         packetIndex++;
         packetOffset = 0;
@@ -94,14 +110,19 @@ Message::get(uint32_t offset, void* destination, uint32_t num) const
 void
 Message::set(uint32_t offset, const void* source, uint32_t num)
 {
-    uint16_t packetIndex = offset / context->PACKET_DATA_LENGTH;
-    uint16_t packetOffset = offset % context->PACKET_DATA_LENGTH;
+    const uint32_t PACKET_DATA_LENGTH = context->PACKET_DATA_LENGTH;
+    uint32_t packetIndex = offset / PACKET_DATA_LENGTH;
+    uint32_t packetOffset = offset % PACKET_DATA_LENGTH;
     uint32_t bytesCopied = 0;
     uint32_t maxMessageLength =
-        context->PACKET_DATA_LENGTH * context->MAX_MESSAGE_PACKETS;
+        PACKET_DATA_LENGTH * context->MAX_MESSAGE_PACKETS;
+    // Offset is passed the end of the max length.
+    if (offset >= maxMessageLength) {
+        return;
+    }
+
     if (offset + num > maxMessageLength) {
         ERROR(
-            "Max message size limit (%uB) reached; "
             "Max message size limit (%uB) reached; "
             "trying to set bytes %u - %u; "
             "message will be truncated",
@@ -117,19 +138,19 @@ Message::set(uint32_t offset, const void* source, uint32_t num)
             assert(ret);
             assert(packet->len == 0);
             assert(packet->getMaxPayloadSize() >=
-                   context->DATA_HEADER_LENGTH + context->PACKET_DATA_LENGTH);
+                   context->DATA_HEADER_LENGTH + PACKET_DATA_LENGTH);
             assert(context->getPacket(packetIndex) != nullptr);
         }
 
-        uint16_t rawOffset = context->DATA_HEADER_LENGTH + packetOffset;
         char* destination = static_cast<char*>(packet->payload);
-        destination += rawOffset;
-        uint16_t bytesToCopy =
-            std::min(Util::downCast<uint16_t>(num - bytesCopied),
-                     context->PACKET_DATA_LENGTH);
-        std::memcpy(destination, source, bytesToCopy);
+        destination += packetOffset + context->DATA_HEADER_LENGTH;
+        uint32_t bytesToCopy =
+            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+        std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
+                    bytesToCopy);
         packet->len = std::max(
-            packet->len, Util::downCast<uint16_t>(bytesToCopy + rawOffset));
+            packet->len, Util::downCast<uint16_t>(bytesToCopy + packetOffset +
+                                                  context->DATA_HEADER_LENGTH));
         bytesCopied += bytesToCopy;
         packetIndex++;
         packetOffset = 0;
