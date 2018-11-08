@@ -37,7 +37,7 @@ class ReceiverTest : public ::testing::Test {
   public:
     ReceiverTest()
         : mockDriver()
-        , mockPacket(&payload, 0)
+        , mockPacket(&payload)
         , messagePool()
         , scheduler()
         , receiver()
@@ -115,7 +115,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_CALL(mockDriver, getAddress(PtrStrEq(addressStr)))
         .WillOnce(Return(&mockAddress));
     char grantPayload[1024];
-    MockDriver::MockPacket grantPacket(grantPayload, 0);
+    MockDriver::MockPacket grantPacket(grantPayload);
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&grantPacket));
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
         .Times(1);
@@ -134,7 +134,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         static_cast<Protocol::GrantHeader*>(grantPacket.payload);
     EXPECT_EQ(header->common.msgId, grantHeader->common.msgId);
     EXPECT_EQ(6000U, grantHeader->offset);
-    EXPECT_EQ(sizeof(Protocol::GrantHeader), grantPacket.len);
+    EXPECT_EQ(sizeof(Protocol::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
     EXPECT_FALSE(message->fullMessageReceived);
 
@@ -187,7 +187,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(1000U, message->context->PACKET_DATA_LENGTH);
     EXPECT_EQ(header->common.msgId, grantHeader->common.msgId);
     EXPECT_EQ(7000U, grantHeader->offset);
-    EXPECT_EQ(sizeof(Protocol::GrantHeader), grantPacket.len);
+    EXPECT_EQ(sizeof(Protocol::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
     EXPECT_TRUE(message->fullMessageReceived);
     EXPECT_EQ(1U, receiver->messageQueue.size());

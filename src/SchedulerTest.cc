@@ -34,7 +34,7 @@ class ScheudlerTest : public ::testing::Test {
   public:
     ScheudlerTest()
         : mockDriver()
-        , mockPacket(&payload, 0)
+        , mockPacket(&payload)
         , scheduler()
         , savedLogPolicy(Debug::getLogPolicy())
     {
@@ -82,7 +82,7 @@ TEST_F(ScheudlerTest, packetReceived)
     Protocol::GrantHeader* header = (Protocol::GrantHeader*)payload;
     EXPECT_EQ(msgId, header->common.msgId);
     EXPECT_EQ(6000U, header->offset);
-    EXPECT_EQ(sizeof(Protocol::GrantHeader), mockPacket.len);
+    EXPECT_EQ(sizeof(Protocol::GrantHeader), mockPacket.length);
     EXPECT_EQ(sourceAddr, mockPacket.address);
 }
 

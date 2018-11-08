@@ -36,7 +36,7 @@ class SenderTest : public ::testing::Test {
   public:
     SenderTest()
         : mockDriver()
-        , mockPacket(&payload, 0)
+        , mockPacket(&payload)
         , messagePool()
         , sender()
         , savedLogPolicy(Debug::getLogPolicy())
@@ -185,7 +185,7 @@ TEST_F(SenderTest, sendMessage_basic)
         {42, 1}, sizeof(Protocol::DataHeader), &mockDriver);
     context->setPacket(0, &mockPacket);
     context->messageLength = 420;
-    mockPacket.len = context->messageLength + context->DATA_HEADER_LENGTH;
+    mockPacket.length = context->messageLength + context->DATA_HEADER_LENGTH;
     context->address = (Driver::Address*)22;
 
     EXPECT_EQ(0U, sender.sendQueue.size());
@@ -213,15 +213,15 @@ TEST_F(SenderTest, sendMessage_multipacket)
 {
     char payload0[1024];
     char payload1[1024];
-    NiceMock<MockDriver::MockPacket> packet0(payload0, 0);
-    NiceMock<MockDriver::MockPacket> packet1(payload1, 0);
+    NiceMock<MockDriver::MockPacket> packet0(payload0);
+    NiceMock<MockDriver::MockPacket> packet1(payload1);
     MessageContext* context = messagePool->construct(
         {42, 1}, sizeof(Protocol::DataHeader), &mockDriver);
     context->setPacket(0, &packet0);
     context->setPacket(1, &packet1);
     context->messageLength = 1420;
-    packet0.len = 1000 + 24;
-    packet1.len = 420 + 24;
+    packet0.length = 1000 + 24;
+    packet1.length = 420 + 24;
     context->address = (Driver::Address*)22;
 
     EXPECT_EQ(24U, sizeof(Protocol::DataHeader));
@@ -296,7 +296,7 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
         {42, 1}, sizeof(Protocol::DataHeader), &mockDriver);
     context->setPacket(0, &mockPacket);
     context->messageLength = 420;
-    mockPacket.len = context->messageLength + context->DATA_HEADER_LENGTH;
+    mockPacket.length = context->messageLength + context->DATA_HEADER_LENGTH;
     context->address = (Driver::Address*)22;
 
     // First send should succeed.
@@ -330,7 +330,7 @@ TEST_F(SenderTest, sendMessage_unsheduledLimit)
         context->setPacket(i, &mockPacket);
     }
     context->messageLength = 9000;
-    mockPacket.len = 1000 + 24;
+    mockPacket.length = 1000 + 24;
     context->address = (Driver::Address*)22;
     EXPECT_EQ(9U, context->getNumPackets());
     EXPECT_EQ(1000U, context->PACKET_DATA_LENGTH);

@@ -65,7 +65,7 @@ Scheduler::packetReceived(Protocol::MessageId msgId,
     Driver::Packet* packet = driver->allocPacket();
     Protocol::GrantHeader* header =
         new (packet->payload) Protocol::GrantHeader(msgId, offset);
-    packet->len = sizeof(Protocol::GrantHeader);
+    packet->length = sizeof(Protocol::GrantHeader);
     packet->address = sourceAddr;
     driver->sendPackets(&packet, 1);
     driver->releasePackets(&packet, 1);

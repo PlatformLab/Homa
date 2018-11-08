@@ -89,11 +89,11 @@ TEST_F(TransportImplTest, receiveMessage)
 TEST_F(TransportImplTest, sendMessage)
 {
     char payload[1024];
-    MockDriver::MockPacket mockPacket(payload, 0);
+    MockDriver::MockPacket mockPacket(payload);
     Message message = transport->newMessage();
     message.context->setPacket(0, &mockPacket);
     message.context->messageLength = 420;
-    mockPacket.len =
+    mockPacket.length =
         message.context->messageLength + message.context->DATA_HEADER_LENGTH;
     message.context->address = (Driver::Address*)22;
 
@@ -115,7 +115,7 @@ TEST_F(TransportImplTest, sendMessage)
 TEST_F(TransportImplTest, poll_handleDataPacket)
 {
     char payload[1024];
-    MockDriver::MockPacket mockPacket(payload, 0);
+    MockDriver::MockPacket mockPacket(payload);
     Protocol::DataHeader* header =
         static_cast<Protocol::DataHeader*>(mockPacket.payload);
     header->common.opcode = Protocol::DATA;
@@ -125,7 +125,7 @@ TEST_F(TransportImplTest, poll_handleDataPacket)
     std::string addressStr("remote-location");
     MockDriver::MockAddress mockAddress;
     mockPacket.address = &mockAddress;
-    mockPacket.len = sizeof(Protocol::DataHeader);
+    mockPacket.length = sizeof(Protocol::DataHeader);
 
     EXPECT_CALL(mockDriver, receivePackets)
         .WillOnce(DoAll(SetArgPointee<1>(&mockPacket), Return(1)));
@@ -138,7 +138,7 @@ TEST_F(TransportImplTest, poll_handleDataPacket)
         .RetiresOnSaturation();
     EXPECT_CALL(mockDriver, getAddress).WillOnce(Return(&mockAddress));
     char grantPayload[1024];
-    MockDriver::MockPacket grantPacket(grantPayload, 0);
+    MockDriver::MockPacket grantPacket(grantPayload);
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&grantPacket));
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
         .Times(1);
@@ -155,14 +155,14 @@ TEST_F(TransportImplTest, poll_handleDataPacket)
 TEST_F(TransportImplTest, poll_handleGrantPacket)
 {
     char payload[1024];
-    MockDriver::MockPacket mockPacket(payload, 0);
+    MockDriver::MockPacket mockPacket(payload);
     Protocol::MessageId msgId = {42, 1};
     Protocol::GrantHeader* header =
         static_cast<Protocol::GrantHeader*>(mockPacket.payload);
     header->common.opcode = Protocol::GRANT;
     header->common.msgId = msgId;
     header->offset = 6500;
-    mockPacket.len = sizeof(Protocol::GrantHeader);
+    mockPacket.length = sizeof(Protocol::GrantHeader);
 
     EXPECT_CALL(mockDriver, receivePackets)
         .WillOnce(DoAll(SetArgPointee<1>(&mockPacket), Return(1)));

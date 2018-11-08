@@ -361,14 +361,15 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
                 continue;
             }
             header = rte_pktmbuf_append(
-                mbuf, Util::downCast<uint16_t>(PACKET_HDR_LEN + packet->len));
+                mbuf,
+                Util::downCast<uint16_t>(PACKET_HDR_LEN + packet->length));
             if (unlikely(NULL == header)) {
                 WARNING("rte_pktmbuf_append call failed; dropping packet");
                 rte_pktmbuf_free(mbuf);
                 continue;
             }
             char* data = header + PACKET_HDR_LEN;
-            rte_memcpy(data, packet->payload, packet->len);
+            rte_memcpy(data, packet->payload, packet->length);
         } else {
             mbuf = packet->bufRef.mbuf;
             header = static_cast<char*>(packet->header);
@@ -394,7 +395,7 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
         // In the normal case, we pre-allocate a pakcet's mbuf with enough
         // storage to hold the MAX_PAYLOAD_SIZE.  If the actual payload is
         // smaller, trim the mbuf to size to avoid sending unecessary bits.
-        uint32_t actualLength = PACKET_HDR_LEN + packet->len;
+        uint32_t actualLength = PACKET_HDR_LEN + packet->length;
         uint32_t mbufDataLength = rte_pktmbuf_pkt_len(mbuf);
         if (actualLength < mbufDataLength) {
             if (rte_pktmbuf_trim(mbuf, mbufDataLength - actualLength) < 0) {
@@ -528,7 +529,7 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
             packet = packetPool.construct(m, ethHdr, payload);
         }
         packet->address = sender;
-        packet->len = length;
+        packet->length = length;
 
         receivedPackets[numPacketsReceived++] = packet;
     }

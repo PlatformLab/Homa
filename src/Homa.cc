@@ -136,7 +136,7 @@ Message::set(uint32_t offset, const void* source, uint32_t num)
             packet = context->driver->allocPacket();
             bool ret = context->setPacket(packetIndex, packet);
             assert(ret);
-            assert(packet->len == 0);
+            assert(packet->length == 0);
             assert(packet->getMaxPayloadSize() >=
                    context->DATA_HEADER_LENGTH + PACKET_DATA_LENGTH);
             assert(context->getPacket(packetIndex) != nullptr);
@@ -148,9 +148,10 @@ Message::set(uint32_t offset, const void* source, uint32_t num)
             std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
         std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
                     bytesToCopy);
-        packet->len = std::max(
-            packet->len, Util::downCast<uint16_t>(bytesToCopy + packetOffset +
-                                                  context->DATA_HEADER_LENGTH));
+        packet->length =
+            std::max(packet->length,
+                     Util::downCast<uint16_t>(bytesToCopy + packetOffset +
+                                              context->DATA_HEADER_LENGTH));
         bytesCopied += bytesToCopy;
         packetIndex++;
         packetOffset = 0;

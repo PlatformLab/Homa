@@ -83,8 +83,9 @@ class Driver {
         /// Pointer to an array of bytes containing the payload of this Packet.
         void* const payload;
 
-        /// Number of bytes the payload holds.
-        uint16_t len;
+        /// Number of bytes the payload currently holds.  This value should be
+        /// updated when the payload is modifed.
+        uint16_t length;
 
         /// Return the maxumum number of bytes the payload can hold.
         virtual uint16_t getMaxPayloadSize() = 0;
@@ -93,11 +94,11 @@ class Driver {
         /**
          * Construct a Packet. Only called by Packet subclasses.
          */
-        explicit Packet(void* payload, uint16_t len)
+        explicit Packet(void* payload, uint16_t length = 0)
             : address(NULL)
             , priority(0)
             , payload(payload)
-            , len(len)
+            , length(length)
         {}
 
         // DISALLOW_COPY_AND_ASSIGN

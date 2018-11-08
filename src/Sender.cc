@@ -119,7 +119,7 @@ Sender::sendMessage(MessageContext* context)
         packet->priority = 0;
         new (packet->payload)
             Protocol::DataHeader(context->msgId, context->messageLength, i);
-        actualMessageLen += (packet->len - context->DATA_HEADER_LENGTH);
+        actualMessageLen += (packet->length - context->DATA_HEADER_LENGTH);
     }
 
     // perform sanity checks.

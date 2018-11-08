@@ -40,8 +40,8 @@ class MessageTest : public ::testing::Test {
         : mockDriver()
         , transport(new TransportImpl(&mockDriver, 22))
         , buf()
-        , packet0(buf + 0, 0)
-        , packet1(buf + 1024, 0)
+        , packet0(buf + 0)
+        , packet1(buf + 1024)
         , savedLogPolicy(Debug::getLogPolicy())
     {
         std::memset(buf, 0, sizeof(buf));
@@ -147,8 +147,8 @@ TEST_F(MessageTest, get_basic)
     message.context->messageLength = 1007;
     std::memcpy(buf + 24 + 1000 - 7, source, 7);
     std::memcpy(buf + 24 + 1000 + 24, source + 7, 7);
-    packet0.len = 24 + 1000;
-    packet1.len = 24 + 7;
+    packet0.length = 24 + 1000;
+    packet1.length = 24 + 7;
     EXPECT_EQ(24U, message.context->DATA_HEADER_LENGTH);
 
     char dest[2048];
@@ -164,8 +164,8 @@ TEST_F(MessageTest, get_offsetTooLarge)
     message.context->setPacket(0, &packet0);
     message.context->setPacket(1, &packet1);
     message.context->messageLength = 1007;
-    packet0.len = 24 + 1000;
-    packet1.len = 24 + 7;
+    packet0.length = 24 + 1000;
+    packet1.length = 24 + 7;
 
     char dest[2048];
     uint32_t bytes = message.get(2000, dest, 20);
@@ -195,7 +195,7 @@ TEST_F(MessageTest, get_missingPacket)
     message.context->setPacket(0, &packet0);
     message.context->messageLength = 1007;
     std::memcpy(buf + 24 + 1000 - 7, source, 7);
-    packet0.len = 24 + 1000;
+    packet0.length = 24 + 1000;
     EXPECT_EQ(24U, message.context->DATA_HEADER_LENGTH);
 
     char dest[2048];
@@ -223,7 +223,7 @@ TEST_F(MessageTest, set_basic)
     char source[] = "Hello, world!";
     message.context->setPacket(1, &packet1);
     message.context->messageLength = 1042;
-    packet1.len = 24 + 42;
+    packet1.length = 24 + 42;
     EXPECT_EQ(24U, message.context->DATA_HEADER_LENGTH);
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
@@ -233,8 +233,8 @@ TEST_F(MessageTest, set_basic)
 
     EXPECT_TRUE(std::memcmp(buf + 24 + 1000 - 7, source, 7) == 0);
     EXPECT_TRUE(std::memcmp(buf + 24 + 1000 + 24, source + 7, 7) == 0);
-    EXPECT_EQ(24 + 1000, packet0.len);
-    EXPECT_EQ(24 + 42, packet1.len);
+    EXPECT_EQ(24 + 1000, packet0.length);
+    EXPECT_EQ(24 + 42, packet1.length);
     EXPECT_EQ(1042U, message.context->messageLength);
 }
 
@@ -269,7 +269,7 @@ TEST_F(MessageTest, set_truncate)
 
     EXPECT_TRUE(std::memcmp(buf + 24 + 1000 - 7, source, 7) == 0);
     EXPECT_FALSE(std::memcmp(buf + 24 + 1000 + 24, source + 7, 7) == 0);
-    EXPECT_EQ(24 + 1000, packet0.len);
+    EXPECT_EQ(24 + 1000, packet0.length);
     EXPECT_EQ(MAX_LEN, message.context->messageLength);
 
     EXPECT_EQ(1U, handler.messages.size());

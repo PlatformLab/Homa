@@ -90,7 +90,7 @@ TransportImpl::poll()
     int numPackets = driver->receivePackets(MAX_BURST, packets);
     for (int i = 0; i < numPackets; ++i) {
         Driver::Packet* packet = packets[i];
-        assert(packet->len >= sizeof(Protocol::CommonHeader));
+        assert(packet->length >= sizeof(Protocol::CommonHeader));
         Protocol::CommonHeader* header =
             static_cast<Protocol::CommonHeader*>(packet->payload);
 

@@ -47,8 +47,8 @@ class MockDriver : public Driver {
      */
     class MockPacket : public Driver::Packet {
       public:
-        MockPacket(void* payload, uint16_t len)
-            : Packet(payload, len)
+        MockPacket(void* payload, uint16_t length = 0)
+            : Packet(payload, length)
         {}
 
         MOCK_METHOD0(getMaxPayloadSize, uint16_t());
