@@ -145,7 +145,7 @@ class Driver {
      * In general, Packet objects should be considered immutable once they
      * are passed to this method. The Packet::address and Packet::priority
      * fields are two exceptions; they can be modified after this call
-     * returns but not currently with this call since Packet objects are not
+     * returns but not concurrently with this call since Packet objects are not
      * thread-safe.
      *
      * A Packet can be resent by simply calling this method again passing
