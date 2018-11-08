@@ -167,6 +167,12 @@ Message::getAddress() const
 }
 
 void
+Message::setDestination(Driver::Address* destination)
+{
+    context->address = destination;
+}
+
+void
 Message::send(SendFlag flags, Message* completes[], uint16_t numCompletes)
 {
     transportImpl->sendMessage(this, flags, completes, numCompletes);
