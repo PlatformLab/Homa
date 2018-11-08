@@ -97,7 +97,6 @@ enum EthPayloadType {
  * Allocated to store packet data when mbufs are not available.
  */
 struct DpdkDriverImpl::OverflowBuffer {
-    char* header[PACKET_HDR_LEN];
     char* data[MAX_PAYLOAD_SIZE];
 };
 
@@ -107,7 +106,7 @@ struct DpdkDriverImpl::OverflowBuffer {
  */
 class DpdkDriverImpl::DpdkPacket : public Driver::Packet {
   public:
-    explicit DpdkPacket(struct rte_mbuf* mbuf, void* header, void* data);
+    explicit DpdkPacket(struct rte_mbuf* mbuf, void* data);
     explicit DpdkPacket(OverflowBuffer* overflowBuf);
 
     /// see Driver::Packet::getMaxPayloadSize()
@@ -140,17 +139,13 @@ class DpdkDriverImpl::DpdkPacket : public Driver::Packet {
  *
  * @param mbuf
  *      Pointer to the DPDK mbuf that holds this packet.
- * @param header
- *      Memory location in the mbuf where the packet header should be stored.
  * @param data
  *      Memory location in the mbuf where the packet data should be stored.
  */
-DpdkDriverImpl::DpdkPacket::DpdkPacket(struct rte_mbuf* mbuf, void* header,
-                                       void* data)
+DpdkDriverImpl::DpdkPacket::DpdkPacket(struct rte_mbuf* mbuf, void* data)
     : Packet(data, 0)
     , bufType(MBUF)
     , bufRef()
-    , header(header)
 {
     bufRef.mbuf = mbuf;
 }
@@ -165,7 +160,6 @@ DpdkDriverImpl::DpdkPacket::DpdkPacket(OverflowBuffer* overflowBuf)
     : Packet(overflowBuf->data, 0)
     , bufType(OVERFLOW_BUF)
     , bufRef()
-    , header(overflowBuf->header)
 {
     bufRef.overflowBuf = overflowBuf;
 }
@@ -345,7 +339,6 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
         DpdkPacket* packet = static_cast<DpdkPacket*>(packets[i]);
 
         struct rte_mbuf* mbuf = nullptr;
-        char* header = nullptr;
         // If the packet is held in an Overflow buffer, we need to copy it out
         // into a new mbuf.
         if (unlikely(packet->bufType == DpdkPacket::OVERFLOW_BUF)) {
@@ -360,24 +353,23 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
                     numMbufsAvail, numMbufsInUse);
                 continue;
             }
-            header = rte_pktmbuf_append(
+            char* buf = rte_pktmbuf_append(
                 mbuf,
                 Util::downCast<uint16_t>(PACKET_HDR_LEN + packet->length));
-            if (unlikely(NULL == header)) {
+            if (unlikely(NULL == buf)) {
                 WARNING("rte_pktmbuf_append call failed; dropping packet");
                 rte_pktmbuf_free(mbuf);
                 continue;
             }
-            char* data = header + PACKET_HDR_LEN;
+            char* data = buf + PACKET_HDR_LEN;
             rte_memcpy(data, packet->payload, packet->length);
         } else {
             mbuf = packet->bufRef.mbuf;
-            header = static_cast<char*>(packet->header);
         }
 
         // Fill out the destination and source MAC addresses plus the Ethernet
         // frame type (i.e., IEEE 802.1Q VLAN tagging).
-        struct ether_hdr* ethHdr = reinterpret_cast<struct ether_hdr*>(header);
+        struct ether_hdr* ethHdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr*);
         rte_memcpy(&ethHdr->d_addr,
                    static_cast<const MacAddress*>(packet->address)->address,
                    ETHER_ADDR_LEN);
@@ -526,7 +518,7 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
         DpdkPacket* packet = nullptr;
         {
             std::lock_guard<SpinLock> lock(packetLock);
-            packet = packetPool.construct(m, ethHdr, payload);
+            packet = packetPool.construct(m, payload);
         }
         packet->address = sender;
         packet->length = length;
@@ -809,7 +801,7 @@ DpdkDriverImpl::_allocMbufPacket()
     // Perform packet operations with the lock held.
     {
         std::lock_guard<SpinLock> _(packetLock);
-        packet = packetPool.construct(mbuf, buf, buf + PACKET_HDR_LEN);
+        packet = packetPool.construct(mbuf, buf + PACKET_HDR_LEN);
     }
     return packet;
 }
