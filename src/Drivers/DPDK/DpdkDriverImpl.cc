@@ -365,6 +365,14 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
             rte_memcpy(data, packet->payload, packet->length);
         } else {
             mbuf = packet->bufRef.mbuf;
+
+            // If the mbuf is still transmitting from a previous call to send,
+            // we don't want to modify the buffer when the send is occuring.
+            // Thus if the mbuf is in use and drop this send request.
+            if (unlikely(rte_mbuf_refcnt_read(mbuf) > 1)) {
+                NOTICE("Packet still sending; dropping resend request");
+                continue;
+            }
         }
 
         // Fill out the destination and source MAC addresses plus the Ethernet
