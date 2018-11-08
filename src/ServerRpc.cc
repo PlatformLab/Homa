@@ -46,7 +46,7 @@ ServerRpc::operator=(ServerRpc&& other)
     other.manager = nullptr;
 }
 
-ServerRpc::operator bool()
+ServerRpc::operator bool() const
 {
     return request.operator bool();
 }

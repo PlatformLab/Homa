@@ -61,7 +61,7 @@ class ServerRpc {
     /**
      * Returns true if the ServerRpc contains a request; false otherwise.
      */
-    operator bool();
+    operator bool() const;
 
     /**
      * Send the ServerRpc's response.

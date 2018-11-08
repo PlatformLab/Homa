@@ -192,6 +192,7 @@ add_executable(unit_test
     src/RpcTest.cc
     src/SchedulerTest.cc
     src/SenderTest.cc
+    src/ServerRpcTest.cc
     src/SpinLockTest.cc
     src/STLUtilTest.cc
     src/StringUtilTest.cc
