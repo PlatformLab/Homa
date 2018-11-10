@@ -78,26 +78,7 @@ RpcManagerImpl::receiveServerRpc()
 void
 RpcManagerImpl::poll()
 {
-    Message message = transport->receiveMessage();
-    if (message) {
-        RpcProtocol::RpcHeader header;
-        message.get(0, &header, sizeof(header));
-
-        if (header.fromClient) {
-            std::lock_guard<SpinLock> lock(requestQueueMutex);
-            requestQueue.push_back(std::move(message));
-        } else {
-            std::lock_guard<SpinLock> lock(rpcMapMutex);
-            auto it = rpcMap.find(header.rpcId);
-            if (it != rpcMap.end()) {
-                it->second->response = std::move(message);
-                it->second->completed();
-                rpcMap.erase(it);
-            } else {
-                // there is no waiting rpc for this response; drop the message.
-            }
-        }
-    }
+    processMessage(transport->receiveMessage());
     transport->poll();
 }
 
@@ -141,6 +122,30 @@ RpcManagerImpl::sendServerRpcResponse(ServerRpc* serverRpc)
     Message* request = &(serverRpc->request);
     Message* response = &(serverRpc->response);
     response->send(SEND_NO_ACK | SEND_DETACHED, &request, 1);
+}
+
+void
+RpcManagerImpl::processMessage(Message message)
+{
+    if (message) {
+        RpcProtocol::RpcHeader header;
+        message.get(0, &header, sizeof(header));
+
+        if (header.fromClient) {
+            std::lock_guard<SpinLock> lock(requestQueueMutex);
+            requestQueue.push_back(std::move(message));
+        } else {
+            std::lock_guard<SpinLock> lock(rpcMapMutex);
+            auto it = rpcMap.find(header.rpcId);
+            if (it != rpcMap.end()) {
+                it->second->response = std::move(message);
+                it->second->completed();
+                rpcMap.erase(it);
+            } else {
+                // there is no waiting rpc for this response; drop the message.
+            }
+        }
+    }
 }
 
 }  // namespace Homa

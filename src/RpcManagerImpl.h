@@ -71,6 +71,10 @@ class RpcManagerImpl : public RpcManager {
 
     /// Queue of incoming requests awaiting processing.
     std::deque<Message> requestQueue;
+
+    /// Used in poll(); processes incomming messages into RPCs.  This method
+    /// factors out the logic for ease of testing.
+    void processMessage(Message message);
 };
 
 }  // namespace Homa

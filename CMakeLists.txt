@@ -190,6 +190,7 @@ add_executable(unit_test
     src/ObjectPoolTest.cc
     src/ReceiverTest.cc
     src/RpcTest.cc
+    src/RpcManagerImplTest.cc
     src/SchedulerTest.cc
     src/SenderTest.cc
     src/ServerRpcTest.cc
