@@ -202,7 +202,14 @@ add_executable(unit_test
     src/TubTest.cc
     src/UtilTest.cc
 )
-target_link_libraries(unit_test gmock_main Homa)
+target_link_libraries(unit_test Homa)
+#DPDK Tests
+target_sources(unit_test
+    PUBLIC
+        src/Drivers/DPDK/MacAddressTest.cc    
+)
+target_link_libraries(unit_test DpdkDriver)
+target_link_libraries(unit_test gmock_main)
 # -fno-access-control allows access to private members for testing
 target_compile_options(unit_test PRIVATE -fno-access-control)
 gtest_discover_tests(unit_test)

@@ -18,6 +18,9 @@
 #include <gtest/gtest.h>
 
 namespace Homa {
+namespace Drivers {
+namespace DPDK {
+namespace {
 
 TEST(MacAddressTest, constructorRaw)
 {
@@ -43,4 +46,7 @@ TEST(MacAddressTest, isNull)
     EXPECT_FALSE(MacAddress(rawNonNull).isNull());
 }
 
+}  // namespace
+}  // namespace DPDK
+}  // namespace Drivers
 }  // namespace Homa
