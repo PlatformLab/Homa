@@ -114,7 +114,18 @@ add_subdirectory(test)
 ################################################################################
 
 if(DOXYGEN_FOUND)
+    set(DOXYGEN_EXCLUDE_PATTERNS
+        *Test.cc
+        Mock*.h
+    )
+
+    set(DOXYGEN_ENABLE_PREPROCESSING "YES")
+    set(DOXYGEN_MACRO_EXPANSION "YES")
+    set(DOXYGEN_EXPAND_ONLY_PREDEF "YES")
+    set(DOXYGEN_PREDEFINED "__attribute__(x)=")
+
     doxygen_add_docs(docs
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
 endif()

@@ -39,7 +39,9 @@ class Driver {
      */
     class Address {
       protected:
+        /// Address constructor.
         Address() {}
+        /// Address copy constructor.
         Address(const Address&) {}
 
       public:

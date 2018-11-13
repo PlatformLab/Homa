@@ -52,6 +52,7 @@ struct CodeLocation {
 };
 
 /**
+ * \def HERE
  * Constructs a #CodeLocation describing the line from where it is used.
  */
 #define HERE \

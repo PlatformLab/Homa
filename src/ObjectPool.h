@@ -41,12 +41,6 @@
 
 namespace Homa {
 
-struct ObjectPoolException : public Exception {
-    ObjectPoolException(const std::string& where, std::string msg)
-        : Exception(where, msg)
-    {}
-};
-
 /**
  * ObjectPool is a simple templated allocator that provides fast
  * allocation in cases where objects are frequently constructed and

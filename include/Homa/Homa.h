@@ -30,8 +30,6 @@ class TransportImpl;
 }  // namespace Core
 
 /// Defines a set of flags that set optional send behavior Homa::Message.
-/// @sa #SendFlag, #SEND_NO_FLAGS, #SEND_NO_ACK, #SEND_DETACHED,
-/// #SEND_EXPECT_RESPONSE.
 typedef std::bitset<3> SendFlag;
 /// Default; No flags set.
 static const SendFlag SEND_NO_FLAGS = 0;
@@ -146,6 +144,8 @@ class Message {
      *      to be set.
      * @param source
      *      The pointer to the memory region whose
+     * @param num
+     *      The number of bytes to set.
      */
     void set(uint32_t offset, const void* source, uint32_t num);
 
@@ -169,8 +169,6 @@ class Message {
      *
      * @param flags
      *      A bit field of flags that sets optional behavior for this method.
-     *      See #SendFlag, #SEND_NO_FLAGS, #SEND_NO_ACK, #SEND_DETACHED,
-     *      #SEND_EXPECT_RESPONSE.
      * @param completes
      *      Set of messages for which sending this request completes.
      * @param numCompletes
@@ -182,12 +180,10 @@ class Message {
     /**
      * Send a this Message.
      *
-     * @param destiation
+     * @param destination
      *      The destiation network address for this Message.
      * @param flags
      *      A bit field of flags that sets optional behavior for this method.
-     *      See #SendFlag, #SEND_NO_FLAGS, #SEND_NO_ACK, #SEND_DETACHED,
-     *      #SEND_EXPECT_RESPONSE.
      * @param completes
      *      Set of messages for which sending this request completes.
      * @param numCompletes

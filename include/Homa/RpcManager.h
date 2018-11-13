@@ -76,7 +76,7 @@ class RpcManager {
      *
      * Called by Rpc methods internally; not for application use.
      *
-     * @parma rpc
+     * @param rpc
      *      Pointer to the RPC to be sent.
      */
     virtual void sendRpc(Rpc* rpc) = 0;

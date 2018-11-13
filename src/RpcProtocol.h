@@ -27,10 +27,11 @@ namespace RpcProtocol {
  * A unique identifier for an Rpc.
  */
 struct RpcId {
-    uint64_t managerId;  // Uniquely identifies the source manager for this Rpc.
-    uint64_t sequence;   // Sequence number for this Rpc (unique for managerId,
-                         // monotonically increasing).
+    uint64_t managerId;  ///< Uniquely identifies this Rpc's source manager.
+    uint64_t sequence;  ///< Sequence number for this Rpc (unique for managerId,
+                        ///< monotonically increasing).
 
+    /// RpcId constructor.
     RpcId(uint64_t managerId, uint64_t sequence)
         : managerId(managerId)
         , sequence(sequence)
@@ -58,6 +59,7 @@ struct RpcId {
      * as keys in unordered_maps.
      */
     struct Hasher {
+        /// Returns a "hash" of the given RpcId.
         std::size_t operator()(const RpcId& rpcId) const
         {
             std::size_t h1 = std::hash<uint64_t>()(rpcId.managerId);
@@ -71,15 +73,17 @@ struct RpcId {
  * Describes the wire format header fields for all RPCs.
  */
 struct RpcHeader {
-    RpcId rpcId;      // Unique identifier for this RPC
-    bool fromClient;  // true for requests from clients, false for responses
-                      // from the server.
+    RpcId rpcId;      ///< Unique identifier for this RPC
+    bool fromClient;  ///< true for requests from clients, false for responses
+                      ///< from the server.
 
+    /// Empty RpcHeader constructor.
     RpcHeader()
         : rpcId(0, 0)
         , fromClient(false)
     {}
 
+    /// Construct RpcHeader from RpcId and Rpc information.
     RpcHeader(uint64_t managerId, uint64_t sequence, bool fromClient)
         : rpcId(managerId, sequence)
         , fromClient(fromClient)

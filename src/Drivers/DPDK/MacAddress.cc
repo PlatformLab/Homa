@@ -54,6 +54,12 @@ MacAddress::MacAddress(const char* macStr)
         address[i] = Util::downCast<uint8_t>(bytes[i]);
 }
 
+/**
+ * Create a new copy of the provided MacAddress.
+ *
+ * @param other
+ *      MacAddress to be copied.
+ */
 MacAddress::MacAddress(const MacAddress& other)
     : Address()
 {

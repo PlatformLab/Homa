@@ -39,11 +39,12 @@ enum PacketOpcode {
  * A unique identifier for a Message.
  */
 struct MessageId {
-    uint64_t transportId;  // Uniquely identifies the source transport for this
-                           // Message.
-    uint64_t sequence;     // Sequence number for this Message (unique for
-                           // transportId, monotonically increasing).
+    uint64_t transportId;  ///< Uniquely identifies the source transport for
+                           ///< this Message.
+    uint64_t sequence;     ///< Sequence number for this Message (unique for
+                           ///< transportId, monotonically increasing).
 
+    /// MessageId constructor.
     MessageId(uint64_t transportId, uint64_t sequence)
         : transportId(transportId)
         , sequence(sequence)
@@ -73,6 +74,7 @@ struct MessageId {
      * as keys in unordered_maps.
      */
     struct Hasher {
+        /// Return a "hash" of the given MessageId.
         std::size_t operator()(const MessageId& msgId) const
         {
             std::size_t h1 = std::hash<uint64_t>()(msgId.transportId);
@@ -91,8 +93,10 @@ struct MessageId {
  * protocol version before interpreting the rest of the packet.
  */
 struct HeaderPrefix {
-    /// The version of the protocol being used by this packet.
-    uint8_t version;
+    uint8_t version;  ///< The version of the protocol being used by this
+                      ///< packet.
+
+    /// HeaderPrefix constructor.
     HeaderPrefix(uint8_t version)
         : version(version)
     {}
@@ -103,9 +107,11 @@ struct HeaderPrefix {
  * types.
  */
 struct CommonHeader {
-    HeaderPrefix prefix;  // Common to all versions of the protocol.
-    uint8_t opcode;       // One of the values of PacketOpcode.
-    MessageId msgId;      // Message associated with this packet.
+    HeaderPrefix prefix;  ///< Common to all versions of the protocol.
+    uint8_t opcode;       ///< One of the values of PacketOpcode.
+    MessageId msgId;      ///< Message associated with this packet.
+
+    /// CommonHeader constructor.
     CommonHeader(PacketOpcode opcode, MessageId msgId)
         : prefix(1)
         , opcode(opcode)
@@ -120,12 +126,13 @@ struct CommonHeader {
  * This packet type is used for flow control.
  */
 struct GrantHeader {
-    CommonHeader common;  // Common header fields.
-    uint32_t offset;      // Byte offset within the message; the
-                          // sender should now transmit all data up
-                          // to (but not including) this offset, if
-                          // it hasn't already.
+    CommonHeader common;  ///< Common header fields.
+    uint32_t offset;      ///< Byte offset within the message; the
+                          ///< sender should now transmit all data up
+                          ///< to (but not including) this offset, if
+                          ///< it hasn't already.
 
+    /// GrantHeader constructor.
     GrantHeader(MessageId msgId, uint32_t offset)
         : common(PacketOpcode::GRANT, msgId)
         , offset(offset)
@@ -137,16 +144,18 @@ struct GrantHeader {
  * a request or response message
  */
 struct DataHeader {
-    CommonHeader common;   // Common header fields.
-    uint32_t totalLength;  // Total # bytes in the message (*not* this packet!).
-    uint16_t index;  // Index of this packet in the array of packets that form
-                     // the message. With the know packet data length, the index
-                     // can by computed given the packet's byte offset into the
-                     // message and vice versa.
+    CommonHeader common;   ///< Common header fields.
+    uint32_t totalLength;  ///< Total # bytes in the message (*not* just in this
+                           ///< packet).
+    uint16_t index;  ///< Index of this packet in the array of packets that form
+                     ///< the message. With the know packet data length, the
+                     ///< index can by computed given the packet's byte offset
+                     ///< into the message and vice versa.
 
     // The remaining packet bytes after the header constitute message data
     // starting at the offset corresponding to the given packet index.
 
+    /// DataHeader constructor.
     DataHeader(MessageId msgId, uint32_t totalLength, uint16_t index)
         : common(PacketOpcode::DATA, msgId)
         , totalLength(totalLength)

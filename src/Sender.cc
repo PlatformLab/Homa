@@ -93,7 +93,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
 /**
  * Queue a message to be sent.
  *
- * @context
+ * @param context
  *      MessageContext of the message to be sent.
  */
 void

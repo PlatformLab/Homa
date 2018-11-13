@@ -24,9 +24,9 @@ namespace STLUtil {
 
 /**
  * Sort an R-value in place.
- * \param container
+ * @param container
  *      An R-value to sort.
- * \return
+ * @return
  *      The sorted input.
  */
 template <typename Container>

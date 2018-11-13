@@ -97,6 +97,7 @@ enum EthPayloadType {
  * Allocated to store packet data when mbufs are not available.
  */
 struct DpdkDriverImpl::OverflowBuffer {
+    /// Array of bytes used to store a packet's payload.
     char* data[MAX_PAYLOAD_SIZE];
 };
 
@@ -115,9 +116,9 @@ class DpdkDriverImpl::DpdkPacket : public Driver::Packet {
         return MAX_PAYLOAD_SIZE;
     }
 
-    /// Indicates whether the packet is backed by an DPDK mbuf or a driver-level
-    /// OverflowBuffer.
-    enum BufferType { MBUF, OVERFLOW_BUF } bufType;
+    /// Used to indicate whether the packet is backed by an DPDK mbuf or a
+    /// driver-level OverflowBuffer.
+    enum BufferType { MBUF, OVERFLOW_BUF } bufType;  ///< Packet BufferType.
 
     /// A reference to the buffer that backs this packet.
     union {
@@ -153,7 +154,7 @@ DpdkDriverImpl::DpdkPacket::DpdkPacket(struct rte_mbuf* mbuf, void* data)
 /**
  * Construct a DpdkPacket backed by an OverflowBuffer.
  *
- * @parm overflowBuf
+ * @param overflowBuf
  *      Overflow buffer that holds this packet.
  */
 DpdkDriverImpl::DpdkPacket::DpdkPacket(OverflowBuffer* overflowBuf)
@@ -254,13 +255,14 @@ DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
  *
  * @param port
  *      Selects which physical port to use for communication.
- * @param NoEalInit
+ * @param _
  *      Parameter is used only to define this constructors alternate
  *      signature.
  * @throw DriverInitFailure
  *      Thrown if DpdkDriverImpl fails to initialize for any reason.
  */
-DpdkDriverImpl::DpdkDriverImpl(int port, NoEalInit)
+DpdkDriverImpl::DpdkDriverImpl(int port,
+                               __attribute__((__unused__)) NoEalInit _)
     : addressLock()
     , addressCache()
     , packetLock()

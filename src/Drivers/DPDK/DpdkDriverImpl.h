@@ -56,7 +56,7 @@ class DpdkDriverImpl : public DpdkDriver {
   public:
     explicit DpdkDriverImpl(int port);
     explicit DpdkDriverImpl(int port, int argc, char* argv[]);
-    explicit DpdkDriverImpl(int port, NoEalInit);
+    explicit DpdkDriverImpl(int port, NoEalInit _);
     virtual ~DpdkDriverImpl();
 
     /// See Driver::getAddress()

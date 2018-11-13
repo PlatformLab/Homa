@@ -62,6 +62,10 @@ std::string hexDump(const void* buf, uint64_t bytes);
 template <typename MutexType>
 class unlock_guard {
   public:
+    /**
+     * Unlock the the provided mutex for the duration of this unlock_guards
+     *  lifetime.
+     */
     explicit unlock_guard(MutexType& mutex)
         : mutex(mutex)
     {
