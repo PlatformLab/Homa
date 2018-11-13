@@ -62,6 +62,12 @@ target_compile_features(Homa
     PUBLIC
         cxx_std_11
 )
+target_compile_options(Homa
+    PRIVATE
+        -Wall
+        -Wextra
+        $<$<CONFIG:Debug>:-Werror>
+)
 set_target_properties(Homa PROPERTIES
     VERSION ${Homa_VERSION}
 )
@@ -92,6 +98,9 @@ target_link_libraries(DpdkDriver
 target_compile_options(DpdkDriver
     PRIVATE
         -mssse3
+        -Wall
+        -Wextra
+        $<$<CONFIG:Debug>:-Werror>
 )
 
 ################################################################################

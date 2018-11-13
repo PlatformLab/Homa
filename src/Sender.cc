@@ -108,8 +108,8 @@ Sender::sendMessage(MessageContext* context)
         Driver::Packet* packet = context->getPacket(i);
         if (packet == nullptr) {
             ERROR(
-                "Incomplete message with id (%ul:%ul); missing packet at "
-                "offset %u; send request dropped.",
+                "Incomplete message with id (%lu:%lu); missing packet at "
+                "offset %d; send request dropped.",
                 context->msgId.transportId, context->msgId.sequence,
                 i * context->PACKET_DATA_LENGTH);
             return;
@@ -123,10 +123,6 @@ Sender::sendMessage(MessageContext* context)
     }
 
     // perform sanity checks.
-    assert(context->messageLength <=
-           context->getNumPackets() * context->PACKET_DATA_LENGTH);
-    assert(context->messageLength >
-           (context->getNumPackets() - 1) * context->PACKET_DATA_LENGTH);
     assert(context->messageLength == actualMessageLen);
     assert(context->DATA_HEADER_LENGTH == sizeof(Protocol::DataHeader));
 
@@ -139,7 +135,7 @@ Sender::sendMessage(MessageContext* context)
         if (it != messageMap.end()) {
             // found message with the same msgId. Drop this request.
             WARNING(
-                "Duplicate call to sendMessage for msgId (%ul:%ul); send "
+                "Duplicate call to sendMessage for msgId (%lu:%lu); send "
                 "request dropped.",
                 context->msgId.transportId, context->msgId.sequence);
             return;

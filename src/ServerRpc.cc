@@ -44,6 +44,7 @@ ServerRpc::operator=(ServerRpc&& other)
     response = std::move(other.response);
     manager = std::move(other.manager);
     other.manager = nullptr;
+    return *this;
 }
 
 ServerRpc::operator bool() const

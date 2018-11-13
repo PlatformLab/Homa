@@ -106,7 +106,7 @@ RpcManagerImpl::sendRpc(Rpc* rpc)
             rpcMap.insert({header.rpcId, rpc});
         } else {
             WARNING(
-                "duplicate call to sendRpc for id (%u:%u); request dropped.",
+                "duplicate call to sendRpc for id (%lu:%lu); request dropped.",
                 header.rpcId.managerId, header.rpcId.sequence);
             return;
         }

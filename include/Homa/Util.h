@@ -28,7 +28,7 @@ namespace Util {
 // This was taken from the RAMCloud project.
 template <typename T, size_t length>
 constexpr uint32_t
-arrayLength(const T (&array)[length])
+arrayLength(const T (&)[length])
 {
     return length;
 }

@@ -55,6 +55,7 @@ Scheduler::packetReceived(Protocol::MessageId msgId,
                           uint32_t totalBytesReceived)
 {
     // TODO(cstlee): Implement Homa's grant policy.
+    (void)totalMessageLength;
     // Implements a very simple grant policy which tries to maintain RTT bytes
     // granted for every Message.
     // TODO(cstlee): Add safe guards to prevent RTT_BYTES from being less than
@@ -63,8 +64,7 @@ Scheduler::packetReceived(Protocol::MessageId msgId,
     uint32_t offset = totalBytesReceived + RTT_BYTES;
 
     Driver::Packet* packet = driver->allocPacket();
-    Protocol::GrantHeader* header =
-        new (packet->payload) Protocol::GrantHeader(msgId, offset);
+    new (packet->payload) Protocol::GrantHeader(msgId, offset);
     packet->length = sizeof(Protocol::GrantHeader);
     packet->address = sourceAddr;
     driver->sendPackets(&packet, 1);

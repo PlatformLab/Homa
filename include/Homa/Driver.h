@@ -40,7 +40,7 @@ class Driver {
     class Address {
       protected:
         Address() {}
-        Address(const Address& other) {}
+        Address(const Address&) {}
 
       public:
         virtual ~Address() {}

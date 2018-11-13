@@ -254,13 +254,13 @@ DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
  *
  * @param port
  *      Selects which physical port to use for communication.
- * @param _
+ * @param NoEalInit
  *      Parameter is used only to define this constructors alternate
  *      signature.
  * @throw DriverInitFailure
  *      Thrown if DpdkDriverImpl fails to initialize for any reason.
  */
-DpdkDriverImpl::DpdkDriverImpl(int port, NoEalInit _)
+DpdkDriverImpl::DpdkDriverImpl(int port, NoEalInit)
     : addressLock()
     , addressCache()
     , packetLock()
