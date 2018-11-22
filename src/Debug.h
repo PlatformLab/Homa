@@ -69,7 +69,7 @@ extern std::string processName;
 
 /**
  * Log an ERROR message and abort the process.
- * \copydetails ERROR
+ * @copydetails ERROR
  */
 #define PANIC(format, ...)                          \
     do {                                            \
@@ -79,7 +79,7 @@ extern std::string processName;
 
 /**
  * Log an ERROR message and exit the process with status 1.
- * \copydetails ERROR
+ * @copydetails ERROR
  */
 #define EXIT(format, ...)                           \
     do {                                            \
@@ -100,21 +100,21 @@ extern std::string processName;
 
 /**
  * Log a WARNING message.
- * \copydetails ERROR
+ * @copydetails ERROR
  */
 #define WARNING(format, ...) \
     LOG((::Homa::Debug::LogLevel::WARNING), format, ##__VA_ARGS__)
 
 /**
  * Log a NOTICE message.
- * \copydetails ERROR
+ * @copydetails ERROR
  */
 #define NOTICE(format, ...) \
     LOG((::Homa::Debug::LogLevel::NOTICE), format, ##__VA_ARGS__)
 
 /**
  * Log a VERBOSE message.
- * \copydetails ERROR
+ * @copydetails ERROR
  */
 #define VERBOSE(format, ...) \
     LOG((::Homa::Debug::LogLevel::VERBOSE), format, ##__VA_ARGS__)
