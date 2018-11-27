@@ -35,18 +35,18 @@ configure_file (
 add_library(Homa
     src/CodeLocation.cc
     src/Debug.cc
-    src/Homa.cc
-    src/MessageContext.cc
-    src/Receiver.cc
-    src/Rpc.cc
-    src/RpcManager.cc
-    src/RpcManagerImpl.cc
-    src/Scheduler.cc
-    src/Sender.cc
-    src/ServerRpc.cc
+    # src/Homa.cc
+    # src/MessageContext.cc
+    # src/Receiver.cc
+    # src/Rpc.cc
+    # src/RpcManager.cc
+    # src/RpcManagerImpl.cc
+    # src/Scheduler.cc
+    # src/Sender.cc
+    # src/ServerRpc.cc
     src/StringUtil.cc
     src/ThreadId.cc
-    src/TransportImpl.cc
+    # src/TransportImpl.cc
     src/Util.cc
 )
 add_library(Homa::Homa ALIAS Homa)
@@ -227,21 +227,21 @@ enable_testing()
 add_executable(unit_test
     src/CodeLocationTest.cc
     src/DebugTest.cc
-    src/HomaTest.cc
-    src/MessageContextTest.cc
-    src/ObjectPoolTest.cc
-    src/ReceiverTest.cc
-    src/RpcTest.cc
-    src/RpcManagerImplTest.cc
-    src/SchedulerTest.cc
-    src/SenderTest.cc
-    src/ServerRpcTest.cc
-    src/SpinLockTest.cc
-    src/STLUtilTest.cc
+    # src/HomaTest.cc
+    # src/MessageContextTest.cc
+    # src/ObjectPoolTest.cc
+    # src/ReceiverTest.cc
+    # src/RpcTest.cc
+    # src/RpcManagerImplTest.cc
+    # src/SchedulerTest.cc
+    # src/SenderTest.cc
+    # src/ServerRpcTest.cc
+    # src/SpinLockTest.cc
+    # src/STLUtilTest.cc
     src/StringUtilTest.cc
     src/ThreadIdTest.cc
-    src/TransportImplTest.cc
-    src/TubTest.cc
+    # src/TransportImplTest.cc
+    # src/TubTest.cc
     src/UtilTest.cc
 )
 target_link_libraries(unit_test Homa)
