@@ -24,72 +24,17 @@
 namespace Homa {
 
 // forward declarations
-namespace Core {
-class MessageContext;
-class TransportImpl;
-}  // namespace Core
-
-/// Defines a set of flags that set optional send behavior Homa::Message.
-typedef std::bitset<3> SendFlag;
-/// Default; No flags set.
-static const SendFlag SEND_NO_FLAGS = 0;
-/// Signal to Transport to not require a Transport level acknowledgment. This is
-/// ususally because higher-level software has its own way of confirming that
-/// the Message is complete.
-static const SendFlag SEND_NO_ACK = 1 << 0;
-/// Request that the Trasport manage the sent Message even after the application
-/// destroys the Message. The Transport will attempt resends of the Message
-/// until the Message is complete. If the SEND_NO_ACK flag is set, the Message
-/// is considered complete after the Message's last byte is sent.
-static const SendFlag SEND_DETACHED = 1 << 1;
-/// Signal to the Transport that the Message is likely to generating an
-/// incomming Message. Used by the Transport to anticipate incast.
-static const SendFlag SEND_EXPECT_RESPONSE = 1 << 2;
+class Transport;
 
 /**
- * A Message object refers to an array of bytes that can be sent or is
- * received over the network via Homa::Transport.
+ * A Message refers to an array of bytes that can be sent or is received over
+ * the network via Homa::Transport.  RemoteOp and ServerOp instances include
+ * a pair of Message objects for inbound and outbound communication.
  *
- * A Message object should be initilized by calling Transport::newMessage()
- * or Transport::receiveMessage(). Uninitialized instances are unusable.
- *
- * This class is NOT thread-safe except for where an instance is accessed
- * by the transport which may be running on a different thread.
- *
- * @sa Transport::newMessage(), Transport::receiveMessage(),
- * Transport::sendMessage()
+ * This class is NOT thread-safe.
  */
 class Message {
   public:
-    /**
-     * Basic constructor to create an uninitialized Message object. Use by
-     * applications of the Homa library.
-     *
-     * Message objects can be initialized by moving the result of calling
-     * Transport::newMessage() or Transport::receiveMessage().
-     */
-    Message();
-
-    /**
-     * Move constructor.
-     */
-    Message(Message&& other);
-
-    /**
-     * Default destructor for a Message object.
-     */
-    ~Message();
-
-    /**
-     * Move assignment.
-     */
-    Message& operator=(Message&& other);
-
-    /**
-     * Returns true if the Message in initialized; false otherwise.
-     */
-    operator bool() const;
-
     /**
      * Append an array of bytes to the end of the Message by copying the
      * bytes into the Message's internal storage.
@@ -103,7 +48,7 @@ class Message {
      * @param num
      *      Number of bytes to be appended.
      */
-    void append(const void* source, uint32_t num);
+    virtual void append(const void* source, uint32_t num) = 0;
 
     /**
      * Get the contents of a specified range of bytes in the Message by
@@ -126,7 +71,8 @@ class Message {
      *      than "num" if the requested byte range exceeds the range of
      *      bytes in the Message.
      */
-    uint32_t get(uint32_t offset, void* destination, uint32_t num) const;
+    virtual uint32_t get(uint32_t offset, void* destination,
+                         uint32_t num) const = 0;
 
     /**
      * Set the contents of a specified range of bytes in the Message using
@@ -147,95 +93,186 @@ class Message {
      * @param num
      *      The number of bytes to set.
      */
-    void set(uint32_t offset, const void* source, uint32_t num);
+    virtual void set(uint32_t offset, const void* source, uint32_t num) = 0;
+};
 
+/**
+ * A RemoteOp is a Message pair consititing of a request Message to be sent to
+ * and processed by a "remote server" and a response Message that returns the
+ * result of processing the request.
+ *
+ * An RPC (Remote Procedure Call) is a simple example of a RemoteOp.  Unlike
+ * RPCs, however, the processing of the request maybe fully or paritally
+ * deligated by one server to another.  As such, the response may not come from
+ * the server that initally received the request.
+ *
+ * This class is NOT thread-safe.
+ */
+class RemoteOp {
+  public:
     /**
-     * Return the network address associated with this Message. For an
-     * incomming Message this is the source address. For an outgoing Message
-     * this is the destination address.
-     */
-    Driver::Address* getAddress() const;
-
-    /**
-     * Set the destiation network address for this Message.
+     * Basic constructor to create an uninitialized RemoteOp object. Use by
+     * applications of the Homa library.
      *
-     * This operation cannot be performed on a received Message or one that
-     * has already been sent.
+     * RemoteOp objects can be initialized by moving the result of calling
+     * Transport::newRemoteOp().
+     */
+    RemoteOp();
+
+    /**
+     * Convenience constructor for an RemoteOp object.
+     *
+     * @param transport
+     *      Pointer to the Homa::Transport which will send/receive this RPC.
+     * @param address
+     *      Address of a networked application that will process this RemoteOp.
+     */
+    explicit RemoteOp(Transport* transport,
+                      Driver::Address* destination = nullptr);
+
+    /**
+     * Move constructor.
+     */
+    RemoteOp(RemoteOp&& other);
+
+    /**
+     * Default destructor for a RemoteOp object.
+     */
+    ~RemoteOp();
+
+    /**
+     * Move assignment.
+     */
+    RemoteOp& operator=(RemoteOp&& other);
+
+    /**
+     * Returns true if the RemoteOp in initialized; false otherwise.
+     */
+    operator bool() const;
+
+    /**
+     * Set the destiation network address for this RemoteOp.
+     *
+     * This operation cannot be performed after send() is called.
      */
     void setDestination(Driver::Address* destination);
 
     /**
-     * Send a this Message.
+     * Send the RemoteOp asynchronously.
      *
-     * @param flags
-     *      A bit field of flags that sets optional behavior for this method.
-     * @param completes
-     *      Set of messages for which sending this request completes.
-     * @param numCompletes
-     *      Number of messages in _completes_.
+     * WARNING: Do not modify the Rpc after calling this method.
      */
-    void send(SendFlag flags = SEND_NO_FLAGS, Message* completes[] = nullptr,
-              uint16_t numCompletes = 0);
+    void send();
 
     /**
-     * Send a this Message.
+     * Indicates whether the response has been received for this RemoteOp. Used
+     * to asynchronously process an RemoteOp. If this call returns true, the
+     * RemoteOp's response will be populated.
      *
-     * @param destination
-     *      The destiation network address for this Message.
-     * @param flags
-     *      A bit field of flags that sets optional behavior for this method.
-     * @param completes
-     *      Set of messages for which sending this request completes.
-     * @param numCompletes
-     *      Number of messages in _completes_.
+     * @return
+     *      True means that the RPC has finished or been canceled; #wait will
+     *      not block.  False means that the RPC is still being processed.
      */
-    void send(Driver::Address* destination, SendFlag flags = SEND_NO_FLAGS,
-              Message* completes[] = nullptr, uint16_t numCompletes = 0);
+    bool isReady();
+
+    /**
+     * Wait for a response to be received for this RPC.
+     */
+    void wait();
+
+    /// Message to be sent to and processed by the target "remote server".
+    const Message* request;
+
+    /// Message containing the result of processing the RemoteOp request.
+    const Message* response;
 
   private:
-    /// Contains the metadata and access to the message contents.
-    Core::MessageContext* context;
-
-    /// Transport responsible for this message.
-    Core::TransportImpl* transportImpl;
-
-    Message(const Message&) = delete;
-    Message& operator=(const Message&) = delete;
-
-    friend class Core::TransportImpl;
+    // Disable Copy and Assign
+    RemoteOp(const RemoteOp&) = delete;
+    RemoteOp& operator=(const RemoteOp&) = delete;
 };
 
 /**
- * Provides a means of commicating across the network using the Homa
- * protocol.
+ * A ServerOp is a Message pair consisting of an incomming request Message to
+ * be processed and an outgoing Message which either responds to the request or
+ * delegates the request to a "remote server".  Used by servers to handle
+ * incomming direct or deligated requests.
  *
- * The transport is used to send and receive messages accross the network.
- * The execution of the transport is driven through repeated calls to the
- * Transport::poll() method; the transport will not make any progress
- * otherwise.
+ * This class is NOT thread-safe.
+ */
+class ServerOp {
+  public:
+    /**
+     * Basic constructor to create an empty ServerOp object.
+     *
+     * ServerOp objects can be filled with an incomming request by moving the
+     * result of calling Transport::receiveServerOp().
+     */
+    ServerOp();
+
+    /**
+     * Move constructor.
+     */
+    ServerOp(ServerOp&& other);
+
+    /**
+     * Default destructor for a ServerOp object.
+     */
+    ~ServerOp();
+
+    /**
+     * Move assignment.
+     */
+    ServerOp& operator=(ServerOp&& other);
+
+    /**
+     * Returns true if the ServerOp contains a request; false otherwise.
+     */
+    operator bool() const;
+
+    /**
+     * Send the outMessage as a response to the initial requestor.
+     */
+    void reply();
+
+    /**
+     * Send the outMessage as a deligated request to the provided destination.
+     *
+     * @param destination
+     *      The network address to which the deligated request will be sent.
+     */
+    void deligate(Driver::Address* destination);
+
+    /// Message containing a direct or indirect RemoteOp request.
+    const Message* request;
+
+    /// Message containing the result of processing the request or a request
+    /// to be deligated.
+    const Message* outMessage;
+
+  private:
+    // Disable Copy and Assign
+    ServerOp(const ServerOp&) = delete;
+    ServerOp& operator=(const ServerOp&) = delete;
+};
+
+/**
+ * Provides a means of commicating across the network using the Homa protocol.
  *
- * When sending a message, the transport will attempt to ensure reliable and
- * at-least-once processing of the message. The transport will continue to
- * retransmit the message periodically until the transport considers the
- * message completed by the receiver, the sender cancels the message, or the
- * message encounters an unrecoverable error. The transport relies on
- * signals from the higher-level software and transport-level
- * acknowledgements to determine when a received message is considered
- * complete (see Transport::sendMessage() and Transport::receiveMessage()).
- * In some cases (e.g. an RPC system), the higher-level software may wish to
- * preclude the use of transport-level acknowledgments for performances
- * reasons. In such classes, the higher-level software should cancel the
- * message onces it is considered complete.
+ * The transport is used to send and receive messages accross the network using
+ * the RemoteOp and ServerOp abstractions.  The execution of the transport is
+ * driven through repeated calls to the Transport::poll() method; the transport
+ * will not make any progress otherwise.
  *
  * This class is thread-safe.
  */
 class Transport {
   public:
     /**
-     * Construct an instance of a Homa-based transport.
+     * Return a new instance of a Homa-based transport.
      *
-     * Caller is responsible for calling delete on the Transport when it is no
-     * longer needed.
+     * The caller is responsible for calling delete on the Transport when it is
+     * no longer needed.
      *
      * @param driver
      *      Driver with which this transport should send and receive packets.
@@ -245,17 +282,7 @@ class Transport {
      * @return
      *      Pointer to a new Homa::Transport.
      */
-    explicit Transport(Driver* driver, uint64_t transportId);
-
-    /**
-     * Transport destructor.
-     */
-    ~Transport();
-
-    /**
-     * Create a new Message that can be sent over Homa::Transport.
-     */
-    Message newMessage();
+    static Transport* newTransport(Driver* driver, uint64_t transportId);
 
     /**
      * Return a Message that has been received by this Homa::Transport. If no
@@ -266,7 +293,7 @@ class Transport {
      *
      * @sa Transport::sendMessage()
      */
-    Message receiveMessage();
+    virtual ServerOp receiveServerOp() = 0;
 
     /**
      * Return a network address handle for the given string representation of
@@ -279,7 +306,8 @@ class Transport {
      * @throw BadAddress
      *      _addressString_ is malformed.
      */
-    Driver::Address* getAddress(std::string const* const addressString);
+    virtual Driver::Address* getAddress(
+        std::string const* const addressString) = 0;
 
     /**
      * Make incremental progress performing all Transport functionality.
@@ -287,15 +315,7 @@ class Transport {
      * This method MUST be called for the Transport to make progress and should
      * be called frequently to ensure timely progress.
      */
-    void poll();
-
-  private:
-    /// Pointer to the actual transport implementation whose details are hidden
-    /// from applications.
-    Core::TransportImpl* const transportImpl;
-
-    Transport(const Transport&) = delete;
-    Transport& operator=(const Transport&) = delete;
+    virtual void poll() = 0;
 };
 
 }  // namespace Homa
