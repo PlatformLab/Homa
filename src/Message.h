@@ -13,10 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_CORE_MESSAGECONTEXT_H
-#define HOMA_CORE_MESSAGECONTEXT_H
+#ifndef HOMA_CORE_MESSAGE_H
+#define HOMA_CORE_MESSAGE_H
 
 #include "Homa/Driver.h"
+#include "Homa/Homa.h"
 
 #include "ObjectPool.h"
 #include "Protocol.h"
@@ -32,8 +33,8 @@ namespace Core {
 class MessagePool;
 
 /**
- * The MessageContext holds the Driver::Packet objects and metadata that make up
- * a Homa::Message.  The MessageContext also manages the lifetimes of held
+ * The Message holds the Driver::Packet objects and metadata that make up
+ * a Homa::Message.  The Message also manages the lifetimes of held
  * Packet objects on behalf of a Homa::Message.
  *
  * The lifetime of instances of this class are controlled with reference counts.
@@ -41,19 +42,23 @@ class MessagePool;
  * This class is not thread-safe but should only be modified by one part of
  * the transport a time.
  */
-class MessageContext {
+class Message : Homa::Message {
   public:
     /// Define the maximum number of packets that a message can hold.
     static const uint16_t MAX_MESSAGE_PACKETS = 1024;
 
-    explicit MessageContext(Protocol::MessageId msgId,
-                            uint16_t dataHeaderLength, Driver* driver,
-                            MessagePool* messagePool);
-    ~MessageContext();
+    explicit Message(Protocol::MessageId msgId, uint16_t dataHeaderLength,
+                     Driver* driver, MessagePool* messagePool);
+    ~Message();
 
-    Driver::Packet* getPacket(uint16_t index);
+    virtual void append(const void* source, uint32_t num);
+    virtual uint32_t get(uint32_t offset, void* destination,
+                         uint32_t num) const;
+    virtual void set(uint32_t offset, const void* source, uint32_t num);
+
+    Driver::Packet* getPacket(uint16_t index) const;
     bool setPacket(uint16_t index, Driver::Packet* packet);
-    uint16_t getNumPackets();
+    uint16_t getNumPackets() const;
     void retain();
     void release();
 
@@ -78,7 +83,7 @@ class MessageContext {
     const uint16_t DATA_HEADER_LENGTH;
 
   private:
-    /// Memory pool from which this MessageContext was allocated and to which it
+    /// Memory pool from which this Message was allocated and to which it
     /// should be returned on destruction.
     MessagePool* messagePool;
 
@@ -98,12 +103,12 @@ class MessageContext {
     /// These Packets will be released when this context is destroyed.
     Driver::Packet* packets[MAX_MESSAGE_PACKETS];
 
-    MessageContext(const MessageContext&) = delete;
-    MessageContext& operator=(const MessageContext&) = delete;
+    Message(const Message&) = delete;
+    Message& operator=(const Message&) = delete;
 };
 
 /**
- * Provides a pool allocator for MessageContext objects.
+ * Provides a pool allocator for Message objects.
  *
  * This class is thread-safe.
  */
@@ -112,16 +117,16 @@ class MessagePool {
     MessagePool();
     ~MessagePool() {}
 
-    MessageContext* construct(Protocol::MessageId msgId,
-                              uint16_t dataHeaderLength, Driver* driver);
-    void destroy(MessageContext* messageContext);
+    Message* construct(Protocol::MessageId msgId, uint16_t dataHeaderLength,
+                       Driver* driver);
+    void destroy(Message* message);
 
   private:
     /// Monitor style lock for the pool.
     SpinLock mutex;
 
-    /// Actual memory allocator for MessageContext objects.
-    ObjectPool<MessageContext> pool;
+    /// Actual memory allocator for Message objects.
+    ObjectPool<Message> pool;
 
     MessagePool(const MessagePool&) = delete;
     MessagePool& operator=(const MessagePool&) = delete;
@@ -130,4 +135,4 @@ class MessagePool {
 }  // namespace Core
 }  // namespace Homa
 
-#endif  // HOMA_CORE_MESSAGECONTEXT_H
+#endif  // HOMA_CORE_MESSAGE_H

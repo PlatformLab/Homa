@@ -36,7 +36,7 @@ add_library(Homa
     src/CodeLocation.cc
     src/Debug.cc
     # src/Homa.cc
-    # src/MessageContext.cc
+    src/Message.cc
     # src/Receiver.cc
     # src/Rpc.cc
     # src/RpcManager.cc
@@ -228,7 +228,7 @@ add_executable(unit_test
     src/CodeLocationTest.cc
     src/DebugTest.cc
     # src/HomaTest.cc
-    # src/MessageContextTest.cc
+    src/MessageTest.cc
     # src/ObjectPoolTest.cc
     # src/ReceiverTest.cc
     # src/RpcTest.cc
