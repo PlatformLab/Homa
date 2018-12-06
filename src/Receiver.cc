@@ -15,7 +15,7 @@
 
 #include "Receiver.h"
 
-#include <mutex>
+#include "OpContext.h"
 
 namespace Homa {
 namespace Core {
@@ -28,68 +28,46 @@ namespace Core {
  * @param messagePool
  *      MessagePool from which the Receiver can allocate MessageContext objects.
  */
-Receiver::Receiver(Scheduler* scheduler, MessagePool* messagePool)
+Receiver::Receiver(Scheduler* scheduler)
     : scheduler(scheduler)
-    , receiveMutex()
-    , messageMap()
-    , inboundPool()
-    , contextPool(messagePool)
-    , queueMutex()
-    , messageQueue()
 {}
 
 /**
  * Receiver distructor.
  */
-Receiver::~Receiver()
-{
-    std::lock_guard<SpinLock> lock(receiveMutex);
-    for (auto it = messageMap.begin(); it != messageMap.end(); ++it) {
-        it->second->context->release();
-        inboundPool.destroy(it->second);
-    }
-}
+Receiver::~Receiver() {}
 
 /**
- * Process an incoming Data packet.
+ * Process an incoming DATA packet.
  *
+ * @param op
+ *      OpContext containing the InboundMessage that corresponds to the
+ *      incomming DATA packet.
  * @param packet
  *      The incoming packet to be processed.
  * @param driver
  *      The driver from which the packet was received.
  */
 void
-Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
+Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
+                           Driver* driver)
 {
     Protocol::DataHeader* header =
         static_cast<Protocol::DataHeader*>(packet->payload);
     uint16_t dataHeaderLength = sizeof(Protocol::DataHeader);
     Protocol::MessageId msgId = header->common.msgId;
-    InboundMessage* message = nullptr;
 
-    // Find the InboundMessage for this packet.
-    {
-        // Only need to hold the lock while accessing the messageMap and
-        // inboundPool structures.
-        std::lock_guard<SpinLock> lock(receiveMutex);
-        auto it = messageMap.find(msgId);
-        if (it != messageMap.end()) {
-            message = it->second;
-        } else {
-            MessageContext* context =
-                contextPool->construct(msgId, dataHeaderLength, driver);
-            message = inboundPool.construct(context);
-            // Get an address pointer from the driver; the one in the packet
-            // may disappear when the packet goes away.
-            std::string addrStr = packet->address->toString();
-            message->context->address = driver->getAddress(&addrStr);
-            message->context->messageLength = header->totalLength;
-            messageMap.insert({msgId, message});
-        }
-        // Take the message's lock while still holding the receiveMutex.
-        message->mutex.lock();
+    if (!op->inMessage) {
+        op->inMessage.construct(msgId, dataHeaderLength, driver);
+        // Get an address pointer from the driver; the one in the packet
+        // may disappear when the packet goes away.
+        std::string addrStr = packet->address->toString();
+        op->inMessage->address = driver->getAddress(&addrStr);
+        op->inMessage->messageLength = header->totalLength;
     }
-    std::lock_guard<SpinLock> messageLock(message->mutex, std::adopt_lock);
+
+    InboundMessage* message = op->inMessage.get();
+    std::lock_guard<SpinLock> messageLock(message->mutex);
 
     // All packets already received; must be a duplicate.
     if (message->fullMessageReceived) {
@@ -99,59 +77,29 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Things that must be true (sanity check)
-    assert(message->context->address->toString() ==
-           packet->address->toString());
-    assert(message->context->messageLength == header->totalLength);
+    assert(message->address->toString() == packet->address->toString());
+    assert(message->messageLength == header->totalLength);
 
     // Add the packet
-    bool packetAdded = message->context->setPacket(header->index, packet);
+    bool packetAdded = message->setPacket(header->index, packet);
     if (packetAdded) {
         // This value is technically sloppy since last packet of the message
         // which may not be a full packet. However, this should be fine since
         // receiving the last packet means we don't need the scheduler to GRANT
         // more packets anyway.
-        uint32_t totalReceivedBytes = message->context->PACKET_DATA_LENGTH *
-                                      message->context->getNumPackets();
+        uint32_t totalReceivedBytes =
+            message->PACKET_DATA_LENGTH * message->getNumPackets();
 
         // Let the Scheduler know that we received a packet.
-        scheduler->packetReceived(msgId, message->context->address,
-                                  message->context->messageLength,
-                                  totalReceivedBytes);
-        if (totalReceivedBytes >= message->context->messageLength) {
+        scheduler->packetReceived(msgId, message->address,
+                                  message->messageLength, totalReceivedBytes);
+        if (totalReceivedBytes >= message->messageLength) {
             message->fullMessageReceived = true;
-            std::lock_guard<SpinLock> lock(queueMutex);
-            messageQueue.push_back(message->context);
         }
     } else {
         // must be a duplicate packet; drop packet.
         driver->releasePackets(&packet, 1);
     }
-}
-
-/**
- * Return a fully received message if available.
- *
- * Returned MessageContext are retained on behalf of the caller. The caller is
- * expected to call MessageContext::release() on the returned MessageContext
- * when it is no longer needed.
- *
- * @return
- *      The MessageContext for the complete message.
- */
-MessageContext*
-Receiver::receiveMessage()
-{
-    std::lock_guard<SpinLock> lock(queueMutex);
-    MessageContext* message = nullptr;
-    if (!messageQueue.empty()) {
-        message = messageQueue.front();
-        messageQueue.pop_front();
-        // TODO(cstlee): Will need need to change this once we implement retries
-        //               and acks.
-        std::lock_guard<SpinLock> lock(receiveMutex);
-        messageMap.erase(message->msgId);
-    }
-    return message;
 }
 
 /**

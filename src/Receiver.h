@@ -18,16 +18,20 @@
 
 #include "Homa/Driver.h"
 
-#include "MessageContext.h"
+#include "Message.h"
 #include "Protocol.h"
 #include "Scheduler.h"
 #include "SpinLock.h"
 
 #include <deque>
+#include <mutex>
 #include <unordered_map>
 
 namespace Homa {
 namespace Core {
+
+// Forward declaration
+class OpContext;
 
 /**
  * The Receiver processes incomming Data packets, assembling them into messages
@@ -37,58 +41,49 @@ namespace Core {
  */
 class Receiver {
   public:
-    explicit Receiver(Scheduler* scheduler, MessagePool* messagePool);
+    /**
+     * Represents an incoming message that is being assembled or being processed
+     * by the application.
+     *
+     * InboundMessage objects are contained in the OpContext but should only be
+     * accessed by the Receiver.
+     */
+    class InboundMessage : public Message {
+      public:
+        InboundMessage(Protocol::MessageId msgId, uint16_t dataHeaderLength,
+                       Driver* driver)
+            : Message(msgId, dataHeaderLength, driver)
+            , mutex()
+            , fullMessageReceived(false)
+        {}
+
+        /**
+         * Return true if the InboundMessage has been received; false otherwise.
+         */
+        bool isReady()
+        {
+            std::lock_guard<SpinLock> _(mutex);
+            return fullMessageReceived;
+        }
+
+      private:
+        /// Ensure thread-safety between a multi-threaded Receiever.
+        SpinLock mutex;
+        /// True if all packets of the message have been recevied.
+        bool fullMessageReceived;
+
+        friend class Receiver;
+    };
+
+    explicit Receiver(Scheduler* scheduler);
     ~Receiver();
-    void handleDataPacket(Driver::Packet* packet, Driver* driver);
-    MessageContext* receiveMessage();
+    void handleDataPacket(OpContext* op, Driver::Packet* packet,
+                          Driver* driver);
     void poll();
 
   private:
     /// Scheudler that should be informed when message packets are received.
-    Scheduler* scheduler;
-
-    /// Protects access main receive strucures: _messages_ and _messagePool_.
-    /// The _messageQueue_ is protected by a seperate mutex to avoid deadlock.
-    SpinLock receiveMutex;
-
-    /**
-     * Represents an incoming message that is being assembled or being processed
-     * by the application.
-     */
-    struct InboundMessage {
-        /// Ensure thread-safety between a multi-threaded Receiever.
-        SpinLock mutex;
-        /// Contains the metadata and maintains access to message data packets.
-        MessageContext* context;
-        /// True if all packets of the message have been recevied.
-        bool fullMessageReceived;
-
-        explicit InboundMessage(MessageContext* context)
-            : mutex()
-            , context(context)
-            , fullMessageReceived(false)
-        {}
-    };
-
-    /**
-     * Collection of all current incoming messages.
-     */
-    std::unordered_map<Protocol::MessageId, InboundMessage*,
-                       Protocol::MessageId::Hasher>
-        messageMap;
-
-    /// Pool from which InboundMessage objects can be allocated.
-    ObjectPool<InboundMessage> inboundPool;
-
-    /// Pool from which MessageContext objects can be allocated.
-    MessagePool* contextPool;
-
-    /// Protects access to the messageQueue;
-    SpinLock queueMutex;
-
-    /// Contains fully received messages waiting to be delivered to applications
-    /// when receiveMessage() is called.
-    std::deque<MessageContext*> messageQueue;
+    Scheduler* const scheduler;
 };
 
 }  // namespace Core

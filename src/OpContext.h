@@ -17,6 +17,7 @@
 #define HOMA_CORE_OPCONTEXT_H
 
 #include "ObjectPool.h"
+#include "Receiver.h"
 #include "Sender.h"
 #include "SpinLock.h"
 #include "Tub.h"
@@ -30,6 +31,9 @@ namespace Core {
 struct OpContext {
     /// Message to be sent out as part of this Op.  Processed by the Sender.
     Tub<Sender::OutboundMessage> outMessage;
+
+    /// Message to be recieved as part of this Op.  Processed by the Receiver.
+    Tub<Receiver::InboundMessage> inMessage;
 };
 
 /**

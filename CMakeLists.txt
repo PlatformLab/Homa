@@ -38,11 +38,11 @@ add_library(Homa
     # src/Homa.cc
     src/Message.cc
     src/OpContext.cc
-    # src/Receiver.cc
+    src/Receiver.cc
     # src/Rpc.cc
     # src/RpcManager.cc
     # src/RpcManagerImpl.cc
-    # src/Scheduler.cc
+    src/Scheduler.cc
     src/Sender.cc
     # src/ServerRpc.cc
     src/StringUtil.cc
@@ -232,10 +232,10 @@ add_executable(unit_test
     src/MessageTest.cc
     src/ObjectPoolTest.cc
     src/OpContextTest.cc
-    # src/ReceiverTest.cc
+    src/ReceiverTest.cc
     # src/RpcTest.cc
     # src/RpcManagerImplTest.cc
-    # src/SchedulerTest.cc
+    src/SchedulerTest.cc
     src/SenderTest.cc
     # src/ServerRpcTest.cc
     # src/SpinLockTest.cc
@@ -243,7 +243,7 @@ add_executable(unit_test
     src/StringUtilTest.cc
     src/ThreadIdTest.cc
     # src/TransportImplTest.cc
-    # src/TubTest.cc
+    src/TubTest.cc
     src/UtilTest.cc
 )
 target_link_libraries(unit_test Homa)
