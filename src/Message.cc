@@ -35,22 +35,17 @@ namespace Core {
  * @param driver
  *      Driver from which packets were/will be allocated and to which they
  *      should be returned when this message is no longer needed.
- * @param messagePool
- *      Pool from which this Message was allocated and to which it should
- *      be returned on destruction.
  *
  * @sa Message::release()
  */
 Message::Message(Protocol::MessageId msgId, uint16_t dataHeaderLength,
-                 Driver* driver, MessagePool* messagePool)
+                 Driver* driver)
     : msgId(msgId)
     , address(nullptr)
     , driver(driver)
     , messageLength(0)
     , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() - dataHeaderLength)
     , DATA_HEADER_LENGTH(dataHeaderLength)
-    , messagePool(messagePool)
-    , refCount(1)
     , numPackets(0)
     , occupied()
     , packets()
@@ -233,69 +228,6 @@ uint16_t
 Message::getNumPackets() const
 {
     return numPackets;
-}
-
-/**
- * Used by a module to indicate that it would like to retain access to this
- * Message. When the module no longer needs access, it should call
- * Message::release().
- *
- * @sa Message::release()
- */
-void
-Message::retain()
-{
-    // if the refCount is 0, something bad happend.
-    assert(refCount > 0);
-    refCount++;
-}
-
-/**
- * Used by a module to indicate it no longer needs access to this Message
- * object. Normally called after previously calling Message::retain().
- *
- * @sa Message::retain()
- */
-void
-Message::release()
-{
-    refCount--;
-    if (refCount.load() < 1) {
-        messagePool->destroy(this);
-        // can't do anything after this, the object is destroyed
-    }
-}
-
-/**
- * MessagePool constructor.
- */
-MessagePool::MessagePool()
-    : mutex()
-    , pool()
-{}
-
-/**
- * Construct a new Message object in the pool and return a pointer to it.
- *
- * \sa Message()
- */
-Message*
-MessagePool::construct(Protocol::MessageId msgId, uint16_t dataHeaderLength,
-                       Driver* driver)
-{
-    std::lock_guard<SpinLock> lock(mutex);
-    return pool.construct(msgId, dataHeaderLength, driver, this);
-}
-
-/**
- * Destory the given Message object previously allocated by this
- * MessagePool.
- */
-void
-MessagePool::destroy(Message* message)
-{
-    std::lock_guard<SpinLock> lock(mutex);
-    pool.destroy(message);
 }
 
 }  // namespace Core

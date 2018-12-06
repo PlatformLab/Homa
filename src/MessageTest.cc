@@ -34,7 +34,6 @@ class MessageTest : public ::testing::Test {
   public:
     MessageTest()
         : mockDriver()
-        , pool()
         , msg()
         , buf()
         , packet0(buf + 0)
@@ -45,18 +44,16 @@ class MessageTest : public ::testing::Test {
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         Protocol::MessageId msgId(42, 32);
-        pool = new MessagePool();
-        msg = pool->construct(msgId, 24, &mockDriver);
+        msg = new Message(msgId, 24, &mockDriver);
     }
 
     ~MessageTest()
     {
-        delete pool;
+        delete msg;
         Debug::setLogPolicy(savedLogPolicy);
     }
 
     NiceMock<MockDriver> mockDriver;
-    MessagePool* pool;
     Message* msg;
     char buf[2048];
     MockDriver::MockPacket packet0;
@@ -68,7 +65,7 @@ TEST_F(MessageTest, constructor)
 {
     EXPECT_CALL(mockDriver, getMaxPayloadSize).WillOnce(Return(10000));
     Protocol::MessageId msgId(42, 32);
-    msg = pool->construct(msgId, 999, &mockDriver);
+    msg = new Message(msgId, 999, &mockDriver);
 
     EXPECT_EQ(msgId, msg->msgId);
     EXPECT_TRUE(nullptr == msg->address);
@@ -76,8 +73,6 @@ TEST_F(MessageTest, constructor)
     EXPECT_EQ(0U, msg->messageLength);
     EXPECT_EQ(9001U, msg->PACKET_DATA_LENGTH);
     EXPECT_EQ(999, msg->DATA_HEADER_LENGTH);
-    EXPECT_EQ(pool, msg->messagePool);
-    EXPECT_EQ(1U, msg->refCount);
     EXPECT_EQ(0U, msg->numPackets);
     EXPECT_FALSE(msg->occupied.any());
 }
@@ -93,8 +88,6 @@ TEST_F(MessageTest, destructor_contiguousPackets)
 
     EXPECT_CALL(mockDriver, releasePackets(Eq(msg->packets), Eq(NUM_PKTS)))
         .Times(1);
-
-    pool->destroy(msg);
 }
 
 TEST_F(MessageTest, destructor_discontiguousPackets)
@@ -113,8 +106,6 @@ TEST_F(MessageTest, destructor_discontiguousPackets)
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Eq(msg->packets + 5), Eq(1)))
         .Times(1);
-
-    pool->destroy(msg);
 }
 
 TEST_F(MessageTest, get_basic)
@@ -288,41 +279,6 @@ TEST_F(MessageTest, getNumPackets)
 {
     msg->numPackets = 42;
     EXPECT_EQ(42U, msg->getNumPackets());
-}
-
-TEST_F(MessageTest, retain)
-{
-    EXPECT_EQ(1U, msg->refCount);
-    msg->retain();
-    EXPECT_EQ(2U, msg->refCount);
-}
-
-TEST_F(MessageTest, release_basic)
-{
-    EXPECT_CALL(mockDriver, releasePackets).Times(Exactly(0));
-    msg->refCount = 2;
-    msg->release();
-    EXPECT_EQ(1U, msg->refCount);
-}
-
-TEST_F(MessageTest, release_destroy)
-{
-    EXPECT_CALL(mockDriver, releasePackets).Times(Exactly(1));
-    msg->release();
-}
-
-TEST(MessagePoolTest, basic)
-{
-    MessagePool pool;
-    NiceMock<MockDriver> mockDriver;
-    ON_CALL(mockDriver, getMaxPayloadSize())
-        .WillByDefault(::testing::Return(1000));
-    EXPECT_EQ(0U, pool.pool.outstandingObjects);
-    Protocol::MessageId msgId(42, 32);
-    Message* msg = pool.construct(msgId, 0, &mockDriver);
-    EXPECT_EQ(1U, pool.pool.outstandingObjects);
-    pool.destroy(msg);
-    EXPECT_EQ(0U, pool.pool.outstandingObjects);
 }
 
 }  // namespace

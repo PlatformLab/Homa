@@ -48,7 +48,7 @@ class Message : Homa::Message {
     static const uint16_t MAX_MESSAGE_PACKETS = 1024;
 
     explicit Message(Protocol::MessageId msgId, uint16_t dataHeaderLength,
-                     Driver* driver, MessagePool* messagePool);
+                     Driver* driver);
     ~Message();
 
     virtual void append(const void* source, uint32_t num);
@@ -59,8 +59,6 @@ class Message : Homa::Message {
     Driver::Packet* getPacket(uint16_t index) const;
     bool setPacket(uint16_t index, Driver::Packet* packet);
     uint16_t getNumPackets() const;
-    void retain();
-    void release();
 
     /// Contains the unique identifier for this message.
     const Protocol::MessageId msgId;
@@ -83,15 +81,6 @@ class Message : Homa::Message {
     const uint16_t DATA_HEADER_LENGTH;
 
   private:
-    /// Memory pool from which this Message was allocated and to which it
-    /// should be returned on destruction.
-    MessagePool* messagePool;
-
-    /// Number of times this context has been retained (see retain()).
-    /// Constructing a instances of MessageCountext set the refCount to 1.
-    /// When the refCount reaches 0, the instance will be destroyed.
-    std::atomic<int> refCount;
-
     /// Number of packets contained in this context.
     uint16_t numPackets;
 
@@ -105,31 +94,6 @@ class Message : Homa::Message {
 
     Message(const Message&) = delete;
     Message& operator=(const Message&) = delete;
-};
-
-/**
- * Provides a pool allocator for Message objects.
- *
- * This class is thread-safe.
- */
-class MessagePool {
-  public:
-    MessagePool();
-    ~MessagePool() {}
-
-    Message* construct(Protocol::MessageId msgId, uint16_t dataHeaderLength,
-                       Driver* driver);
-    void destroy(Message* message);
-
-  private:
-    /// Monitor style lock for the pool.
-    SpinLock mutex;
-
-    /// Actual memory allocator for Message objects.
-    ObjectPool<Message> pool;
-
-    MessagePool(const MessagePool&) = delete;
-    MessagePool& operator=(const MessagePool&) = delete;
 };
 
 }  // namespace Core
