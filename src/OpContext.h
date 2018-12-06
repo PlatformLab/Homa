@@ -17,7 +17,9 @@
 #define HOMA_CORE_OPCONTEXT_H
 
 #include "ObjectPool.h"
+#include "Sender.h"
 #include "SpinLock.h"
+#include "Tub.h"
 
 namespace Homa {
 namespace Core {
@@ -25,8 +27,9 @@ namespace Core {
 /**
  * Holds all the relevant data and metadata for a RemoteOp or ServerOp.
  */
-class OpContext {
-  public:
+struct OpContext {
+    /// Message to be sent out as part of this Op.  Processed by the Sender.
+    Tub<Sender::OutboundMessage> outMessage;
 };
 
 /**

@@ -18,15 +18,18 @@
 
 #include "Homa/Driver.h"
 
-#include "MessageContext.h"
+#include "Message.h"
 #include "Protocol.h"
 #include "SpinLock.h"
 
+#include <atomic>
 #include <deque>
-#include <unordered_map>
 
 namespace Homa {
 namespace Core {
+
+// Forward declaration
+class OpContext;
 
 /**
  * The Sender takes takes outgoing messages and sends out the message's packets
@@ -35,25 +38,37 @@ namespace Core {
  */
 class Sender {
   public:
-    explicit Sender();
-    ~Sender();
-
-    void handleGrantPacket(Driver::Packet* packet, Driver* driver);
-    void sendMessage(MessageContext* context);
-    void poll();
-
-  private:
-    /// Protects the top-level
-    SpinLock sendMutex;
-
     /**
      * Represents an outgoing message that is being sent.
+     *
+     * OutboundMessage objects are contained in the OpContext but should only
+     * be accessed by the Sender.
      */
-    struct OutboundMessage {
+    class OutboundMessage : public Message {
+      public:
+        /**
+         * Construct an OutboundMessage.
+         *
+         * @copydetails Core::Message::Message()
+         */
+        OutboundMessage(Protocol::MessageId msgId, uint16_t dataHeaderLength,
+                        Driver* driver)
+            : Message(msgId, dataHeaderLength, driver)
+            , sending()
+            , mutex()
+            , grantOffset(0)
+            , grantIndex(-1)
+            , sentIndex(-1)
+        {
+            sending.clear();
+        }
+
+        /// True if this message is being sent; false otherwise.
+        std::atomic_flag sending;
+
+      private:
         /// Ensure thread-safety for a multi-threaded Sender.
         SpinLock mutex;
-        /// Contains the metadata and maintains access to message data packets.
-        MessageContext* const context;
         /// The offset up-to which we can send for this message.
         uint32_t grantOffset;
         /// The packet index that contains the grantOffset.
@@ -61,24 +76,20 @@ class Sender {
         /// The packet index up to which all packets have been sent.
         int sentIndex;
 
-        explicit OutboundMessage(MessageContext* context)
-            : mutex()
-            , context(context)
-            , grantOffset(0)
-            , grantIndex(-1)
-            , sentIndex(-1)
-        {}
+        friend class Sender;
     };
 
-    /**
-     * Collection of all current outgoing messages.
-     */
-    std::unordered_map<Protocol::MessageId, OutboundMessage*,
-                       Protocol::MessageId::Hasher>
-        messageMap;
+    explicit Sender();
+    ~Sender();
 
-    /// Pool from which OutboundMessage objects can be allocated.
-    ObjectPool<OutboundMessage> outboundPool;
+    void handleGrantPacket(OpContext* op, Driver::Packet* packet,
+                           Driver* driver);
+    void sendMessage(OpContext* op);
+    void poll();
+
+  private:
+    /// Protects the top-level
+    SpinLock sendMutex;
 
     /// Protects the send queue.
     SpinLock queueMutex;
