@@ -35,7 +35,7 @@ configure_file (
 add_library(Homa
     src/CodeLocation.cc
     src/Debug.cc
-    # src/Homa.cc
+    src/Homa.cc
     src/Message.cc
     src/OpContext.cc
     src/Receiver.cc
@@ -228,7 +228,7 @@ enable_testing()
 add_executable(unit_test
     src/CodeLocationTest.cc
     src/DebugTest.cc
-    # src/HomaTest.cc
+    src/HomaTest.cc
     src/MessageTest.cc
     src/ObjectPoolTest.cc
     src/OpContextTest.cc

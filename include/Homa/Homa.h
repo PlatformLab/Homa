@@ -25,6 +25,9 @@ namespace Homa {
 
 // forward declarations
 class Transport;
+namespace Core {
+class OpContext;
+}
 
 /**
  * A Message refers to an array of bytes that can be sent or is received over
@@ -102,7 +105,7 @@ class Message {
  * result of processing the request.
  *
  * An RPC (Remote Procedure Call) is a simple example of a RemoteOp.  Unlike
- * RPCs, however, the processing of the request maybe fully or paritally
+ * RPCs, however, the processing of the operation maybe fully or paritally
  * deligated by one server to another.  As such, the response may not come from
  * the server that initally received the request.
  *
@@ -160,7 +163,7 @@ class RemoteOp {
     /**
      * Send the RemoteOp asynchronously.
      *
-     * WARNING: Do not modify the Rpc after calling this method.
+     * WARNING: Do not modify the request after calling this method.
      */
     void send();
 
@@ -170,23 +173,27 @@ class RemoteOp {
      * RemoteOp's response will be populated.
      *
      * @return
-     *      True means that the RPC has finished or been canceled; #wait will
-     *      not block.  False means that the RPC is still being processed.
+     *      True means that the RemoteOp has finished or been canceled; #wait
+     *      will not block.  False means that the RemoteOp is still being
+     *      processed.
      */
     bool isReady();
 
     /**
-     * Wait for a response to be received for this RPC.
+     * Wait for a response to be received for this RemoteOp.
      */
     void wait();
 
     /// Message to be sent to and processed by the target "remote server".
-    const Message* request;
+    Message* request;
 
     /// Message containing the result of processing the RemoteOp request.
     const Message* response;
 
   private:
+    /// Contains the metadata and Message objects for this operation.
+    Core::OpContext* op;
+
     // Disable Copy and Assign
     RemoteOp(const RemoteOp&) = delete;
     RemoteOp& operator=(const RemoteOp&) = delete;
@@ -194,9 +201,14 @@ class RemoteOp {
 
 /**
  * A ServerOp is a Message pair consisting of an incomming request Message to
- * be processed and an outgoing Message which either responds to the request or
- * delegates the request to a "remote server".  Used by servers to handle
- * incomming direct or deligated requests.
+ * be processed and an outgoing response Message containing the result of
+ * processing the operation.
+ *
+ * The request may come directly from the client or from another server that is
+ * deligating the processing all or part of the operation.  The response can
+ * either be sent back sent to the original client or deligated to a different
+ * server for additional processing. Used by servers to handle incomming direct
+ * or deligated requests.
  *
  * This class is NOT thread-safe.
  */
@@ -243,14 +255,20 @@ class ServerOp {
      */
     void deligate(Driver::Address* destination);
 
-    /// Message containing a direct or indirect RemoteOp request.
+    /// Message containing a direct or indirect operation request.
     const Message* request;
 
-    /// Message containing the result of processing the request or a request
-    /// to be deligated.
-    const Message* outMessage;
+    /// Message containing the result of processing the operation.  Message can
+    /// be sent as a reply back to the client or deligated to a differnt server
+    /// for further processing.
+    ///
+    /// @sa reply(), deligate()
+    Message* response;
 
   private:
+    /// Contains the metadata and Message objects for this operation.
+    Core::OpContext* op;
+
     // Disable Copy and Assign
     ServerOp(const ServerOp&) = delete;
     ServerOp& operator=(const ServerOp&) = delete;

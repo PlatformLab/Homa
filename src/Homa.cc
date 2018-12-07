@@ -15,44 +15,43 @@
 
 #include <Homa/Homa.h>
 
-#include "MessageContext.h"
-#include "TransportImpl.h"
+#include "OpContext.h"
 
 namespace Homa {
 
-Message::Message()
-    : context(nullptr)
-    , transportImpl(nullptr)
+RemoteOp::RemoteOp()
+    : request(nullptr)
+    , response(nullptr)
+    , op(nullptr)
 {}
 
-Message::Message(Message&& other)
-    : context(std::move(other.context))
-    , transportImpl(std::move(other.transportImpl))
+RemoteOp::RemoteOp(RemoteOp&& other)
+    : request(std::move(other.request))
+    , response(std::move(other.response))
+    , op(std::move(other.op))
 {
-    other.context = nullptr;
-    other.transportImpl = nullptr;
+    other.request = nullptr;
+    other.response = nullptr;
+    other.op = nullptr;
 }
 
-Message::~Message()
-{
-    if (context != nullptr) {
-        context->release();
-    }
-}
+RemoteOp::~RemoteOp() {}
 
-Message&
-Message::operator=(Message&& other)
+RemoteOp&
+RemoteOp::operator=(RemoteOp&& other)
 {
-    context = std::move(other.context);
-    transportImpl = std::move(other.transportImpl);
-    other.context = nullptr;
-    other.transportImpl = nullptr;
+    request = std::move(other.request);
+    response = std::move(other.response);
+    op = std::move(other.op);
+    other.request = nullptr;
+    other.response = nullptr;
+    other.op = nullptr;
     return *this;
 }
 
-Message::operator bool() const
+RemoteOp::operator bool() const
 {
-    if (context != nullptr) {
+    if (op != nullptr) {
         return true;
     } else {
         return false;
@@ -60,163 +59,86 @@ Message::operator bool() const
 }
 
 void
-Message::append(const void* source, uint32_t num)
+RemoteOp::setDestination(Driver::Address* destination)
 {
-    uint32_t offset = context->messageLength;
-    set(offset, source, num);
-}
-
-uint32_t
-Message::get(uint32_t offset, void* destination, uint32_t num) const
-{
-    const uint32_t PACKET_DATA_LENGTH = context->PACKET_DATA_LENGTH;
-    uint32_t packetIndex = offset / PACKET_DATA_LENGTH;
-    uint32_t packetOffset = offset % PACKET_DATA_LENGTH;
-    uint32_t bytesCopied = 0;
-
-    // Offset is passed the end of the message.
-    if (offset >= context->messageLength) {
-        return 0;
-    }
-
-    if (offset + num > context->messageLength) {
-        num = context->messageLength - offset;
-    }
-
-    while (bytesCopied < num) {
-        Driver::Packet* packet = context->getPacket(packetIndex);
-        if (packet == nullptr) {
-            WARNING(
-                "Copy cut short; message (%lu:%lu) of length %uB has no "
-                "packet at offset %u (index %u)",
-                context->msgId.transportId, context->msgId.sequence,
-                context->messageLength, packetIndex * PACKET_DATA_LENGTH,
-                packetIndex);
-            break;
-        }
-        char* source = static_cast<char*>(packet->payload);
-        source += packetOffset + context->DATA_HEADER_LENGTH;
-        uint32_t bytesToCopy =
-            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
-        std::memcpy(static_cast<char*>(destination) + bytesCopied, source,
-                    bytesToCopy);
-        bytesCopied += bytesToCopy;
-        packetIndex++;
-        packetOffset = 0;
-    }
-    return bytesCopied;
-}
-
-void
-Message::set(uint32_t offset, const void* source, uint32_t num)
-{
-    const uint32_t PACKET_DATA_LENGTH = context->PACKET_DATA_LENGTH;
-    uint32_t packetIndex = offset / PACKET_DATA_LENGTH;
-    uint32_t packetOffset = offset % PACKET_DATA_LENGTH;
-    uint32_t bytesCopied = 0;
-    uint32_t maxMessageLength =
-        PACKET_DATA_LENGTH * context->MAX_MESSAGE_PACKETS;
-    // Offset is passed the end of the max length.
-    if (offset >= maxMessageLength) {
+    if (op == nullptr) {
         return;
     }
-
-    if (offset + num > maxMessageLength) {
-        ERROR(
-            "Max message size limit (%uB) reached; "
-            "trying to set bytes %u - %u; "
-            "message will be truncated",
-            maxMessageLength, offset, offset + num - 1);
-        num = maxMessageLength - offset;
-    }
-
-    while (bytesCopied < num) {
-        Driver::Packet* packet = context->getPacket(packetIndex);
-        if (packet == nullptr) {
-            packet = context->driver->allocPacket();
-            bool ret = context->setPacket(packetIndex, packet);
-            assert(ret);
-            assert(packet->length == 0);
-            assert(packet->getMaxPayloadSize() >=
-                   context->DATA_HEADER_LENGTH + PACKET_DATA_LENGTH);
-            assert(context->getPacket(packetIndex) != nullptr);
-        }
-
-        char* destination = static_cast<char*>(packet->payload);
-        destination += packetOffset + context->DATA_HEADER_LENGTH;
-        uint32_t bytesToCopy =
-            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
-        std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
-                    bytesToCopy);
-        packet->length =
-            std::max(packet->length,
-                     Util::downCast<uint16_t>(bytesToCopy + packetOffset +
-                                              context->DATA_HEADER_LENGTH));
-        bytesCopied += bytesToCopy;
-        packetIndex++;
-        packetOffset = 0;
-    }
-
-    context->messageLength = std::max(context->messageLength, offset + num);
-}
-
-Driver::Address*
-Message::getAddress() const
-{
-    return context->address;
+    assert(op->outMessage);
+    op->outMessage->address = destination;
 }
 
 void
-Message::setDestination(Driver::Address* destination)
+RemoteOp::send()
 {
-    context->address = destination;
+    // TODO(cstlee): hook send into the transport
+}
+
+bool
+RemoteOp::isReady()
+{
+    // TODO(cstlee): add thread-safe hook to test
+    return false;
 }
 
 void
-Message::send(SendFlag flags, Message* completes[], uint16_t numCompletes)
+RemoteOp::wait()
 {
-    transportImpl->sendMessage(this, flags, completes, numCompletes);
+    while (!isReady())
+        ;
 }
 
-void
-Message::send(Driver::Address* destination, SendFlag flags,
-              Message* completes[], uint16_t numCompletes)
-{
-    context->address = destination;
-    transportImpl->sendMessage(this, flags, completes, numCompletes);
-}
-
-Transport::Transport(Driver* driver, uint64_t transportId)
-    : transportImpl(new Core::TransportImpl(driver, transportId))
+ServerOp::ServerOp()
+    : request(nullptr)
+    , response(nullptr)
+    , op(nullptr)
 {}
 
-Transport::~Transport()
+ServerOp::ServerOp(ServerOp&& other)
+    : request(std::move(other.request))
+    , response(std::move(other.response))
+    , op(std::move(other.op))
 {
-    delete transportImpl;
+    other.request = nullptr;
+    other.response = nullptr;
+    other.op = nullptr;
 }
 
-Message
-Transport::newMessage()
+ServerOp::~ServerOp() {}
+
+ServerOp&
+ServerOp::operator=(ServerOp&& other)
 {
-    return transportImpl->newMessage();
+    request = std::move(other.request);
+    response = std::move(other.response);
+    op = std::move(other.op);
+    other.request = nullptr;
+    other.response = nullptr;
+    other.op = nullptr;
+    return *this;
 }
 
-Message
-Transport::receiveMessage()
+ServerOp::operator bool() const
 {
-    return transportImpl->receiveMessage();
-}
-
-Driver::Address*
-Transport::getAddress(std::string const* const addressString)
-{
-    return transportImpl->driver->getAddress(addressString);
+    if (op != nullptr) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 void
-Transport::poll()
+ServerOp::reply()
 {
-    transportImpl->poll();
+    // TODO(cstlee): hook send into the transport
+}
+
+void
+ServerOp::deligate(Driver::Address* destination)
+{
+    assert(op->outMessage);
+    op->outMessage->address = destination;
+    // TODO(cstlee): hook send into the transport
 }
 
 }  // namespace Homa

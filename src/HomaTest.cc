@@ -18,271 +18,99 @@
 
 #include <Homa/Homa.h>
 
-#include "MockDriver.h"
-#include "TransportImpl.h"
-
 namespace Homa {
 namespace {
 
-using ::testing::DoAll;
-using ::testing::Eq;
-using ::testing::Mock;
-using ::testing::NiceMock;
-using ::testing::Pointee;
-using ::testing::Return;
-using ::testing::SetArgPointee;
-
-using Core::TransportImpl;
-
-class MessageTest : public ::testing::Test {
-  public:
-    MessageTest()
-        : mockDriver()
-        , transport(new TransportImpl(&mockDriver, 22))
-        , buf()
-        , packet0(buf + 0)
-        , packet1(buf + 1024)
-        , savedLogPolicy(Debug::getLogPolicy())
-    {
-        std::memset(buf, 0, sizeof(buf));
-        ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
-        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
-        Debug::setLogPolicy(
-            Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-    }
-
-    ~MessageTest()
-    {
-        delete transport;
-        Debug::setLogPolicy(savedLogPolicy);
-    }
-
-    NiceMock<MockDriver> mockDriver;
-    TransportImpl* transport;
-    char buf[2048];
-    MockDriver::MockPacket packet0;
-    MockDriver::MockPacket packet1;
-    std::vector<std::pair<std::string, std::string>> savedLogPolicy;
-};
-
-TEST_F(MessageTest, constructor)
+TEST(RemoteOpTest, constructor)
 {
-    Message message;
-    EXPECT_EQ(nullptr, message.context);
-    EXPECT_EQ(nullptr, message.transportImpl);
+    RemoteOp op;
+    EXPECT_EQ(nullptr, op.request);
+    EXPECT_EQ(nullptr, op.response);
+    EXPECT_EQ(nullptr, op.op);
 }
 
-TEST_F(MessageTest, moveConstructor)
+TEST(RemoteOpTest, constructor_move)
 {
-    Message srcMsg;
-    srcMsg.context = (Core::MessageContext*)42;
-    srcMsg.transportImpl = (TransportImpl*)41;
+    RemoteOp srcOp;
+    srcOp.request = (Message*)41;
+    srcOp.response = (const Message*)42;
+    srcOp.op = (Core::OpContext*)43;
 
-    Message dstMsg(std::move(srcMsg));
+    RemoteOp destOp(std::move(srcOp));
 
-    EXPECT_EQ(nullptr, srcMsg.context);
-    EXPECT_EQ(nullptr, srcMsg.transportImpl);
+    EXPECT_EQ(nullptr, srcOp.request);
+    EXPECT_EQ(nullptr, srcOp.response);
+    EXPECT_EQ(nullptr, srcOp.op);
 
-    EXPECT_EQ((Core::MessageContext*)42, dstMsg.context);
-    EXPECT_EQ((TransportImpl*)41, dstMsg.transportImpl);
-
-    // Avoid causing a segfault in the test.
-    dstMsg.context = nullptr;
+    EXPECT_EQ((Message*)41, destOp.request);
+    EXPECT_EQ((const Message*)42, destOp.response);
+    EXPECT_EQ((Core::OpContext*)43, destOp.op);
 }
 
-TEST_F(MessageTest, destructor)
+TEST(RemoteOpTest, assignment_move)
 {
-    Core::MessageContext* context =
-        transport->messagePool.construct({42, 1}, 24, &mockDriver);
-    context->retain();
+    RemoteOp srcOp;
+    srcOp.request = (Message*)41;
+    srcOp.response = (const Message*)42;
+    srcOp.op = (Core::OpContext*)43;
 
-    EXPECT_EQ(2U, context->refCount);
+    RemoteOp destOp;
 
-    Message* message = new Message();
-    message->context = context;
+    destOp = std::move(srcOp);
 
-    delete message;
+    EXPECT_EQ(nullptr, srcOp.request);
+    EXPECT_EQ(nullptr, srcOp.response);
+    EXPECT_EQ(nullptr, srcOp.op);
 
-    EXPECT_EQ(1U, context->refCount);
+    EXPECT_EQ((Message*)41, destOp.request);
+    EXPECT_EQ((const Message*)42, destOp.response);
+    EXPECT_EQ((Core::OpContext*)43, destOp.op);
 }
 
-TEST_F(MessageTest, moveAssignment)
+TEST(ServerOpTest, constructor)
 {
-    Message srcMsg;
-    srcMsg.context = (Core::MessageContext*)42;
-    srcMsg.transportImpl = (TransportImpl*)41;
-
-    Message dstMsg;
-
-    dstMsg = std::move(srcMsg);
-
-    EXPECT_EQ(nullptr, srcMsg.context);
-    EXPECT_EQ(nullptr, srcMsg.transportImpl);
-
-    EXPECT_EQ((Core::MessageContext*)42, dstMsg.context);
-    EXPECT_EQ((TransportImpl*)41, dstMsg.transportImpl);
-
-    // Avoid causing a segfault in the test.
-    dstMsg.context = nullptr;
+    ServerOp op;
+    EXPECT_EQ(nullptr, op.request);
+    EXPECT_EQ(nullptr, op.response);
+    EXPECT_EQ(nullptr, op.op);
 }
 
-TEST_F(MessageTest, operatorBool)
+TEST(ServerOpTest, constructor_move)
 {
-    Message message;
-    message.context = (Core::MessageContext*)42;
+    ServerOp srcOp;
+    srcOp.request = (const Message*)41;
+    srcOp.response = (Message*)42;
+    srcOp.op = (Core::OpContext*)43;
 
-    EXPECT_TRUE(message);
+    ServerOp destOp(std::move(srcOp));
 
-    message.context = nullptr;
+    EXPECT_EQ(nullptr, srcOp.request);
+    EXPECT_EQ(nullptr, srcOp.response);
+    EXPECT_EQ(nullptr, srcOp.op);
 
-    EXPECT_FALSE(message);
+    EXPECT_EQ((const Message*)41, destOp.request);
+    EXPECT_EQ((Message*)42, destOp.response);
+    EXPECT_EQ((Core::OpContext*)43, destOp.op);
 }
 
-TEST_F(MessageTest, get_basic)
+TEST(ServerOpTest, assignment_move)
 {
-    Message message = transport->newMessage();
-    char source[] = "Hello, world!";
-    message.context->setPacket(0, &packet0);
-    message.context->setPacket(1, &packet1);
-    message.context->messageLength = 1007;
-    std::memcpy(buf + 24 + 1000 - 7, source, 7);
-    std::memcpy(buf + 24 + 1000 + 24, source + 7, 7);
-    packet0.length = 24 + 1000;
-    packet1.length = 24 + 7;
-    EXPECT_EQ(24U, message.context->DATA_HEADER_LENGTH);
+    ServerOp srcOp;
+    srcOp.request = (const Message*)41;
+    srcOp.response = (Message*)42;
+    srcOp.op = (Core::OpContext*)43;
 
-    char dest[2048];
-    uint32_t bytes = message.get(1000 - 7, dest, 20);
+    ServerOp destOp;
 
-    EXPECT_EQ(14U, bytes);
-    EXPECT_STREQ(source, dest);
-}
+    destOp = std::move(srcOp);
 
-TEST_F(MessageTest, get_offsetTooLarge)
-{
-    Message message = transport->newMessage();
-    message.context->setPacket(0, &packet0);
-    message.context->setPacket(1, &packet1);
-    message.context->messageLength = 1007;
-    packet0.length = 24 + 1000;
-    packet1.length = 24 + 7;
+    EXPECT_EQ(nullptr, srcOp.request);
+    EXPECT_EQ(nullptr, srcOp.response);
+    EXPECT_EQ(nullptr, srcOp.op);
 
-    char dest[2048];
-    uint32_t bytes = message.get(2000, dest, 20);
-
-    EXPECT_EQ(0U, bytes);
-}
-
-// Used to capture log output.
-struct VectorHandler {
-    VectorHandler()
-        : messages()
-    {}
-    void operator()(Debug::DebugMessage message)
-    {
-        messages.push_back(message);
-    }
-    std::vector<Debug::DebugMessage> messages;
-};
-
-TEST_F(MessageTest, get_missingPacket)
-{
-    VectorHandler handler;
-    Debug::setLogHandler(std::ref(handler));
-
-    Message message = transport->newMessage();
-    char source[] = "Hello,";
-    message.context->setPacket(0, &packet0);
-    message.context->messageLength = 1007;
-    std::memcpy(buf + 24 + 1000 - 7, source, 7);
-    packet0.length = 24 + 1000;
-    EXPECT_EQ(24U, message.context->DATA_HEADER_LENGTH);
-
-    char dest[2048];
-    uint32_t bytes = message.get(1000 - 7, dest, 20);
-
-    EXPECT_EQ(7U, bytes);
-    EXPECT_STREQ(source, dest);
-
-    EXPECT_EQ(1U, handler.messages.size());
-    const Debug::DebugMessage& m = handler.messages.at(0);
-    EXPECT_STREQ("src/Homa.cc", m.filename);
-    EXPECT_STREQ("get", m.function);
-    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
-    EXPECT_EQ(
-        "Copy cut short; message (22:1) of length 1007B has no packet at "
-        "offset 1000 (index 1)",
-        m.message);
-
-    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
-}
-
-TEST_F(MessageTest, set_basic)
-{
-    Message message = transport->newMessage();
-    char source[] = "Hello, world!";
-    message.context->setPacket(1, &packet1);
-    message.context->messageLength = 1042;
-    packet1.length = 24 + 42;
-    EXPECT_EQ(24U, message.context->DATA_HEADER_LENGTH);
-
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
-    EXPECT_CALL(packet0, getMaxPayloadSize).WillOnce(Return(1024));
-
-    message.set(1000 - 7, source, 14);
-
-    EXPECT_TRUE(std::memcmp(buf + 24 + 1000 - 7, source, 7) == 0);
-    EXPECT_TRUE(std::memcmp(buf + 24 + 1000 + 24, source + 7, 7) == 0);
-    EXPECT_EQ(24 + 1000, packet0.length);
-    EXPECT_EQ(24 + 42, packet1.length);
-    EXPECT_EQ(1042U, message.context->messageLength);
-}
-
-TEST_F(MessageTest, set_offsetTooLarge)
-{
-    Message message = transport->newMessage();
-    char source[] = "Hello, world!";
-    const uint32_t MAX_LEN = message.context->MAX_MESSAGE_PACKETS *
-                             message.context->PACKET_DATA_LENGTH;
-
-    EXPECT_CALL(mockDriver, allocPacket).Times(0);
-
-    message.set(MAX_LEN, source, 14);
-}
-
-TEST_F(MessageTest, set_truncate)
-{
-    VectorHandler handler;
-    Debug::setLogHandler(std::ref(handler));
-
-    Message message = transport->newMessage();
-    char source[] = "Hello, world!";
-    const uint32_t MAX_LEN = message.context->MAX_MESSAGE_PACKETS *
-                             message.context->PACKET_DATA_LENGTH;
-    message.context->messageLength = 0;
-    EXPECT_EQ(24U, message.context->DATA_HEADER_LENGTH);
-
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
-    EXPECT_CALL(packet0, getMaxPayloadSize).WillOnce(Return(1024));
-
-    message.set(MAX_LEN - 7, source, 14);
-
-    EXPECT_TRUE(std::memcmp(buf + 24 + 1000 - 7, source, 7) == 0);
-    EXPECT_FALSE(std::memcmp(buf + 24 + 1000 + 24, source + 7, 7) == 0);
-    EXPECT_EQ(24 + 1000, packet0.length);
-    EXPECT_EQ(MAX_LEN, message.context->messageLength);
-
-    EXPECT_EQ(1U, handler.messages.size());
-    const Debug::DebugMessage& m = handler.messages.at(0);
-    EXPECT_STREQ("src/Homa.cc", m.filename);
-    EXPECT_STREQ("set", m.function);
-    EXPECT_EQ(int(Debug::LogLevel::ERROR), m.logLevel);
-    EXPECT_EQ(
-        "Max message size limit (1024000B) reached; trying to set bytes "
-        "1023993 - 1024006; message will be truncated",
-        m.message);
-
-    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+    EXPECT_EQ((const Message*)41, destOp.request);
+    EXPECT_EQ((Message*)42, destOp.response);
+    EXPECT_EQ((Core::OpContext*)43, destOp.op);
 }
 
 }  // namespace
