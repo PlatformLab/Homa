@@ -55,7 +55,7 @@ Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
     Protocol::DataHeader* header =
         static_cast<Protocol::DataHeader*>(packet->payload);
     uint16_t dataHeaderLength = sizeof(Protocol::DataHeader);
-    Protocol::MessageId msgId = header->common.msgId;
+    Protocol::MessageId msgId = header->common.messageId;
 
     if (!op->inMessage) {
         op->inMessage.construct(msgId, dataHeaderLength, driver);

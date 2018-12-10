@@ -36,24 +36,24 @@ enum PacketOpcode {
 };
 
 /**
- * A unique identifier for a Message.
+ * A unique identifier for the operation.
  */
-struct MessageId {
-    uint64_t transportId;  ///< Uniquely identifies the source transport for
-                           ///< this Message.
-    uint64_t sequence;     ///< Sequence number for this Message (unique for
+struct OpId {
+    uint64_t transportId;  ///< Uniquely identifies the client transport for
+                           ///< this RemoteOp.
+    uint64_t sequence;     ///< Sequence number for this RemoteOp (unique for
                            ///< transportId, monotonically increasing).
 
     /// MessageId constructor.
-    MessageId(uint64_t transportId, uint64_t sequence)
+    OpId(uint64_t transportId, uint64_t sequence)
         : transportId(transportId)
         , sequence(sequence)
     {}
 
     /**
-     * Comparison function for MessageId, for use in std::maps etc.
+     * Comparison function for OpId, for use in std::maps etc.
      */
-    bool operator<(MessageId other) const
+    bool operator<(OpId other) const
     {
         return (transportId < other.transportId) ||
                ((transportId == other.transportId) &&
@@ -61,24 +61,76 @@ struct MessageId {
     }
 
     /**
-     * Equality function for MessageId, for use in std::unordered_maps etc.
+     * Equality function for OpId, for use in std::unordered_maps etc.
      */
-    bool operator==(MessageId other) const
+    bool operator==(OpId other) const
     {
         return ((transportId == other.transportId) &&
                 (sequence == other.sequence));
     }
 
     /**
-     * This class computes a hash of an MessageId, so that MessageId can be used
+     * This class computes a hash of an OpId, so that OpId can be used
      * as keys in unordered_maps.
      */
     struct Hasher {
+        /// Return a "hash" of the given OpId.
+        std::size_t operator()(const OpId& opId) const
+        {
+            std::size_t h1 = std::hash<uint64_t>()(opId.transportId);
+            std::size_t h2 = std::hash<uint64_t>()(opId.sequence);
+            return h1 ^ (h2 << 1);
+        }
+    };
+} __attribute__((packed));
+
+/**
+ * A unique identifier for a Message within an Operation.
+ */
+struct MessageId : public OpId {
+    uint32_t messageId;  ///< Unique identifies this Message within the set
+                         ///< of messages that belong to the RemoteOp.
+
+    /// sequence number for the Message that contains a RemoteOp's initiating
+    /// request RemoteOp (sent by the client).
+    static const uint32_t INITIAL_REQUEST_ID = 1;
+    /// sequence number for the Message that contains the final reply to the
+    /// initial request (sent to the client).
+    static const uint32_t ULTIMATE_RESPONSE_ID = 0;
+
+    /// MessageId constructor.
+    MessageId(uint64_t transportId, uint64_t sequence, uint32_t messageId = 1)
+        : OpId(transportId, sequence)
+        , messageId(messageId)
+    {}
+
+    /**
+     * Comparison function for OpId, for use in std::maps etc.
+     */
+    bool operator<(MessageId other) const
+    {
+        return OpId::operator<(other) ||
+               ((OpId::operator==(other)) && (messageId < other.messageId));
+    }
+
+    /**
+     * Equality function for OpId, for use in std::unordered_maps etc.
+     */
+    bool operator==(MessageId other) const
+    {
+        return (OpId::operator==(other)) && (messageId == other.messageId);
+    }
+
+    /**
+     * This class computes a hash of an MessageId, so that MessageId can be used
+     * as keys in unordered_maps.
+     */
+    struct Hasher : public OpId::Hasher {
         /// Return a "hash" of the given MessageId.
         std::size_t operator()(const MessageId& msgId) const
         {
-            std::size_t h1 = std::hash<uint64_t>()(msgId.transportId);
-            std::size_t h2 = std::hash<uint64_t>()(msgId.sequence);
+            std::size_t h1 = OpId::Hasher::operator()(msgId);
+            std::size_t h2 = std::hash<uint64_t>()(msgId.messageId);
             return h1 ^ (h2 << 1);
         }
     };
@@ -109,13 +161,13 @@ struct HeaderPrefix {
 struct CommonHeader {
     HeaderPrefix prefix;  ///< Common to all versions of the protocol.
     uint8_t opcode;       ///< One of the values of PacketOpcode.
-    MessageId msgId;      ///< Message associated with this packet.
+    MessageId messageId;  ///< RemoteOp/Message associated with this packet.
 
     /// CommonHeader constructor.
-    CommonHeader(PacketOpcode opcode, MessageId msgId)
+    CommonHeader(PacketOpcode opcode, MessageId messageId)
         : prefix(1)
         , opcode(opcode)
-        , msgId(msgId)
+        , messageId(messageId)
     {}
 } __attribute__((packed));
 
@@ -133,8 +185,8 @@ struct GrantHeader {
                           ///< it hasn't already.
 
     /// GrantHeader constructor.
-    GrantHeader(MessageId msgId, uint32_t offset)
-        : common(PacketOpcode::GRANT, msgId)
+    GrantHeader(MessageId messageId, uint32_t offset)
+        : common(PacketOpcode::GRANT, messageId)
         , offset(offset)
     {}
 } __attribute__((packed));
@@ -156,8 +208,8 @@ struct DataHeader {
     // starting at the offset corresponding to the given packet index.
 
     /// DataHeader constructor.
-    DataHeader(MessageId msgId, uint32_t totalLength, uint16_t index)
-        : common(PacketOpcode::DATA, msgId)
+    DataHeader(MessageId messageId, uint32_t totalLength, uint16_t index)
+        : common(PacketOpcode::DATA, messageId)
         , totalLength(totalLength)
         , index(index)
     {}

@@ -80,7 +80,7 @@ TEST_F(ScheudlerTest, packetReceived)
                               TOTAL_BYTES_RECIEVED);
 
     Protocol::GrantHeader* header = (Protocol::GrantHeader*)payload;
-    EXPECT_EQ(msgId, header->common.msgId);
+    EXPECT_EQ(msgId, header->common.messageId);
     EXPECT_EQ(6000U, header->offset);
     EXPECT_EQ(sizeof(Protocol::GrantHeader), mockPacket.length);
     EXPECT_EQ(sourceAddr, mockPacket.address);

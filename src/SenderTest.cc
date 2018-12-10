@@ -43,7 +43,7 @@ class SenderTest : public ::testing::Test {
         , savedLogPolicy(Debug::getLogPolicy())
     {
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
-        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
+        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         opContextPool = new OpContextPool();
@@ -57,7 +57,7 @@ class SenderTest : public ::testing::Test {
 
     NiceMock<MockDriver> mockDriver;
     NiceMock<MockDriver::MockPacket> mockPacket;
-    char payload[1024];
+    char payload[1028];
     OpContextPool* opContextPool;
     Sender sender;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
@@ -80,7 +80,8 @@ TEST_F(SenderTest, handleGrantPacket_basic)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, 24, &mockDriver);
+    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+                                  &mockDriver);
     context->outMessage->messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, context, 4999);
@@ -88,7 +89,7 @@ TEST_F(SenderTest, handleGrantPacket_basic)
 
     Protocol::GrantHeader* header =
         static_cast<Protocol::GrantHeader*>(mockPacket.payload);
-    header->common.msgId = msgId;
+    header->common.messageId = msgId;
     header->offset = 6500;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
@@ -104,7 +105,8 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, 24, &mockDriver);
+    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+                                  &mockDriver);
     context->outMessage->messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, context, 4999);
@@ -112,7 +114,7 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
 
     Protocol::GrantHeader* header =
         static_cast<Protocol::GrantHeader*>(mockPacket.payload);
-    header->common.msgId = msgId;
+    header->common.messageId = msgId;
     header->offset = 4000;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
@@ -128,7 +130,8 @@ TEST_F(SenderTest, handleGrantPacket_excessGrant)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, 24, &mockDriver);
+    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+                                  &mockDriver);
     context->outMessage->messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, context, 4999);
@@ -136,7 +139,7 @@ TEST_F(SenderTest, handleGrantPacket_excessGrant)
 
     Protocol::GrantHeader* header =
         static_cast<Protocol::GrantHeader*>(mockPacket.payload);
-    header->common.msgId = msgId;
+    header->common.messageId = msgId;
     header->offset = 9001;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
@@ -170,7 +173,7 @@ TEST_F(SenderTest, sendMessage_basic)
     EXPECT_EQ(0U, mockPacket.priority);
     Protocol::DataHeader* header =
         static_cast<Protocol::DataHeader*>(mockPacket.payload);
-    EXPECT_EQ(outMessage->msgId, header->common.msgId);
+    EXPECT_EQ(outMessage->msgId, header->common.messageId);
     EXPECT_EQ(outMessage->messageLength, header->totalLength);
     EXPECT_EQ(1U, sender.sendQueue.size());
     EXPECT_EQ(outMessage, sender.sendQueue.front());
@@ -180,8 +183,8 @@ TEST_F(SenderTest, sendMessage_basic)
 
 TEST_F(SenderTest, sendMessage_multipacket)
 {
-    char payload0[1024];
-    char payload1[1024];
+    char payload0[1028];
+    char payload1[1028];
     NiceMock<MockDriver::MockPacket> packet0(payload0);
     NiceMock<MockDriver::MockPacket> packet1(payload1);
     Protocol::MessageId msgId = {42, 1};
@@ -193,11 +196,11 @@ TEST_F(SenderTest, sendMessage_multipacket)
     outMessage->setPacket(0, &packet0);
     outMessage->setPacket(1, &packet1);
     outMessage->messageLength = 1420;
-    packet0.length = 1000 + 24;
-    packet1.length = 420 + 24;
+    packet0.length = 1000 + 28;
+    packet1.length = 420 + 28;
     outMessage->address = (Driver::Address*)22;
 
-    EXPECT_EQ(24U, sizeof(Protocol::DataHeader));
+    EXPECT_EQ(28U, sizeof(Protocol::DataHeader));
     EXPECT_EQ(1000U, outMessage->PACKET_DATA_LENGTH);
 
     sender.sendMessage(context);
@@ -207,14 +210,14 @@ TEST_F(SenderTest, sendMessage_multipacket)
     EXPECT_EQ(22U, (uint64_t)packet0.address);
     EXPECT_EQ(0U, packet0.priority);
     header = static_cast<Protocol::DataHeader*>(packet0.payload);
-    EXPECT_EQ(outMessage->msgId, header->common.msgId);
+    EXPECT_EQ(outMessage->msgId, header->common.messageId);
     EXPECT_EQ(outMessage->messageLength, header->totalLength);
 
     // Packet1
     EXPECT_EQ(22U, (uint64_t)packet1.address);
     EXPECT_EQ(0U, packet1.priority);
     header = static_cast<Protocol::DataHeader*>(packet1.payload);
-    EXPECT_EQ(outMessage->msgId, header->common.msgId);
+    EXPECT_EQ(outMessage->msgId, header->common.messageId);
     EXPECT_EQ(outMessage->messageLength, header->totalLength);
 }
 
@@ -254,7 +257,7 @@ TEST_F(SenderTest, sendMessage_missingPacket)
     EXPECT_STREQ("sendMessage", m.function);
     EXPECT_EQ(int(Debug::LogLevel::ERROR), m.logLevel);
     EXPECT_EQ(
-        "Incomplete message with id (42:1); missing packet at offset 0; "
+        "Incomplete message with id (42:1:1); missing packet at offset 0; "
         "send request dropped.",
         m.message);
 
@@ -291,7 +294,7 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
     EXPECT_STREQ("sendMessage", m.function);
     EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
     EXPECT_EQ(
-        "Duplicate call to sendMessage for msgId (42:1); "
+        "Duplicate call to sendMessage for msgId (42:1:1); "
         "send request dropped.",
         m.message);
 
@@ -309,7 +312,7 @@ TEST_F(SenderTest, sendMessage_unsheduledLimit)
         outMessage->setPacket(i, &mockPacket);
     }
     outMessage->messageLength = 9000;
-    mockPacket.length = 1000 + 24;
+    mockPacket.length = 1000 + sizeof(Protocol::DataHeader);
     outMessage->address = (Driver::Address*)22;
     EXPECT_EQ(9U, outMessage->getNumPackets());
     EXPECT_EQ(1000U, outMessage->PACKET_DATA_LENGTH);
@@ -330,7 +333,8 @@ TEST_F(SenderTest, trySend_basic)
     for (uint64_t i = 0; i < 3; ++i) {
         context[i] = opContextPool->construct();
         Protocol::MessageId msgId = {42, 10 + i};
-        context[i]->outMessage.construct(msgId, 24, &mockDriver);
+        context[i]->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+                                         &mockDriver);
         message[i] = SenderTest::addMessage(&sender, context[i], 4999);
     }
 
@@ -405,7 +409,8 @@ TEST_F(SenderTest, cleanup)
     for (uint64_t i = 0; i < 3; ++i) {
         context[i] = opContextPool->construct();
         Protocol::MessageId msgId = {42, 10 + i};
-        context[i]->outMessage.construct(msgId, 24, &mockDriver);
+        context[i]->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+                                         &mockDriver);
         message[i] = SenderTest::addMessage(&sender, context[i], 4999);
     }
 

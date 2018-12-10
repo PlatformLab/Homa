@@ -44,7 +44,7 @@ class ReceiverTest : public ::testing::Test {
         , savedLogPolicy(Debug::getLogPolicy())
     {
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
-        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
+        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         opContextPool = new OpContextPool();
@@ -62,7 +62,7 @@ class ReceiverTest : public ::testing::Test {
 
     NiceMock<MockDriver> mockDriver;
     NiceMock<MockDriver::MockPacket> mockPacket;
-    char payload[1024];
+    char payload[1028];
     OpContextPool* opContextPool;
     Scheduler* scheduler;
     Receiver* receiver;
@@ -83,7 +83,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     // receive packet 1
     Protocol::DataHeader* header =
         static_cast<Protocol::DataHeader*>(mockPacket.payload);
-    header->common.msgId = {42, 1};
+    header->common.messageId = {42, 1};
     header->index = 1;
     header->totalLength = 1420;
     std::string addressStr("remote-location");
@@ -98,7 +98,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .RetiresOnSaturation();
     EXPECT_CALL(mockDriver, getAddress(PtrStrEq(addressStr)))
         .WillOnce(Return(&mockAddress));
-    char grantPayload[1024];
+    char grantPayload[1028];
     MockDriver::MockPacket grantPacket(grantPayload);
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&grantPacket));
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
@@ -115,7 +115,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     Protocol::GrantHeader* grantHeader =
         static_cast<Protocol::GrantHeader*>(grantPacket.payload);
-    EXPECT_EQ(header->common.msgId, grantHeader->common.msgId);
+    EXPECT_EQ(header->common.messageId, grantHeader->common.messageId);
     EXPECT_EQ(6000U, grantHeader->offset);
     EXPECT_EQ(sizeof(Protocol::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
@@ -166,7 +166,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_TRUE(message->occupied.test(0));
     EXPECT_EQ(2U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
-    EXPECT_EQ(header->common.msgId, grantHeader->common.msgId);
+    EXPECT_EQ(header->common.messageId, grantHeader->common.messageId);
     EXPECT_EQ(7000U, grantHeader->offset);
     EXPECT_EQ(sizeof(Protocol::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
