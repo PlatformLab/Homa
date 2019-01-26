@@ -126,7 +126,7 @@ TEST(ObjectPoolTest, construct)
     pool.destroy(a);
 }
 
-TEST(ObjectPoolTests, destroy)
+TEST(ObjectPoolTest, destroy)
 {
     ObjectPool<TestObject> pool;
     bool destroyed = false;
@@ -136,7 +136,7 @@ TEST(ObjectPoolTests, destroy)
     EXPECT_EQ(1U, pool.pool.size());
 }
 
-TEST(ObjectPoolTests, destroy_inOrder)
+TEST(ObjectPoolTest, destroy_inOrder)
 {
     ObjectPool<TestObject> pool;
     int count = 100;
@@ -146,7 +146,7 @@ TEST(ObjectPoolTests, destroy_inOrder)
     for (int i = 0; i < count; i++) pool.destroy(toDestroy[i]);
 }
 
-TEST(ObjectPoolTests, destroy_reverseOrder)
+TEST(ObjectPoolTest, destroy_reverseOrder)
 {
     ObjectPool<TestObject> pool;
     int count = 100;
@@ -156,7 +156,7 @@ TEST(ObjectPoolTests, destroy_reverseOrder)
     for (int i = count - 1; i >= 0; i--) pool.destroy(toDestroy[i]);
 }
 
-TEST(ObjectPoolTests, destroy_randomOrder)
+TEST(ObjectPoolTest, destroy_randomOrder)
 {
     ObjectPool<TestObject> pool;
     int count = 100;
