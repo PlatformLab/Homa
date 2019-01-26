@@ -90,7 +90,11 @@ class SpinLock {
         flag.clear();
     }
 
-};  // namespace Homa
+  private:
+    // Disable copy and assign
+    SpinLock(const SpinLock&) = delete;
+    SpinLock& operator=(const SpinLock&) = delete;
+};
 
 }  // namespace Homa
 
