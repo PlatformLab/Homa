@@ -76,6 +76,27 @@ set_target_properties(Homa PROPERTIES
 ## Drivers #####################################################################
 ################################################################################
 
+## lib FakeDriver ##############################################################
+add_library(FakeDriver
+    src/Drivers/Fake/FakeAddress.cc
+)
+add_library(Homa::FakeDriver ALIAS FakeDriver)
+target_include_directories(FakeDriver
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        # INSTALL_INTERFACE removed; FakeDriver should never be installed.
+)
+target_link_libraries(FakeDriver
+    PUBLIC
+        Homa
+)
+target_compile_options(FakeDriver
+    PRIVATE
+        -Wall
+        -Wextra
+        $<$<CONFIG:Debug>:-Werror>
+)
+
 ## lib DpdkDriver ##############################################################
 add_library(DpdkDriver
     src/Drivers/DPDK/DpdkDriver.cc
@@ -223,12 +244,21 @@ add_executable(unit_test
     src/UtilTest.cc
 )
 target_link_libraries(unit_test Homa)
+
+# Drivers/Fake Tests
+target_sources(unit_test
+    PUBLIC
+        src/Drivers/Fake/FakeAddressTest.cc
+)
+target_link_libraries(unit_test FakeDriver)
+
 #DPDK Tests
 target_sources(unit_test
     PUBLIC
         src/Drivers/DPDK/MacAddressTest.cc    
 )
 target_link_libraries(unit_test DpdkDriver)
+
 target_link_libraries(unit_test gmock_main)
 # -fno-access-control allows access to private members for testing
 target_compile_options(unit_test PRIVATE -fno-access-control)
