@@ -100,7 +100,7 @@ class Message {
 };
 
 /**
- * A RemoteOp is a Message pair consititing of a request Message to be sent to
+ * A RemoteOp is a Message pair consisting of a request Message to be sent to
  * and processed by a "remote server" and a response Message that returns the
  * result of processing the request.
  *
@@ -259,7 +259,7 @@ class ServerOp {
     const Message* request;
 
     /// Message containing the result of processing the operation.  Message can
-    /// be sent as a reply back to the client or deligated to a differnt server
+    /// be sent as a reply back to the client or deligated to a different server
     /// for further processing.
     ///
     /// @sa reply(), deligate()
@@ -277,7 +277,7 @@ class ServerOp {
 /**
  * Provides a means of commicating across the network using the Homa protocol.
  *
- * The transport is used to send and receive messages accross the network using
+ * The transport is used to send and receive messages across the network using
  * the RemoteOp and ServerOp abstractions.  The execution of the transport is
  * driven through repeated calls to the Transport::poll() method; the transport
  * will not make any progress otherwise.
@@ -303,11 +303,9 @@ class Transport {
     static Transport* newTransport(Driver* driver, uint64_t transportId);
 
     /**
-     * Return a Message that has been received by this Homa::Transport. If no
-     * Message was received, the returned Message will be uninitilized.
-     *
-     * The Transport will not consider the returned Message complete until the
-     * returned Message is destroyed.
+     * Return a ServerOp of an incomming request that has been received by this
+     * Homa::Transport. If no request was received, the returned ServerOp will
+     * be uninitialized.
      *
      * @sa Transport::sendMessage()
      */
