@@ -79,6 +79,7 @@ set_target_properties(Homa PROPERTIES
 ## lib FakeDriver ##############################################################
 add_library(FakeDriver
     src/Drivers/Fake/FakeAddress.cc
+    src/Drivers/Fake/FakeDriver.cc
 )
 add_library(Homa::FakeDriver ALIAS FakeDriver)
 target_include_directories(FakeDriver
@@ -249,6 +250,7 @@ target_link_libraries(unit_test Homa)
 target_sources(unit_test
     PUBLIC
         src/Drivers/Fake/FakeAddressTest.cc
+        src/Drivers/Fake/FakeDriverTest.cc
 )
 target_link_libraries(unit_test FakeDriver)
 
