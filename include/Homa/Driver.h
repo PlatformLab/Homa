@@ -89,7 +89,7 @@ class Driver {
         /// updated when the payload is modifed.
         uint16_t length;
 
-        /// Return the maxumum number of bytes the payload can hold.
+        /// Return the maximum number of bytes the payload can hold.
         virtual uint16_t getMaxPayloadSize() = 0;
 
       protected:
@@ -104,7 +104,7 @@ class Driver {
         {}
 
         // DISALLOW_COPY_AND_ASSIGN
-        Packet(const Packet& Packet) = delete;
+        Packet(const Packet&) = delete;
         Packet& operator=(const Packet&) = delete;
     };
 
