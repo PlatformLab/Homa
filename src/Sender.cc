@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -56,15 +56,20 @@ Sender::~Sender() {}
 void
 Sender::handleGrantPacket(OpContext* op, Driver::Packet* packet, Driver* driver)
 {
-    assert(op->outMessage);
-    OutboundMessage* message = op->outMessage.get();
-    std::lock_guard<SpinLock> messageLock(message->mutex);
-    Protocol::GrantHeader* header =
-        static_cast<Protocol::GrantHeader*>(packet->payload);
-    message->grantOffset = std::max(message->grantOffset, header->offset);
-    message->grantOffset =
-        std::min(message->grantOffset, message->messageLength - 1);
-    message->grantIndex = message->grantOffset / message->PACKET_DATA_LENGTH;
+    if (op != nullptr) {
+        assert(op->outMessage);
+        OutboundMessage* message = op->outMessage.get();
+        std::lock_guard<SpinLock> messageLock(message->mutex);
+        Protocol::Packet::GrantHeader* header =
+            static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
+        message->grantOffset = std::max(message->grantOffset, header->offset);
+        message->grantOffset =
+            std::min(message->grantOffset, message->messageLength - 1);
+        message->grantIndex =
+            message->grantOffset / message->PACKET_DATA_LENGTH;
+    } else {
+        // No message for this grant; grant must be old. Nothing to do.
+    }
     driver->releasePackets(&packet, 1);
 }
 
@@ -86,9 +91,10 @@ Sender::sendMessage(OpContext* op)
         if (message->sending.test_and_set()) {
             // message already sending, drop the send request.
             WARNING(
-                "Duplicate call to sendMessage for msgId (%lu:%lu); send "
+                "Duplicate call to sendMessage for msgId (%lu:%lu:%u); send "
                 "request dropped.",
-                message->msgId.transportId, message->msgId.sequence);
+                message->msgId.transportId, message->msgId.sequence,
+                message->msgId.messageId);
             return;
         }
 
@@ -101,23 +107,24 @@ Sender::sendMessage(OpContext* op)
             Driver::Packet* packet = message->getPacket(i);
             if (packet == nullptr) {
                 ERROR(
-                    "Incomplete message with id (%lu:%lu); missing packet at "
-                    "offset %d; send request dropped.",
+                    "Incomplete message with id (%lu:%lu:%u); missing packet "
+                    "at offset %d; send request dropped.",
                     message->msgId.transportId, message->msgId.sequence,
-                    i * message->PACKET_DATA_LENGTH);
+                    message->msgId.messageId, i * message->PACKET_DATA_LENGTH);
                 return;
             }
 
             packet->address = message->address;
             packet->priority = 0;
-            new (packet->payload)
-                Protocol::DataHeader(message->msgId, message->messageLength, i);
+            new (packet->payload) Protocol::Packet::DataHeader(
+                message->msgId, message->messageLength, i);
             actualMessageLen += (packet->length - message->DATA_HEADER_LENGTH);
         }
 
         // perform sanity checks.
         assert(message->messageLength == actualMessageLen);
-        assert(message->DATA_HEADER_LENGTH == sizeof(Protocol::DataHeader));
+        assert(message->DATA_HEADER_LENGTH ==
+               sizeof(Protocol::Packet::DataHeader));
 
         message->grantOffset =
             std::min(unscheduledBytes - 1, message->messageLength - 1);

@@ -77,8 +77,8 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_FALSE(op->inMessage);
 
     // receive packet 1
-    Protocol::DataHeader* header =
-        static_cast<Protocol::DataHeader*>(mockPacket.payload);
+    Protocol::Packet::DataHeader* header =
+        static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     header->common.messageId = {42, 1};
     header->index = 1;
     header->totalLength = 1420;
@@ -110,11 +110,11 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_TRUE(message->occupied.test(1));
     EXPECT_EQ(1U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
-    Protocol::GrantHeader* grantHeader =
-        static_cast<Protocol::GrantHeader*>(grantPacket.payload);
+    Protocol::Packet::GrantHeader* grantHeader =
+        static_cast<Protocol::Packet::GrantHeader*>(grantPacket.payload);
     EXPECT_EQ(header->common.messageId, grantHeader->common.messageId);
     EXPECT_EQ(6000U, grantHeader->offset);
-    EXPECT_EQ(sizeof(Protocol::GrantHeader), grantPacket.length);
+    EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
     EXPECT_FALSE(message->isReady());
 
@@ -169,7 +169,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     EXPECT_EQ(header->common.messageId, grantHeader->common.messageId);
     EXPECT_EQ(7000U, grantHeader->offset);
-    EXPECT_EQ(sizeof(Protocol::GrantHeader), grantPacket.length);
+    EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
     EXPECT_TRUE(message->isReady());
 

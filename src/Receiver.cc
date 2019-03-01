@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -24,7 +24,7 @@ namespace Core {
  * Receiver constructor.
  *
  * @param scheduler
- *      Scheudler that should be informed when message packets are received.
+ *      Scheduler that should be informed when message packets are received.
  * @param messagePool
  *      MessagePool from which the Receiver can allocate MessageContext objects.
  */
@@ -52,9 +52,9 @@ void
 Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
                            Driver* driver)
 {
-    Protocol::DataHeader* header =
-        static_cast<Protocol::DataHeader*>(packet->payload);
-    uint16_t dataHeaderLength = sizeof(Protocol::DataHeader);
+    Protocol::Packet::DataHeader* header =
+        static_cast<Protocol::Packet::DataHeader*>(packet->payload);
+    uint16_t dataHeaderLength = sizeof(Protocol::Packet::DataHeader);
     Protocol::MessageId msgId = header->common.messageId;
 
     if (!op->inMessage) {

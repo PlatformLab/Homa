@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -80,15 +80,15 @@ TEST_F(SenderTest, handleGrantPacket_basic)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     context->outMessage->messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, context, 4999);
     EXPECT_EQ(4, message->grantIndex);
 
-    Protocol::GrantHeader* header =
-        static_cast<Protocol::GrantHeader*>(mockPacket.payload);
+    Protocol::Packet::GrantHeader* header =
+        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = msgId;
     header->offset = 6500;
 
@@ -105,15 +105,15 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     context->outMessage->messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, context, 4999);
     EXPECT_EQ(4, message->grantIndex);
 
-    Protocol::GrantHeader* header =
-        static_cast<Protocol::GrantHeader*>(mockPacket.payload);
+    Protocol::Packet::GrantHeader* header =
+        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = msgId;
     header->offset = 4000;
 
@@ -130,15 +130,15 @@ TEST_F(SenderTest, handleGrantPacket_excessGrant)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     context->outMessage->messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, context, 4999);
     EXPECT_EQ(4, message->grantIndex);
 
-    Protocol::GrantHeader* header =
-        static_cast<Protocol::GrantHeader*>(mockPacket.payload);
+    Protocol::Packet::GrantHeader* header =
+        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = msgId;
     header->offset = 9001;
 
@@ -151,11 +151,25 @@ TEST_F(SenderTest, handleGrantPacket_excessGrant)
     EXPECT_EQ(8, message->grantIndex);
 }
 
+TEST_F(SenderTest, handleGrantPacket_dropGrant)
+{
+    Protocol::MessageId msgId = {42, 1};
+    Protocol::Packet::GrantHeader* header =
+        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
+    header->common.messageId = msgId;
+    header->offset = 6500;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender.handleGrantPacket(nullptr, &mockPacket, &mockDriver);
+}
+
 TEST_F(SenderTest, sendMessage_basic)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     Sender::OutboundMessage* outMessage = context->outMessage.get();
 
@@ -171,8 +185,8 @@ TEST_F(SenderTest, sendMessage_basic)
 
     EXPECT_EQ(22U, (uint64_t)mockPacket.address);
     EXPECT_EQ(0U, mockPacket.priority);
-    Protocol::DataHeader* header =
-        static_cast<Protocol::DataHeader*>(mockPacket.payload);
+    Protocol::Packet::DataHeader* header =
+        static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     EXPECT_EQ(outMessage->msgId, header->common.messageId);
     EXPECT_EQ(outMessage->messageLength, header->totalLength);
     EXPECT_EQ(1U, sender.sendQueue.size());
@@ -189,7 +203,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
     NiceMock<MockDriver::MockPacket> packet1(payload1);
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     Sender::OutboundMessage* outMessage = context->outMessage.get();
 
@@ -200,23 +214,23 @@ TEST_F(SenderTest, sendMessage_multipacket)
     packet1.length = 420 + 28;
     outMessage->address = (Driver::Address*)22;
 
-    EXPECT_EQ(28U, sizeof(Protocol::DataHeader));
+    EXPECT_EQ(28U, sizeof(Protocol::Packet::DataHeader));
     EXPECT_EQ(1000U, outMessage->PACKET_DATA_LENGTH);
 
     sender.sendMessage(context);
 
-    Protocol::DataHeader* header = nullptr;
+    Protocol::Packet::DataHeader* header = nullptr;
     // Packet0
     EXPECT_EQ(22U, (uint64_t)packet0.address);
     EXPECT_EQ(0U, packet0.priority);
-    header = static_cast<Protocol::DataHeader*>(packet0.payload);
+    header = static_cast<Protocol::Packet::DataHeader*>(packet0.payload);
     EXPECT_EQ(outMessage->msgId, header->common.messageId);
     EXPECT_EQ(outMessage->messageLength, header->totalLength);
 
     // Packet1
     EXPECT_EQ(22U, (uint64_t)packet1.address);
     EXPECT_EQ(0U, packet1.priority);
-    header = static_cast<Protocol::DataHeader*>(packet1.payload);
+    header = static_cast<Protocol::Packet::DataHeader*>(packet1.payload);
     EXPECT_EQ(outMessage->msgId, header->common.messageId);
     EXPECT_EQ(outMessage->messageLength, header->totalLength);
 }
@@ -240,7 +254,7 @@ TEST_F(SenderTest, sendMessage_missingPacket)
 
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     Sender::OutboundMessage* outMessage = context->outMessage.get();
     outMessage->setPacket(1, &mockPacket);
@@ -271,7 +285,7 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
 
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     Sender::OutboundMessage* outMessage = context->outMessage.get();
     outMessage->setPacket(0, &mockPacket);
@@ -305,14 +319,14 @@ TEST_F(SenderTest, sendMessage_unsheduledLimit)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     Sender::OutboundMessage* outMessage = context->outMessage.get();
     for (int i = 0; i < 9; ++i) {
         outMessage->setPacket(i, &mockPacket);
     }
     outMessage->messageLength = 9000;
-    mockPacket.length = 1000 + sizeof(Protocol::DataHeader);
+    mockPacket.length = 1000 + sizeof(Protocol::Packet::DataHeader);
     outMessage->address = (Driver::Address*)22;
     EXPECT_EQ(9U, outMessage->getNumPackets());
     EXPECT_EQ(1000U, outMessage->PACKET_DATA_LENGTH);
@@ -333,8 +347,8 @@ TEST_F(SenderTest, trySend_basic)
     for (uint64_t i = 0; i < 3; ++i) {
         context[i] = opContextPool->construct();
         Protocol::MessageId msgId = {42, 10 + i};
-        context[i]->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
-                                         &mockDriver);
+        context[i]->outMessage.construct(
+            msgId, sizeof(Protocol::Packet::DataHeader), &mockDriver);
         message[i] = SenderTest::addMessage(&sender, context[i], 4999);
     }
 
@@ -375,7 +389,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
 {
     Protocol::MessageId msgId = {42, 1};
     OpContext* context = opContextPool->construct();
-    context->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
+    context->outMessage.construct(msgId, sizeof(Protocol::Packet::DataHeader),
                                   &mockDriver);
     Sender::OutboundMessage* outMessage = context->outMessage.get();
     outMessage->setPacket(0, &mockPacket);
@@ -409,8 +423,8 @@ TEST_F(SenderTest, cleanup)
     for (uint64_t i = 0; i < 3; ++i) {
         context[i] = opContextPool->construct();
         Protocol::MessageId msgId = {42, 10 + i};
-        context[i]->outMessage.construct(msgId, sizeof(Protocol::DataHeader),
-                                         &mockDriver);
+        context[i]->outMessage.construct(
+            msgId, sizeof(Protocol::Packet::DataHeader), &mockDriver);
         message[i] = SenderTest::addMessage(&sender, context[i], 4999);
     }
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -30,9 +30,9 @@ using ::testing::InSequence;
 using ::testing::NiceMock;
 using ::testing::Return;
 
-class ScheudlerTest : public ::testing::Test {
+class SchedulerTest : public ::testing::Test {
   public:
-    ScheudlerTest()
+    SchedulerTest()
         : mockDriver()
         , mockPacket(&payload)
         , scheduler()
@@ -42,7 +42,7 @@ class ScheudlerTest : public ::testing::Test {
         scheduler = new Scheduler(&mockDriver);
     }
 
-    ~ScheudlerTest()
+    ~SchedulerTest()
     {
         delete scheduler;
         Debug::setLogPolicy(savedLogPolicy);
@@ -55,7 +55,7 @@ class ScheudlerTest : public ::testing::Test {
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
 
-TEST_F(ScheudlerTest, constructor)
+TEST_F(SchedulerTest, constructor)
 {
     EXPECT_CALL(mockDriver, getBandwidth).WillOnce(Return(8000));
 
@@ -64,12 +64,12 @@ TEST_F(ScheudlerTest, constructor)
     EXPECT_EQ(5000U, scheduler.RTT_BYTES);
 }
 
-TEST_F(ScheudlerTest, packetReceived)
+TEST_F(SchedulerTest, packetReceived)
 {
     Protocol::MessageId msgId(42, 32);
     Driver::Address* sourceAddr = (Driver::Address*)22;
     uint32_t TOTAL_MESSAGE_LEN = 9000;
-    uint32_t TOTAL_BYTES_RECIEVED = 1000;
+    uint32_t TOTAL_BYTES_RECEIVED = 1000;
 
     InSequence _seq;
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
@@ -77,12 +77,12 @@ TEST_F(ScheudlerTest, packetReceived)
     EXPECT_CALL(mockDriver, releasePackets).Times(1);
 
     scheduler->packetReceived(msgId, sourceAddr, TOTAL_MESSAGE_LEN,
-                              TOTAL_BYTES_RECIEVED);
+                              TOTAL_BYTES_RECEIVED);
 
-    Protocol::GrantHeader* header = (Protocol::GrantHeader*)payload;
+    Protocol::Packet::GrantHeader* header = (Protocol::Packet::GrantHeader*)payload;
     EXPECT_EQ(msgId, header->common.messageId);
     EXPECT_EQ(6000U, header->offset);
-    EXPECT_EQ(sizeof(Protocol::GrantHeader), mockPacket.length);
+    EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);
     EXPECT_EQ(sourceAddr, mockPacket.address);
 }
 

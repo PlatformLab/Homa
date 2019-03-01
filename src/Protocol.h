@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,24 +16,24 @@
 #ifndef HOMA_PROTOCOL_H
 #define HOMA_PROTOCOL_H
 
+#include <Homa/Driver.h>
+
 #include <cstdint>
 #include <functional>
 
 namespace Homa {
 
 /**
- * Defines the headers used in all Homa packets.
+ * Defines the wireformat structures used in Homa protocol.
+ *
+ * The Protocol defines headers both at the Packet level as well as at the
+ * Message level.  Packet level headers contain information to process each
+ * individual packet.  In contrast, Message level headers contain information
+ * needed to process the Message but aren't needed to process each individual
+ * packet.  This seperation reduces Homa's protocol overhead by only including
+ * Message level headers once per Message.
  */
 namespace Protocol {
-
-/**
- * This enum defines the opcode field values for packets. See the * xxxHeader
- * class definitions below for more information about each kind of packet
- */
-enum PacketOpcode {
-    DATA = 21,
-    GRANT = 22,
-};
 
 /**
  * A unique identifier for the operation.
@@ -137,11 +137,25 @@ struct MessageId : public OpId {
 } __attribute__((packed));
 
 /**
+ * Contains the header definitions for Homa packets.
+ */
+namespace Packet {
+
+/**
+ * This enum defines the opcode field values for packets. See the * xxxHeader
+ * class definitions below for more information about each kind of packet
+ */
+enum Opcode {
+    DATA = 21,
+    GRANT = 22,
+};
+
+/**
  * This is the first part of the Homa packet header and is common to all
  * versions of the protocol. The struct contains version information about the
  * protocol used in the encompassing packet. The Transport should always send
  * this prefix and can always expect it when receiving a Homa packet. The prefix
- * is seperated into its own struct becuase the Transport may need to know the
+ * is seperated into its own struct because the Transport may need to know the
  * protocol version before interpreting the rest of the packet.
  */
 struct HeaderPrefix {
@@ -160,11 +174,11 @@ struct HeaderPrefix {
  */
 struct CommonHeader {
     HeaderPrefix prefix;  ///< Common to all versions of the protocol.
-    uint8_t opcode;       ///< One of the values of PacketOpcode.
+    uint8_t opcode;       ///< One of the values of Opcode.
     MessageId messageId;  ///< RemoteOp/Message associated with this packet.
 
     /// CommonHeader constructor.
-    CommonHeader(PacketOpcode opcode, MessageId messageId)
+    CommonHeader(Opcode opcode, MessageId messageId)
         : prefix(1)
         , opcode(opcode)
         , messageId(messageId)
@@ -186,7 +200,7 @@ struct GrantHeader {
 
     /// GrantHeader constructor.
     GrantHeader(MessageId messageId, uint32_t offset)
-        : common(PacketOpcode::GRANT, messageId)
+        : common(Opcode::GRANT, messageId)
         , offset(offset)
     {}
 } __attribute__((packed));
@@ -209,11 +223,53 @@ struct DataHeader {
 
     /// DataHeader constructor.
     DataHeader(MessageId messageId, uint32_t totalLength, uint16_t index)
-        : common(PacketOpcode::DATA, messageId)
+        : common(Opcode::DATA, messageId)
         , totalLength(totalLength)
         , index(index)
     {}
 } __attribute__((packed));
+
+}  // namespace Packet
+
+/**
+ * Contains the header definitions for Homa Messages.
+ */
+namespace Message {
+
+/**
+ * This is the first part of the Homa packet header and is common to all
+ * versions of the protocol. The struct contains version information about the
+ * protocol used in the encompassing Message. The Transport should always send
+ * this prefix and can always expect it when receiving a Homa Message. The
+ * prefix is seperated into its own struct because the Transport may need to
+ * know the protocol version before interpreting the rest of the packet.
+ */
+struct HeaderPrefix {
+    uint8_t version;  ///< The version of the protocol being used by this
+                      ///< Message.
+
+    /// HeaderPrefix constructor.
+    HeaderPrefix(uint8_t version)
+        : version(version)
+    {}
+} __attribute__((packed));
+
+/**
+ * Describes the wire format for header fields for all Message.
+ */
+struct Header {
+    HeaderPrefix prefix;  ///< Common to all versions of the protocol.
+    Driver::Address::Raw replyAddress;  ///< Replies to this Message should be
+                                        ///< sent to this address.
+
+    /// CommonHeader constructor.
+    Header()
+        : prefix(1)
+        , replyAddress()
+    {}
+} __attribute__((packed));
+
+}  // namespace Message
 
 }  // namespace Protocol
 }  // namespace Homa
