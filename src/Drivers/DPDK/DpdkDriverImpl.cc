@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2018, Stanford University
+/* Copyright (c) 2015-2019, Stanford University
  * Copyright (c) 2014-2015, Huawei Technologies Co. Ltd.
  * Copyright (c) 2014-2016, NEC Corporation
  * The original version of this module was contributed by Anthony Iliopoulos
@@ -183,13 +183,13 @@ DpdkDriverImpl::DpdkDriverImpl(int port)
 {}
 
 /**
- * Construct a DpdkDriverImpl and initilize the DPDK EAL using the provided
+ * Construct a DpdkDriverImpl and initialize the DPDK EAL using the provided
  * _argc_ and _argv_. [Advanced Usage]
  *
  * This constructor should be used if the caller wants to control what
  * parameters are provided to DPDK EAL initialization. The input parameters
  * _argc_ and _argv_ will be provided to rte_eal_init() directly. See the
- * DPDK documentation for initilization options.
+ * DPDK documentation for initialization options.
  *
  * This constructor will maintain the currently set thread affinity by
  * overriding the default affinity set by rte_eal_init().
@@ -221,7 +221,7 @@ DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
 {
     // DPDK during initialization (rte_eal_init()) the running thread is pinned
     // to a single processor which may be not be what the applications wants.
-    // Rememeber the current thread affinity so that we can restore it after
+    // Remember the current thread affinity so that we can restore it after
     // initialization is complete.
     int s;
     cpu_set_t cpuset;
@@ -246,10 +246,10 @@ DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
 }
 
 /**
- * Construct a DpdkDriverImpl without initilizing the DPDK EAL. [Advanced Usage]
+ * Construct a DpdkDriverImpl without DPDK EAL initialization. [Advanced Usage]
  *
- * This constuctor is used when parts of the application other than the
- * DpdkDriverImpl are using DPDK and the caller wants to take responsiblity for
+ * This constructor is used when parts of the application other than the
+ * DpdkDriverImpl are using DPDK and the caller wants to take responsability for
  * calling rte_eal_init(). The caller must ensure that rte_eal_init() is
  * called before calling this constructor.
  *
@@ -312,6 +312,14 @@ DpdkDriverImpl::getAddress(std::string const* const addressString)
     }
 
     return addr;
+}
+
+// See Driver::getAddress()
+Driver::Address*
+DpdkDriverImpl::getAddress(Driver::Address::Raw const* const rawAddress)
+{
+    std::string addressString = MacAddress(rawAddress).toString();
+    return getAddress(&addressString);
 }
 
 // See Driver::allocPacket()

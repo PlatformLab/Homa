@@ -17,6 +17,8 @@
 
 #include "FakeAddress.h"
 
+#include "../RawAddressType.h"
+
 namespace Homa {
 namespace Drivers {
 namespace Fake {
@@ -37,6 +39,24 @@ TEST(FakeAddressTest, constructor_str)
 TEST(FakeAddressTest, constructor_str_bad)
 {
     EXPECT_THROW(FakeAddress address("D42"), BadAddress);
+}
+
+TEST(FakeAddressTest, constructor_raw)
+{
+    Driver::Address::Raw raw;
+    raw.type = RawAddressType::FAKE;
+    *reinterpret_cast<uint64_t*>(raw.bytes) = 42;
+
+    FakeAddress address(&raw);
+    EXPECT_EQ("42", address.toString());
+}
+
+TEST(FakeAddressTest, constructor_raw_bad)
+{
+    Driver::Address::Raw raw;
+    raw.type = !RawAddressType::FAKE;
+
+    EXPECT_THROW(FakeAddress address(&raw), BadAddress);
 }
 
 TEST(FakeAddressTest, toString)

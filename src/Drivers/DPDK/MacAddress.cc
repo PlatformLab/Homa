@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2018, Stanford University
+/* Copyright (c) 2011-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -18,6 +18,7 @@
 #include "StringUtil.h"
 
 #include "../../CodeLocation.h"
+#include "../RawAddressType.h"
 
 namespace Homa {
 namespace Drivers {
@@ -55,6 +56,22 @@ MacAddress::MacAddress(const char* macStr)
 }
 
 /**
+ * Create a new address from a given address in its raw byte format.
+ * @param raw
+ *      The raw bytes format.
+ *
+ * @sa Driver::Address::Raw
+ */
+MacAddress::MacAddress(const Raw* const raw)
+{
+    if (raw->type != RawAddressType::MAC) {
+        throw BadAddress(HERE_STR, "Bad address: Raw format is not type MAC");
+    }
+    assert(sizeof(raw->bytes) >= 6);
+    memcpy(address, raw->bytes, 6);
+}
+
+/**
  * Create a new copy of the provided MacAddress.
  *
  * @param other
@@ -66,6 +83,9 @@ MacAddress::MacAddress(const MacAddress& other)
     memcpy(address, other.address, 6);
 }
 
+/**
+ * @copydoc Driver::Address::toString()
+ */
 inline std::string
 MacAddress::toString() const
 {
@@ -73,6 +93,17 @@ MacAddress::toString() const
     snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x", address[0],
              address[1], address[2], address[3], address[4], address[5]);
     return buf;
+}
+
+/**
+ * @copydoc Driver::Address::toRaw()
+ */
+inline void
+MacAddress::toRaw(Raw* raw) const
+{
+    assert(sizeof(raw->bytes) >= 6);
+    memcpy(raw->bytes, address, 6);
+    raw->type = RawAddressType::MAC;
 }
 
 /**

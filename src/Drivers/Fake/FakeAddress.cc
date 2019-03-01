@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2018, Stanford University
+/* Copyright (c) 2011-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,6 +17,8 @@
 
 #include "CodeLocation.h"
 #include "StringUtil.h"
+
+#include "../RawAddressType.h"
 
 #include <cstdlib>
 
@@ -48,6 +50,15 @@ FakeAddress::FakeAddress(const char* addressStr)
     , address(toAddressId(addressStr))
 {}
 
+FakeAddress::FakeAddress(const Raw* const raw)
+    : Address()
+    , address(*reinterpret_cast<const uint64_t* const>(raw->bytes))
+{
+    if (raw->type != RawAddressType::FAKE) {
+        throw BadAddress(HERE_STR, "Bad address: Raw format is not type FAKE");
+    }
+}
+
 /**
  * Create a new copy of the provided FakeAddress.
  *
@@ -68,6 +79,17 @@ FakeAddress::toString() const
     char buf[21];
     snprintf(buf, sizeof(buf), "%lu", address);
     return buf;
+}
+
+/**
+ * Get the serialized byte-format for this network address.
+ */
+inline void
+FakeAddress::toRaw(Raw* raw) const
+{
+    raw->type = RawAddressType::FAKE;
+    uint64_t* addr = reinterpret_cast<uint64_t*>(raw->bytes);
+    *addr = address;
 }
 
 /**

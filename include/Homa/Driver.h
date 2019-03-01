@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2018, Stanford University
+/* Copyright (c) 2010-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -38,6 +38,19 @@ class Driver {
      * A base class for Driver specific network addresses.
      */
     class Address {
+      public:
+        /**
+         * Used to hold a driver's serialized byte-format for an Address.  Each
+         * driver may define its own byte-format so long as fits within the
+         * allowed bytes array.  Additionally, each driver can use the type
+         * field to distinguish between raw addresses of different formats.
+         */
+        struct Raw {
+            uint8_t type;  ///< Can be used to distinguish between different raw
+                           ///< address formats.
+            uint8_t bytes[19];  ///< Holds an Address's serialized byte-format.
+        } __attribute__((packed));
+
       protected:
         /// Address constructor.
         Address() {}
@@ -51,6 +64,11 @@ class Driver {
          * Return the string representation of this network address.
          */
         virtual std::string toString() const = 0;
+
+        /**
+         * Get the serialized byte-format for this network address.
+         */
+        virtual void toRaw(Raw* raw) const = 0;
     };
 
     /**
@@ -115,7 +133,7 @@ class Driver {
 
     /**
      * Return a Driver specific network address for the given string
-     * representation of the address. Address strings are also  Driver
+     * representation of the address. The address string format can be Driver
      * specific.
      *
      * @param addressString
@@ -131,6 +149,23 @@ class Driver {
     virtual Address* getAddress(std::string const* const addressString) = 0;
 
     /**
+     * Return a Driver specific network address for the given raw serialized
+     * byte-format of the address. The raw address byte-format can be Driver
+     * specific.
+     *
+     * @param rawAddress
+     *      See above.
+     * @return
+     *      Pointer to an Address object that can be the source or destination
+     *      of a Packet. The pointer is valid for the lifetime of this Driver.
+     * @throw BadAddress
+     *      _rawAddress_ is malformed.
+     *
+     * @sa Driver::Packet
+     */
+    virtual Address* getAddress(Address::Raw const* const rawAddress) = 0;
+
+    /**
      * Allocate a new Packet object from the Driver's pool of resources. The
      * caller must ensure that the Packet returned by this method is
      * eventually released back to the Driver; see Driver::releasePackets().
@@ -142,7 +177,7 @@ class Driver {
     /**
      * Send a burst of packets over the network.
      *
-     * The packets provide can be sent asynchrounously by the Driver.
+     * The packets provide can be sent asynchronously by the Driver.
      *
      * In general, Packet objects should be considered immutable once they
      * are passed to this method. The Packet::address and Packet::priority
@@ -172,7 +207,7 @@ class Driver {
      *      The maximum number of Packet objects that should be returned by
      * this method.
      * @param[out] receivedPackets
-     *      Recevied packets are appended to this array in order of arrival.
+     *      Received packets are appended to this array in order of arrival.
      *
      * @return
      *      Number of Packet objects being returned.
@@ -184,7 +219,7 @@ class Driver {
 
     /**
      * Release a collection of Packet objects back to the Driver. Every
-     * Packet allocated using allocPacket() or recieved using
+     * Packet allocated using allocPacket() or received using
      * receivePackets() must eventually be released back to the Driver using
      * this method. While in general it is safe for applications to keep
      * Packet objects for an indeterminate period of time, doing so may be

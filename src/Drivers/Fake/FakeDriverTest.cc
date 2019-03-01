@@ -18,6 +18,8 @@
 #include "FakeDriver.h"
 #include "StringUtil.h"
 
+#include "../RawAddressType.h"
+
 #include <string>
 
 namespace Homa {
@@ -33,11 +35,21 @@ TEST(FakeDriverTest, constructor)
     EXPECT_EQ(nextAddressId, driver.localAddressId);
 }
 
-TEST(FakeDriverTest, getAddress)
+TEST(FakeDriverTest, getAddress_string)
 {
     FakeDriver driver;
     std::string addressStr("42");
     Driver::Address* address = driver.getAddress(&addressStr);
+    EXPECT_EQ("42", address->toString());
+}
+
+TEST(FakeDriverTest, getAddress_raw)
+{
+    FakeDriver driver;
+    Driver::Address::Raw raw;
+    raw.type = RawAddressType::FAKE;
+    *reinterpret_cast<uint64_t*>(raw.bytes) = 42;
+    Driver::Address* address = driver.getAddress(&raw);
     EXPECT_EQ("42", address->toString());
 }
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2018, Stanford University
+/* Copyright (c) 2015-2019, Stanford University
  * Copyright (c) 2014-2015, Huawei Technologies Co. Ltd.
  * Copyright (c) 2014-2016, NEC Corporation
  *
@@ -49,7 +49,7 @@ class MacAddress;
  * @sa DpdkDriver
  */
 class DpdkDriverImpl : public DpdkDriver {
-    // forward declarations to avoid including implmentation in the header.
+    // forward declarations to avoid including implementation in the header.
     class DpdkPacket;
     struct OverflowBuffer;
 
@@ -61,6 +61,10 @@ class DpdkDriverImpl : public DpdkDriver {
 
     /// See Driver::getAddress()
     virtual Driver::Address* getAddress(std::string const* const addressString);
+
+    /// See Driver::getAddress()
+    virtual Driver::Address* getAddress(
+        Driver::Address::Raw const* const rawAddress);
 
     /// See Driver::allocPacket()
     virtual Packet* allocPacket();

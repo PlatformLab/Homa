@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -38,6 +38,7 @@ class MockDriver : public Driver {
     class MockAddress : public Driver::Address {
       public:
         MOCK_CONST_METHOD0(toString, std::string());
+        MOCK_CONST_METHOD1(toRaw, void(Raw* raw));
     };
 
     /**
@@ -55,6 +56,7 @@ class MockDriver : public Driver {
     };
 
     MOCK_METHOD1(getAddress, Address*(std::string const* const addressString));
+    MOCK_METHOD1(getAddress, Address*(Address::Raw const* const rawAddress));
     MOCK_METHOD0(allocPacket, Packet*());
     MOCK_METHOD2(sendPackets, void(Packet* packets[], uint16_t numPackets));
     MOCK_METHOD2(receivePackets,

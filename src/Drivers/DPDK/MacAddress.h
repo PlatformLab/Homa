@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2018, Stanford University
+/* Copyright (c) 2011-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,8 +28,10 @@ namespace DPDK {
 struct MacAddress : public Driver::Address {
     explicit MacAddress(const uint8_t raw[6]);
     explicit MacAddress(const char* macStr);
+    explicit MacAddress(const Raw* const raw);
     MacAddress(const MacAddress& other);
     std::string toString() const;
+    void toRaw(Raw* raw) const;
     bool isNull() const;
 
     /// The raw bytes of the MAC address.

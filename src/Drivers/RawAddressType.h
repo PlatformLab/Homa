@@ -13,34 +13,26 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_DRIVERS_FAKE_FAKEADDRESS_H
-#define HOMA_DRIVERS_FAKE_FAKEADDRESS_H
-
-#include <Homa/Driver.h>
+#ifndef HOMA_DRIVERS_RAWADDRESSTYPE_H
+#define HOMA_DRIVERS_RAWADDRESSTYPE_H
 
 namespace Homa {
 namespace Drivers {
-namespace Fake {
 
 /**
- * A container for an FakeNetwork network address.
+ * Identifies a particular raw serialized byte-format for a Driver::Address
+ * supported by this project.  The types are enumerated here in one place to
+ * ensure drivers do have overlapping type identifiers.  New drivers that wish
+ * to claim a type id should add an entry to this enum.
+ *
+ * @sa Driver::Address::Raw
  */
-struct FakeAddress : public Driver::Address {
-    explicit FakeAddress(const uint64_t addressId);
-    explicit FakeAddress(const char* addressStr);
-    explicit FakeAddress(const Raw* const raw);
-    FakeAddress(const FakeAddress& other);
-    std::string toString() const;
-    void toRaw(Raw* raw) const;
-
-    static uint64_t toAddressId(const char* addressStr);
-
-    /// FakeAddress identifier
-    uint64_t address;
+enum RawAddressType {
+    FAKE = 0,
+    MAC = 1,
 };
 
-}  // namespace Fake
 }  // namespace Drivers
 }  // namespace Homa
 
-#endif  // HOMA_DRIVERS_FAKE_FAKEADDRESS_H
+#endif  // HOMA_DRIVERS_RAWADDRESSTYPE_H

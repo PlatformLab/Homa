@@ -105,6 +105,7 @@ class FakeDriver : public Driver {
     virtual ~FakeDriver();
 
     Address* getAddress(std::string const* const addressString);
+    Address* getAddress(Driver::Address::Raw const* const rawAddress);
     Packet* allocPacket();
     void sendPackets(Packet* packets[], uint16_t numPackets);
     uint32_t receivePackets(uint32_t maxPackets, Packet* receivedPackets[]);

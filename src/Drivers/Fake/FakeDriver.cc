@@ -135,6 +135,17 @@ FakeDriver::getAddress(std::string const* const addressString)
 }
 
 /**
+ * See Driver::getAddress()
+ */
+Driver::Address*
+FakeDriver::getAddress(Driver::Address::Raw const* const rawAddress)
+{
+    std::lock_guard<std::mutex> lock(fakeNetwork.mutex);
+    FakeAddress address(rawAddress);
+    return fakeNetwork.getAddress(address.address);
+}
+
+/**
  * See Driver::allocPacket()
  */
 Driver::Packet*

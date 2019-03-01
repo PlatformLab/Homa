@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -29,6 +29,7 @@ namespace Core {
 namespace {
 
 using ::testing::Eq;
+using ::testing::Matcher;
 using ::testing::Mock;
 using ::testing::NiceMock;
 using ::testing::Pointee;
@@ -69,11 +70,6 @@ class ReceiverTest : public ::testing::Test {
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
 
-MATCHER_P(PtrStrEq, addressString, "")
-{
-    return addressString == *arg;
-}
-
 TEST_F(ReceiverTest, handleDataPacket)
 {
     OpContext* op = opContextPool->construct();
@@ -96,7 +92,8 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(3)
         .WillRepeatedly(Return(addressStr))
         .RetiresOnSaturation();
-    EXPECT_CALL(mockDriver, getAddress(PtrStrEq(addressStr)))
+    EXPECT_CALL(mockDriver,
+                getAddress(Matcher<std::string const*>(Pointee(addressStr))))
         .WillOnce(Return(&mockAddress));
     char grantPayload[1028];
     MockDriver::MockPacket grantPacket(grantPayload);
@@ -128,7 +125,9 @@ TEST_F(ReceiverTest, handleDataPacket)
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
-    EXPECT_CALL(mockDriver, getAddress(PtrStrEq(addressStr))).Times(0);
+    EXPECT_CALL(mockDriver,
+                getAddress(Matcher<std::string const*>(Pointee(addressStr))))
+        .Times(0);
     EXPECT_CALL(mockAddress, toString)
         .Times(2)
         .WillRepeatedly(Return(addressStr))
@@ -152,7 +151,9 @@ TEST_F(ReceiverTest, handleDataPacket)
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(0);
-    EXPECT_CALL(mockDriver, getAddress(PtrStrEq(addressStr))).Times(0);
+    EXPECT_CALL(mockDriver,
+                getAddress(Matcher<std::string const*>(Pointee(addressStr))))
+        .Times(0);
     EXPECT_CALL(mockAddress, toString)
         .Times(2)
         .WillRepeatedly(Return(addressStr))
@@ -178,7 +179,9 @@ TEST_F(ReceiverTest, handleDataPacket)
     // receive packet 0 again on a complete message
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
-    EXPECT_CALL(mockDriver, getAddress(PtrStrEq(addressStr))).Times(0);
+    EXPECT_CALL(mockDriver,
+                getAddress(Matcher<std::string const*>(Pointee(addressStr))))
+        .Times(0);
     EXPECT_CALL(mockAddress, toString).Times(0);
     EXPECT_CALL(mockDriver, allocPacket).Times(0);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
