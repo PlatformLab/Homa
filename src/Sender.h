@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -34,7 +34,7 @@ class OpContext;
 /**
  * The Sender takes takes outgoing messages and sends out the message's packets
  * based on Homa's send policy and information (GRANTS) received from  the
- * Scheduler at the message's desintation.
+ * Scheduler at the message's destination.
  */
 class Sender {
   public:
@@ -51,9 +51,9 @@ class Sender {
          *
          * @copydetails Core::Message::Message()
          */
-        OutboundMessage(Protocol::MessageId msgId, uint16_t dataHeaderLength,
-                        Driver* driver)
-            : Message(msgId, dataHeaderLength, driver)
+        OutboundMessage(Protocol::MessageId msgId, Driver* driver,
+                        uint16_t dataHeaderLength)
+            : Message(msgId, driver, dataHeaderLength)
             , sending()
             , mutex()
             , grantOffset(0)

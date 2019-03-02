@@ -58,12 +58,12 @@ Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
     Protocol::MessageId msgId = header->common.messageId;
 
     if (!op->inMessage) {
-        op->inMessage.construct(msgId, dataHeaderLength, driver);
+        uint32_t messageLength = header->totalLength;
+        op->inMessage.construct(msgId, driver, dataHeaderLength, messageLength);
         // Get an address pointer from the driver; the one in the packet
         // may disappear when the packet goes away.
         std::string addrStr = packet->address->toString();
         op->inMessage->address = driver->getAddress(&addrStr);
-        op->inMessage->messageLength = header->totalLength;
     }
 
     InboundMessage* message = op->inMessage.get();
@@ -78,7 +78,7 @@ Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
 
     // Things that must be true (sanity check)
     assert(message->address->toString() == packet->address->toString());
-    assert(message->messageLength == header->totalLength);
+    assert(message->rawLength() == header->totalLength);
 
     // Add the packet
     bool packetAdded = message->setPacket(header->index, packet);
@@ -91,9 +91,9 @@ Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
             message->PACKET_DATA_LENGTH * message->getNumPackets();
 
         // Let the Scheduler know that we received a packet.
-        scheduler->packetReceived(msgId, message->address,
-                                  message->messageLength, totalReceivedBytes);
-        if (totalReceivedBytes >= message->messageLength) {
+        scheduler->packetReceived(msgId, message->address, message->rawLength(),
+                                  totalReceivedBytes);
+        if (totalReceivedBytes >= message->rawLength()) {
             message->fullMessageReceived = true;
         }
     } else {

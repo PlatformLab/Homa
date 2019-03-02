@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -39,11 +39,7 @@ class OpContext;
 class Message {
   public:
     /**
-     * Append an array of bytes to the end of the Message by copying the
-     * bytes into the Message's internal storage.
-     *
-     * This operation cannot be performed on a received Message or one that
-     * has already been sent.
+     * Copy an array of bytes to the end of the Message.
      *
      * @param source
      *      Address of the first byte of data (in a byte array) to be
@@ -56,8 +52,6 @@ class Message {
     /**
      * Get the contents of a specified range of bytes in the Message by
      * copying them into the provided destination memory region.
-     *
-     * This operation cannot be performed on a detached Message.
      *
      * @param offset
      *      The number of bytes in the Message preceding the range of bytes
@@ -78,25 +72,9 @@ class Message {
                          uint32_t num) const = 0;
 
     /**
-     * Set the contents of a specified range of bytes in the Message using
-     * the contents of the provided source memory region.
-     *
-     * If necessary, this operation will extend the Message to accomidate
-     * the provided source content and will leave the contents of the
-     * Message before the offset untouched and potentailly uninitilized.
-     *
-     * This operation cannot be performed on a received Message or one that
-     * has already been sent.
-     *
-     * @param offset
-     *      The number of bytes in the Message preceding the range of bytes
-     *      to be set.
-     * @param source
-     *      The pointer to the memory region whose
-     * @param num
-     *      The number of bytes to set.
+     * Return the number of bytes this Message contains.
      */
-    virtual void set(uint32_t offset, const void* source, uint32_t num) = 0;
+    virtual uint32_t length() const = 0;
 };
 
 /**
@@ -105,7 +83,7 @@ class Message {
  * result of processing the request.
  *
  * An RPC (Remote Procedure Call) is a simple example of a RemoteOp.  Unlike
- * RPCs, however, the processing of the operation maybe fully or paritally
+ * RPCs, however, the processing of the operation maybe fully or partially
  * deligated by one server to another.  As such, the response may not come from
  * the server that initally received the request.
  *
@@ -154,7 +132,7 @@ class RemoteOp {
     operator bool() const;
 
     /**
-     * Set the destiation network address for this RemoteOp.
+     * Set the destination network address for this RemoteOp.
      *
      * This operation cannot be performed after send() is called.
      */

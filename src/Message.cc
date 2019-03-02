@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,6 +15,8 @@
 
 #include "Message.h"
 
+#include "Debug.h"
+
 #include <mutex>
 
 namespace Homa {
@@ -23,29 +25,29 @@ namespace Core {
 /**
  * Construct a Message.
  *
- * Message objects are constructed with a refCount of 1.
- *
  * @param msgId
  *      Unique identifier for this message.
- * @param dataHeaderLength
+ * @param driver
+ *      Driver from which packets were/will be allocated and to which they
+ *      should be returned when this message is no longer needed.
+ * @param packetHeaderLength
  *      Number of bytes at the beginning of every packet used to hold the Homa
  *      protocol DataHeader. This should be the same for every packet in a given
  *      message, but may be different for different messages since they may use
  *      different versions of the protocol header.
- * @param driver
- *      Driver from which packets were/will be allocated and to which they
- *      should be returned when this message is no longer needed.
- *
- * @sa Message::release()
+ * @param messageLength
+ *      Number of bytes know to be in this Message.  Used by the Receiver since
+ *      it should know the length of the Message when the first packet arrives.
  */
-Message::Message(Protocol::MessageId msgId, uint16_t dataHeaderLength,
-                 Driver* driver)
+Message::Message(Protocol::MessageId msgId, Driver* driver,
+                 uint16_t packetHeaderLength, uint32_t messageLength)
     : msgId(msgId)
     , address(nullptr)
     , driver(driver)
-    , messageLength(0)
-    , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() - dataHeaderLength)
-    , DATA_HEADER_LENGTH(dataHeaderLength)
+    , PACKET_HEADER_LENGTH(packetHeaderLength)
+    , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() - PACKET_HEADER_LENGTH)
+    , MESSAGE_HEADER_LENGTH(0)
+    , messageLength(messageLength)
     , numPackets(0)
     , occupied()
     , packets()
@@ -56,17 +58,7 @@ Message::Message(Protocol::MessageId msgId, uint16_t dataHeaderLength,
  */
 Message::~Message()
 {
-    // If the packets are all continguous, we can release them all at once.
-    if ((occupied >> numPackets).none()) {
-        driver->releasePackets(packets, numPackets);
-    } else {  // otherwise, we need to find which packets need to be released.
-        for (uint16_t i = 0; i < MAX_MESSAGE_PACKETS && numPackets > 0; ++i) {
-            if (occupied.test(i)) {
-                driver->releasePackets(packets + i, 1);
-                --numPackets;
-            }
-        }
-    }
+    driver->releasePackets(packets, numPackets);
 }
 
 /**
@@ -75,8 +67,34 @@ Message::~Message()
 void
 Message::append(const void* source, uint32_t num)
 {
-    uint32_t offset = messageLength;
-    set(offset, source, num);
+    uint32_t packetIndex = messageLength / PACKET_DATA_LENGTH;
+    uint32_t packetOffset = messageLength % PACKET_DATA_LENGTH;
+    uint32_t bytesCopied = 0;
+    uint32_t maxMessageLength = PACKET_DATA_LENGTH * MAX_MESSAGE_PACKETS;
+
+    if (messageLength + num > maxMessageLength) {
+        WARNING(
+            "Max message size limit (%uB) reached; %u of %u bytes appended to "
+            "Message (%lu:%lu:%u)",
+            maxMessageLength, maxMessageLength - messageLength, num,
+            msgId.transportId, msgId.sequence, msgId.messageId);
+        num = maxMessageLength - messageLength;
+    }
+
+    while (bytesCopied < num) {
+        uint32_t bytesToCopy =
+            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+        Driver::Packet* packet = getOrAllocPacket(packetIndex);
+        char* destination = static_cast<char*>(packet->payload);
+        destination += packetOffset + PACKET_HEADER_LENGTH;
+        std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
+                    bytesToCopy);
+        bytesCopied += bytesToCopy;
+        packetIndex++;
+        packetOffset = 0;
+    }
+
+    messageLength += num;
 }
 
 /**
@@ -85,35 +103,40 @@ Message::append(const void* source, uint32_t num)
 uint32_t
 Message::get(uint32_t offset, void* destination, uint32_t num) const
 {
-    uint32_t packetIndex = offset / PACKET_DATA_LENGTH;
-    uint32_t packetOffset = offset % PACKET_DATA_LENGTH;
+    // This operation should be performed as if offset zero starts with the
+    // first byte after the header.  This operation shouldn't be preformed on
+    // a Message with an undefined header.
+    uint32_t realOffset = offset + MESSAGE_HEADER_LENGTH;
+    uint32_t packetIndex = realOffset / PACKET_DATA_LENGTH;
+    uint32_t packetOffset = realOffset % PACKET_DATA_LENGTH;
     uint32_t bytesCopied = 0;
 
     // Offset is passed the end of the message.
-    if (offset >= messageLength) {
+    if (realOffset >= messageLength) {
         return 0;
     }
 
-    if (offset + num > messageLength) {
-        num = messageLength - offset;
+    if (realOffset + num > messageLength) {
+        num = messageLength - realOffset;
     }
 
     while (bytesCopied < num) {
+        uint32_t bytesToCopy =
+            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
         Driver::Packet* packet = getPacket(packetIndex);
-        if (packet == nullptr) {
-            WARNING(
-                "Copy cut short; message (%lu:%lu) of length %uB has no "
-                "packet at offset %u (index %u)",
-                msgId.transportId, msgId.sequence, messageLength,
+        if (packet != nullptr) {
+            char* source = static_cast<char*>(packet->payload);
+            source += packetOffset + PACKET_HEADER_LENGTH;
+            std::memcpy(static_cast<char*>(destination) + bytesCopied, source,
+                        bytesToCopy);
+        } else {
+            ERROR(
+                "Message (%lu:%lu:%u) is missing data starting at offset %u "
+                "(packet index %u)",
+                msgId.transportId, msgId.sequence, msgId.messageId,
                 packetIndex * PACKET_DATA_LENGTH, packetIndex);
             break;
         }
-        char* source = static_cast<char*>(packet->payload);
-        source += packetOffset + DATA_HEADER_LENGTH;
-        uint32_t bytesToCopy =
-            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
-        std::memcpy(static_cast<char*>(destination) + bytesCopied, source,
-                    bytesToCopy);
         bytesCopied += bytesToCopy;
         packetIndex++;
         packetOffset = 0;
@@ -122,57 +145,12 @@ Message::get(uint32_t offset, void* destination, uint32_t num) const
 }
 
 /**
- * @copydoc Homa::Message::set()
+ * @copydoc Homa::Message::length()
  */
-void
-Message::set(uint32_t offset, const void* source, uint32_t num)
+uint32_t
+Message::length() const
 {
-    uint32_t packetIndex = offset / PACKET_DATA_LENGTH;
-    uint32_t packetOffset = offset % PACKET_DATA_LENGTH;
-    uint32_t bytesCopied = 0;
-    uint32_t maxMessageLength = PACKET_DATA_LENGTH * MAX_MESSAGE_PACKETS;
-    // Offset is passed the end of the max length.
-    if (offset >= maxMessageLength) {
-        return;
-    }
-
-    if (offset + num > maxMessageLength) {
-        ERROR(
-            "Max message size limit (%uB) reached; "
-            "trying to set bytes %u - %u; "
-            "message will be truncated",
-            maxMessageLength, offset, offset + num - 1);
-        num = maxMessageLength - offset;
-    }
-
-    while (bytesCopied < num) {
-        Driver::Packet* packet = getPacket(packetIndex);
-        if (packet == nullptr) {
-            packet = driver->allocPacket();
-            bool ret = setPacket(packetIndex, packet);
-            assert(ret);
-            assert(packet->length == 0);
-            assert(packet->getMaxPayloadSize() >=
-                   DATA_HEADER_LENGTH + PACKET_DATA_LENGTH);
-            assert(getPacket(packetIndex) != nullptr);
-        }
-
-        char* destination = static_cast<char*>(packet->payload);
-        destination += packetOffset + DATA_HEADER_LENGTH;
-        uint32_t bytesToCopy =
-            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
-        std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
-                    bytesToCopy);
-        packet->length =
-            std::max(packet->length,
-                     Util::downCast<uint16_t>(bytesToCopy + packetOffset +
-                                              DATA_HEADER_LENGTH));
-        bytesCopied += bytesToCopy;
-        packetIndex++;
-        packetOffset = 0;
-    }
-
-    messageLength = std::max(messageLength, offset + num);
+    return messageLength - MESSAGE_HEADER_LENGTH;
 }
 
 /**
@@ -228,6 +206,47 @@ uint16_t
 Message::getNumPackets() const
 {
     return numPackets;
+}
+
+/**
+ * Return the number of bytes this message holds (including the message header).
+ */
+uint32_t
+Message::rawLength() const
+{
+    return messageLength;
+}
+
+/**
+ * Return the Packet with the given index.  If the Packet does yet exist,
+ * allocate a new Packet.
+ *
+ * @param index
+ *      A Packet's index in the array of packets that form the message.
+ *      "packet index = "packet message offset" / PACKET_DATA_LENGTH
+ * @return
+ *      Pointer to a Packet at the given index.
+ */
+inline Driver::Packet*
+Message::getOrAllocPacket(uint16_t index)
+{
+    if (!occupied.test(index)) {
+        packets[index] = driver->allocPacket();
+        occupied.set(index);
+        numPackets++;
+    }
+    return packets[index];
+}
+
+/**
+ * Helper function that returns a pointer to beginning of the message where the
+ * header should reside.
+ */
+void*
+Message::getHeader()
+{
+    Driver::Packet* packet = getOrAllocPacket(0);
+    return packet->payload;
 }
 
 }  // namespace Core

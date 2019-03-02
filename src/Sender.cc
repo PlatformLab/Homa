@@ -64,7 +64,7 @@ Sender::handleGrantPacket(OpContext* op, Driver::Packet* packet, Driver* driver)
             static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
         message->grantOffset = std::max(message->grantOffset, header->offset);
         message->grantOffset =
-            std::min(message->grantOffset, message->messageLength - 1);
+            std::min(message->grantOffset, message->rawLength() - 1);
         message->grantIndex =
             message->grantOffset / message->PACKET_DATA_LENGTH;
     } else {
@@ -117,17 +117,18 @@ Sender::sendMessage(OpContext* op)
             packet->address = message->address;
             packet->priority = 0;
             new (packet->payload) Protocol::Packet::DataHeader(
-                message->msgId, message->messageLength, i);
-            actualMessageLen += (packet->length - message->DATA_HEADER_LENGTH);
+                message->msgId, message->rawLength(), i);
+            actualMessageLen +=
+                (packet->length - message->PACKET_HEADER_LENGTH);
         }
 
         // perform sanity checks.
-        assert(message->messageLength == actualMessageLen);
-        assert(message->DATA_HEADER_LENGTH ==
+        assert(message->rawLength() == actualMessageLen);
+        assert(message->PACKET_HEADER_LENGTH ==
                sizeof(Protocol::Packet::DataHeader));
 
         message->grantOffset =
-            std::min(unscheduledBytes - 1, message->messageLength - 1);
+            std::min(unscheduledBytes - 1, message->rawLength() - 1);
         message->grantIndex =
             message->grantOffset / message->PACKET_DATA_LENGTH;
     }

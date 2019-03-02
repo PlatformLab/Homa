@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -50,9 +50,9 @@ class Receiver {
      */
     class InboundMessage : public Message {
       public:
-        InboundMessage(Protocol::MessageId msgId, uint16_t dataHeaderLength,
-                       Driver* driver)
-            : Message(msgId, dataHeaderLength, driver)
+        InboundMessage(Protocol::MessageId msgId, Driver* driver,
+                       uint16_t dataHeaderLength, uint32_t messageLength)
+            : Message(msgId, driver, dataHeaderLength, messageLength)
             , mutex()
             , fullMessageReceived(false)
         {}
@@ -67,9 +67,9 @@ class Receiver {
         }
 
       private:
-        /// Ensure thread-safety between a multi-threaded Receiever.
+        /// Ensure thread-safety between a multi-threaded Receiver.
         SpinLock mutex;
-        /// True if all packets of the message have been recevied.
+        /// True if all packets of the message have been received.
         bool fullMessageReceived;
 
         friend class Receiver;
@@ -82,7 +82,7 @@ class Receiver {
     void poll();
 
   private:
-    /// Scheudler that should be informed when message packets are received.
+    /// Scheduler that should be informed when message packets are received.
     Scheduler* const scheduler;
 };
 
