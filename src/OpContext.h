@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -29,11 +29,24 @@ namespace Core {
  * Holds all the relevant data and metadata for a RemoteOp or ServerOp.
  */
 struct OpContext {
+    /// Monitor style lock for the context.
+    SpinLock mutex;
+
+    /// True if this context is for a ServerOp; false it is for a RemoteOp.
+    const bool isServerOp;
+
     /// Message to be sent out as part of this Op.  Processed by the Sender.
     Tub<Sender::OutboundMessage> outMessage;
 
-    /// Message to be recieved as part of this Op.  Processed by the Receiver.
+    /// Message to be received as part of this Op.  Processed by the Receiver.
     Tub<Receiver::InboundMessage> inMessage;
+
+    explicit OpContext(bool isServerOp = true)
+        : mutex()
+        , isServerOp(isServerOp)
+        , outMessage()
+        , inMessage()
+    {}
 };
 
 /**
@@ -46,7 +59,7 @@ class OpContextPool {
     OpContextPool();
     ~OpContextPool() {}
 
-    OpContext* construct();
+    OpContext* construct(bool isServerOp = true);
     void destroy(OpContext* opContext);
 
   private:

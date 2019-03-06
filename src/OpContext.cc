@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -31,13 +31,15 @@ OpContextPool::OpContextPool()
 /**
  * Construct a new OpContext object in the pool and return a pointer to it.
  *
- * \sa OpContext()
+ * @param isServerOp
+ *      True if this context is for a ServerOp; false it is for a RemoteOp.
+ * @sa OpContext()
  */
 OpContext*
-OpContextPool::construct()
+OpContextPool::construct(bool isServerOp)
 {
     std::lock_guard<SpinLock> lock(mutex);
-    return pool.construct();
+    return pool.construct(isServerOp);
 }
 
 /**
