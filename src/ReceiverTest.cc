@@ -50,7 +50,7 @@ class ReceiverTest : public ::testing::Test {
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         opContextPool = new OpContextPool();
         scheduler = new Scheduler(&mockDriver);
-        receiver = new Receiver(scheduler);
+        receiver = new Receiver(scheduler, opContextPool);
     }
 
     ~ReceiverTest()
@@ -72,14 +72,12 @@ class ReceiverTest : public ::testing::Test {
 
 TEST_F(ReceiverTest, handleDataPacket)
 {
-    OpContext* op = opContextPool->construct();
-
-    EXPECT_FALSE(op->inMessage);
+    EXPECT_TRUE(receiver->inboundMessages.message.empty());
 
     // receive packet 1
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
-    header->common.messageId = {42, 1};
+    header->common.messageId = {42, 32, 22};
     header->index = 1;
     header->totalLength = 1420;
     std::string addressStr("remote-location");
@@ -101,8 +99,13 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
         .Times(1);
 
-    receiver->handleDataPacket(op, &mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
 
+    EXPECT_EQ(1U, receiver->inboundMessages.message.size());
+    auto it = receiver->inboundMessages.message.find(header->common.messageId);
+    EXPECT_TRUE(it != receiver->inboundMessages.message.end());
+    OpContext* op = it->second;
+    EXPECT_TRUE(op->isServerOp);
     EXPECT_TRUE(op->inMessage);
     Receiver::InboundMessage* message = op->inMessage.get();
     EXPECT_EQ(&mockAddress, message->address);
@@ -116,7 +119,8 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(6000U, grantHeader->offset);
     EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
-    EXPECT_FALSE(message->isReady());
+    EXPECT_FALSE(message->fullMessageReceived);
+    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
@@ -136,12 +140,14 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
         .Times(0);
 
-    receiver->handleDataPacket(op, &mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
 
+    EXPECT_EQ(1U, receiver->inboundMessages.message.size());
     EXPECT_TRUE(message->occupied.test(1));
     EXPECT_EQ(1U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
-    EXPECT_FALSE(message->isReady());
+    EXPECT_FALSE(message->fullMessageReceived);
+    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
@@ -162,8 +168,9 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
         .Times(1);
 
-    receiver->handleDataPacket(op, &mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
 
+    EXPECT_EQ(1U, receiver->inboundMessages.message.size());
     EXPECT_TRUE(message->occupied.test(0));
     EXPECT_EQ(2U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
@@ -171,7 +178,9 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(7000U, grantHeader->offset);
     EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
-    EXPECT_TRUE(message->isReady());
+    EXPECT_TRUE(message->fullMessageReceived);
+    EXPECT_EQ(1U, receiver->receivedMessages.queue.size());
+    EXPECT_EQ(op, receiver->receivedMessages.queue.front());
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
@@ -186,11 +195,69 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_CALL(mockDriver, allocPacket).Times(0);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
         .Times(0);
-    EXPECT_TRUE(message->isReady());
 
-    receiver->handleDataPacket(op, &mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
 
+    EXPECT_EQ(1U, receiver->inboundMessages.message.size());
+    EXPECT_EQ(1U, receiver->receivedMessages.queue.size());
+    EXPECT_EQ(op, receiver->receivedMessages.queue.front());
     Mock::VerifyAndClearExpectations(&mockDriver);
+}
+
+TEST_F(ReceiverTest, receiveMessage)
+{
+    OpContext opToReturn0;
+    OpContext opToReturn1;
+
+    receiver->receivedMessages.queue.push_back(&opToReturn0);
+    receiver->receivedMessages.queue.push_back(&opToReturn1);
+    EXPECT_EQ(2U, receiver->receivedMessages.queue.size());
+
+    EXPECT_EQ(&opToReturn0, receiver->receiveMessage());
+    EXPECT_EQ(1U, receiver->receivedMessages.queue.size());
+
+    EXPECT_EQ(&opToReturn1, receiver->receiveMessage());
+    EXPECT_EQ(0U, receiver->receivedMessages.queue.size());
+
+    EXPECT_EQ(nullptr, receiver->receiveMessage());
+    EXPECT_EQ(0U, receiver->receivedMessages.queue.size());
+}
+
+TEST_F(ReceiverTest, registerMessage)
+{
+    Protocol::MessageId msgId = {42, 32, 0};
+    OpContext op;
+
+    EXPECT_TRUE(receiver->inboundMessages.message.find(msgId) ==
+                receiver->inboundMessages.message.end());
+
+    receiver->registerMessage(msgId, &op);
+
+    EXPECT_FALSE(receiver->inboundMessages.message.find(msgId) ==
+                 receiver->inboundMessages.message.end());
+    EXPECT_EQ(&op, receiver->inboundMessages.message.find(msgId)->second);
+}
+
+TEST_F(ReceiverTest, dropMessage)
+{
+    Protocol::MessageId msgId = {42, 32, 0};
+    OpContext op;
+    receiver->inboundMessages.message.insert({msgId, &op});
+
+    EXPECT_FALSE(receiver->inboundMessages.message.find(msgId) ==
+                 receiver->inboundMessages.message.end());
+    EXPECT_EQ(&op, receiver->inboundMessages.message.find(msgId)->second);
+
+    receiver->dropMessage(msgId);
+
+    EXPECT_TRUE(receiver->inboundMessages.message.find(msgId) ==
+                receiver->inboundMessages.message.end());
+}
+
+TEST_F(ReceiverTest, poll)
+{
+    // Nothing to test.
+    receiver->poll();
 }
 
 }  // namespace

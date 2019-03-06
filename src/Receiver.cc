@@ -25,11 +25,14 @@ namespace Core {
  *
  * @param scheduler
  *      Scheduler that should be informed when message packets are received.
- * @param messagePool
- *      MessagePool from which the Receiver can allocate MessageContext objects.
+ * @param opPool
+ *      OpContextPool from which the Receiver can allocate OpContext objects.
  */
-Receiver::Receiver(Scheduler* scheduler)
+Receiver::Receiver(Scheduler* scheduler, OpContextPool* opPool)
     : scheduler(scheduler)
+    , opPool(opPool)
+    , inboundMessages()
+    , receivedMessages()
 {}
 
 /**
@@ -40,23 +43,33 @@ Receiver::~Receiver() {}
 /**
  * Process an incoming DATA packet.
  *
- * @param op
- *      OpContext containing the InboundMessage that corresponds to the
- *      incomming DATA packet.
  * @param packet
  *      The incoming packet to be processed.
  * @param driver
  *      The driver from which the packet was received.
  */
 void
-Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
-                           Driver* driver)
+Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 {
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(packet->payload);
     uint16_t dataHeaderLength = sizeof(Protocol::Packet::DataHeader);
     Protocol::MessageId msgId = header->common.messageId;
 
+    OpContext* op = nullptr;
+    {
+        std::lock_guard<SpinLock> lock(inboundMessages.mutex);
+        auto it = inboundMessages.message.find(msgId);
+        if (it != inboundMessages.message.end()) {
+            op = it->second;
+        } else {
+            op = opPool->construct();
+            inboundMessages.message.insert(it, {msgId, op});
+        }
+        op->mutex.lock();
+    }
+
+    std::lock_guard<SpinLock> lock_op(op->mutex, std::adopt_lock);
     if (!op->inMessage) {
         uint32_t messageLength = header->totalLength;
         op->inMessage.construct(msgId, driver, dataHeaderLength, messageLength);
@@ -67,7 +80,6 @@ Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
     }
 
     InboundMessage* message = op->inMessage.get();
-    std::lock_guard<SpinLock> messageLock(message->mutex);
 
     // All packets already received; must be a duplicate.
     if (message->fullMessageReceived) {
@@ -94,12 +106,62 @@ Receiver::handleDataPacket(OpContext* op, Driver::Packet* packet,
         scheduler->packetReceived(msgId, message->address, message->rawLength(),
                                   totalReceivedBytes);
         if (totalReceivedBytes >= message->rawLength()) {
+            std::lock_guard<SpinLock> lock(receivedMessages.mutex);
             message->fullMessageReceived = true;
+            receivedMessages.queue.push_back(op);
         }
     } else {
         // must be a duplicate packet; drop packet.
         driver->releasePackets(&packet, 1);
     }
+}
+
+/**
+ * Return a fully received message if available.
+ *
+ * @return
+ *      OpContext containing a fully received incomming Message if available;
+ *      otherwise, nullptr.
+ */
+OpContext*
+Receiver::receiveMessage()
+{
+    std::lock_guard<SpinLock> lock(receivedMessages.mutex);
+    OpContext* op = nullptr;
+    if (!receivedMessages.queue.empty()) {
+        op = receivedMessages.queue.front();
+        receivedMessages.queue.pop_front();
+    }
+    return op;
+}
+
+/**
+ * Inform the Receiver that an incomming Message is expected and should be
+ * associated with a particular OpContext.
+ *
+ * @param msgId
+ *      Id of the Message that should be expected.
+ * @param op
+ *      OpContext where the expected Message should be accumulated.
+ */
+void
+Receiver::registerMessage(Protocol::MessageId msgId, OpContext* op)
+{
+    std::lock_guard<SpinLock> lock(inboundMessages.mutex);
+    inboundMessages.message.insert({msgId, op});
+}
+
+/**
+ * Inform the Receiver that a Message is no longer needed.
+ *
+ * @param msgId
+ *      Id of the Message that is no longer needed.
+ */
+void
+Receiver::dropMessage(Protocol::MessageId msgId)
+{
+    std::lock_guard<SpinLock> lock(inboundMessages.mutex);
+    inboundMessages.message.erase(msgId);
 }
 
 /**
