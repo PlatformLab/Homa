@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <deque>
+#include <unordered_map>
 
 namespace Homa {
 namespace Core {
@@ -54,21 +55,16 @@ class Sender {
         OutboundMessage(Protocol::MessageId msgId, Driver* driver,
                         uint16_t dataHeaderLength)
             : Message(msgId, driver, dataHeaderLength)
-            , sending()
-            , mutex()
+            , sending(false)
             , grantOffset(0)
             , grantIndex(-1)
             , sentIndex(-1)
-        {
-            sending.clear();
-        }
+        {}
 
         /// True if this message is being sent; false otherwise.
-        std::atomic_flag sending;
+        bool sending;
 
       private:
-        /// Ensure thread-safety for a multi-threaded Sender.
-        SpinLock mutex;
         /// The offset up-to which we can send for this message.
         uint32_t grantOffset;
         /// The packet index that contains the grantOffset.
@@ -82,20 +78,28 @@ class Sender {
     explicit Sender();
     ~Sender();
 
-    void handleGrantPacket(OpContext* op, Driver::Packet* packet,
-                           Driver* driver);
+    void handleGrantPacket(Driver::Packet* packet, Driver* driver);
     void sendMessage(OpContext* op);
+    void dropMessage(Protocol::MessageId msgId);
     void poll();
 
   private:
     /// Protects the top-level
     SpinLock sendMutex;
 
-    /// Protects the send queue.
-    SpinLock queueMutex;
+    /// Tracks the set of outbound messages.
+    struct {
+        /// Protects the outboundMessages structure.
+        SpinLock mutex;
 
-    /// Queue of packets to be sent.
-    std::deque<OutboundMessage*> sendQueue;
+        /// Contains the associated OpContext for a given MessageId.
+        std::unordered_map<Protocol::MessageId, OpContext*,
+                           Protocol::MessageId::Hasher>
+            message;
+
+        /// Queue of message to be sent.
+        std::deque<OpContext*> sendQueue;
+    } outboundMessages;
 
     void trySend();
     void cleanup();
