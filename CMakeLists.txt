@@ -231,8 +231,8 @@ add_executable(unit_test
     src/ReceiverTest.cc
     src/SchedulerTest.cc
     src/SenderTest.cc
-    # src/SpinLockTest.cc
-    # src/STLUtilTest.cc
+    src/SpinLockTest.cc
+    src/STLUtilTest.cc
     src/StringUtilTest.cc
     src/ThreadIdTest.cc
     # src/TransportImplTest.cc
