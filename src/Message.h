@@ -32,7 +32,7 @@ namespace Core {
  * This class is not thread-safe but should only be modified by one part of
  * the transport a time.
  */
-class Message : Homa::Message {
+class Message : public Homa::Message {
   public:
     /// Define the maximum number of packets that a message can hold.
     static const uint16_t MAX_MESSAGE_PACKETS = 1024;

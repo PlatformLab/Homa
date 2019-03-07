@@ -107,6 +107,7 @@ TEST_F(MessageTest, append_basic)
 {
     char source[] = "Hello, world!";
     msg->setPacket(0, &packet0);
+    packet0.length = 28 + 20 + 2000 - 7;
     msg->messageLength = 20 + 2000 - 7;
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet1));
@@ -116,6 +117,8 @@ TEST_F(MessageTest, append_basic)
     EXPECT_EQ(20 + 2000 + 7, msg->messageLength);
     EXPECT_EQ(2U, msg->numPackets);
     EXPECT_TRUE(msg->packets[1] == &packet1);
+    EXPECT_EQ(28 + 20 + 2000, packet0.length);
+    EXPECT_EQ(28 + 7, packet1.length);
     EXPECT_TRUE(std::memcmp(buf + 28 + 20 + 2000 - 7, source, 7) == 0);
     EXPECT_TRUE(std::memcmp(buf + 28 + 20 + 2000 + 28, source + 7, 7) == 0);
 }
@@ -127,6 +130,7 @@ TEST_F(MessageTest, append_truncated)
 
     char source[] = "Hello, world!";
     msg->setPacket(msg->MAX_MESSAGE_PACKETS - 1, &packet0);
+    packet0.length = msg->PACKET_HEADER_LENGTH + msg->PACKET_DATA_LENGTH - 7;
     msg->messageLength = msg->PACKET_DATA_LENGTH * msg->MAX_MESSAGE_PACKETS - 7;
     EXPECT_EQ(1U, msg->numPackets);
 
@@ -135,6 +139,8 @@ TEST_F(MessageTest, append_truncated)
     EXPECT_EQ(msg->PACKET_DATA_LENGTH * msg->MAX_MESSAGE_PACKETS,
               msg->messageLength);
     EXPECT_EQ(1U, msg->numPackets);
+    EXPECT_EQ(msg->PACKET_HEADER_LENGTH + msg->PACKET_DATA_LENGTH,
+              packet0.length);
     EXPECT_TRUE(std::memcmp(buf + 28 + 20 + 2000 - 7, source, 7) == 0);
 
     EXPECT_EQ(1U, handler.messages.size());

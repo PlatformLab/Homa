@@ -89,6 +89,10 @@ Message::append(const void* source, uint32_t num)
         destination += packetOffset + PACKET_HEADER_LENGTH;
         std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
                     bytesToCopy);
+        // TODO(cstlee): A Message probably shouldn't be in charge of setting
+        //               the packet length.
+        packet->length += bytesToCopy;
+        assert(packet->length <= PACKET_HEADER_LENGTH + PACKET_DATA_LENGTH);
         bytesCopied += bytesToCopy;
         packetIndex++;
         packetOffset = 0;
@@ -234,6 +238,9 @@ Message::getOrAllocPacket(uint16_t index)
         packets[index] = driver->allocPacket();
         occupied.set(index);
         numPackets++;
+        // TODO(cstlee): A Message probably shouldn't be in charge of setting
+        //               the packet length.
+        packets[index]->length = PACKET_HEADER_LENGTH;
     }
     return packets[index];
 }
