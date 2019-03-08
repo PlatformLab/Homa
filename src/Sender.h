@@ -23,7 +23,6 @@
 #include "SpinLock.h"
 
 #include <atomic>
-#include <deque>
 #include <unordered_map>
 
 namespace Homa {
@@ -80,7 +79,7 @@ class Sender {
 
     void handleGrantPacket(Driver::Packet* packet, Driver* driver);
     void sendMessage(OpContext* op);
-    void dropMessage(Protocol::MessageId msgId);
+    void dropMessage(OpContext* op);
     void poll();
 
   private:
@@ -96,13 +95,9 @@ class Sender {
         std::unordered_map<Protocol::MessageId, OpContext*,
                            Protocol::MessageId::Hasher>
             message;
-
-        /// Queue of message to be sent.
-        std::deque<OpContext*> sendQueue;
     } outboundMessages;
 
     void trySend();
-    void cleanup();
 };
 
 }  // namespace Core

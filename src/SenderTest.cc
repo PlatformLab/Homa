@@ -72,7 +72,6 @@ class SenderTest : public ::testing::Test {
         message->grantIndex =
             message->grantOffset / message->PACKET_DATA_LENGTH;
         sender->outboundMessages.message.insert({msgId, op});
-        sender->outboundMessages.sendQueue.push_back(op);
         return message;
     }
 };
@@ -182,7 +181,6 @@ TEST_F(SenderTest, sendMessage_basic)
 
     EXPECT_FALSE(sender.outboundMessages.message.find(msgId) !=
                  sender.outboundMessages.message.end());
-    EXPECT_EQ(0U, sender.outboundMessages.sendQueue.size());
 
     sender.sendMessage(op);
 
@@ -195,8 +193,6 @@ TEST_F(SenderTest, sendMessage_basic)
     EXPECT_TRUE(sender.outboundMessages.message.find(msgId) !=
                 sender.outboundMessages.message.end());
     EXPECT_EQ(op, sender.outboundMessages.message.find(msgId)->second);
-    EXPECT_EQ(1U, sender.outboundMessages.sendQueue.size());
-    EXPECT_EQ(op, sender.outboundMessages.sendQueue.front());
     EXPECT_EQ(419U, outMessage->grantOffset);
     EXPECT_EQ(0U, outMessage->grantIndex);
 }
@@ -267,13 +263,11 @@ TEST_F(SenderTest, sendMessage_missingPacket)
 
     EXPECT_FALSE(sender.outboundMessages.message.find(msgId) !=
                  sender.outboundMessages.message.end());
-    EXPECT_EQ(0U, sender.outboundMessages.sendQueue.size());
 
     sender.sendMessage(op);
 
     EXPECT_FALSE(sender.outboundMessages.message.find(msgId) !=
                  sender.outboundMessages.message.end());
-    EXPECT_EQ(0U, sender.outboundMessages.sendQueue.size());
 
     EXPECT_EQ(1U, handler.messages.size());
     const Debug::DebugMessage& m = handler.messages.at(0);
@@ -348,8 +342,6 @@ TEST_F(SenderTest, sendMessage_unsheduledLimit)
     EXPECT_TRUE(sender.outboundMessages.message.find(msgId) !=
                 sender.outboundMessages.message.end());
     EXPECT_EQ(op, sender.outboundMessages.message.find(msgId)->second);
-    EXPECT_EQ(1U, sender.outboundMessages.sendQueue.size());
-    EXPECT_EQ(op, sender.outboundMessages.sendQueue.front());
     EXPECT_EQ(4999U, outMessage->grantOffset);
     EXPECT_EQ(4U, outMessage->grantIndex);
 }
@@ -364,11 +356,10 @@ TEST_F(SenderTest, dropMessage)
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, op, 4999);
 
-    sender.dropMessage(msgId);
+    sender.dropMessage(op);
 
     EXPECT_FALSE(sender.outboundMessages.message.find(msgId) !=
                  sender.outboundMessages.message.end());
-    EXPECT_FALSE(message->sending);
 }
 
 TEST_F(SenderTest, poll)
@@ -445,122 +436,11 @@ TEST_F(SenderTest, trySend_alreadyRunning)
     EXPECT_EQ(-1, message->sentIndex);
 }
 
-TEST_F(SenderTest, trySend_notSending)
+TEST_F(SenderTest, trySend_nothingToSend)
 {
-    Protocol::MessageId msgId = {42, 1};
-    OpContext* op = opContextPool->construct();
-    op->outMessage.construct(msgId, &mockDriver,
-                             sizeof(Protocol::Packet::DataHeader));
-    Sender::OutboundMessage* outMessage = op->outMessage.get();
-    outMessage->setPacket(0, &mockPacket);
-    outMessage->messageLength = 1000;
-    EXPECT_EQ(1U, outMessage->getNumPackets());
-    Sender::OutboundMessage* message = SenderTest::addMessage(&sender, op, 999);
-    // "Drop" the message setting "sending" to false.
-    message->sending = false;
-    EXPECT_EQ(0, message->grantIndex);
-    EXPECT_EQ(-1, message->sentIndex);
-
-    EXPECT_CALL(mockDriver, sendPackets).Times(0);
-
-    sender.trySend();
-
-    EXPECT_EQ(-1, message->sentIndex);
-}
-
-TEST_F(SenderTest, trySend_sendQueueEmpty)
-{
-    EXPECT_TRUE(sender.outboundMessages.sendQueue.empty());
+    EXPECT_TRUE(sender.outboundMessages.message.empty());
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
     sender.trySend();
-}
-
-TEST_F(SenderTest, cleanup)
-{
-    OpContext* op[4];
-    Sender::OutboundMessage* message[4];
-    for (uint64_t i = 0; i < 4; ++i) {
-        op[i] = opContextPool->construct();
-        Protocol::MessageId msgId = {42, 10 + i};
-        op[i]->outMessage.construct(msgId, &mockDriver,
-                                    sizeof(Protocol::Packet::DataHeader));
-        message[i] = SenderTest::addMessage(&sender, op[i], 4999);
-    }
-
-    // Message 0: All packets sent
-    message[0]->messageLength = 5000;
-    EXPECT_EQ(4, message[0]->grantIndex);
-    message[0]->sentIndex = 4;
-    for (int i = 0; i < 5; ++i) {
-        message[0]->setPacket(i, nullptr);
-    }
-    EXPECT_EQ(5U, message[0]->getNumPackets());
-
-    // Message 1: Waiting for more grants
-    message[1]->messageLength = 9000;
-    EXPECT_EQ(4, message[1]->grantIndex);
-    message[1]->sentIndex = 4;
-    for (int i = 0; i < 9; ++i) {
-        message[1]->setPacket(i, nullptr);
-    }
-
-    // Message 2: Waiting for more grants
-    message[2]->messageLength = 9000;
-    EXPECT_EQ(4, message[2]->grantIndex);
-    message[2]->sentIndex = 4;
-    for (int i = 0; i < 9; ++i) {
-        message[2]->setPacket(i, nullptr);
-    }
-
-    // Message 3: All packets sent
-    message[3]->messageLength = 5000;
-    EXPECT_EQ(4, message[3]->grantIndex);
-    message[3]->sentIndex = 4;
-    for (int i = 0; i < 5; ++i) {
-        message[3]->setPacket(i, nullptr);
-    }
-
-    EXPECT_TRUE(message[0]->sending);
-    EXPECT_TRUE(message[1]->sending);
-    EXPECT_TRUE(message[2]->sending);
-    EXPECT_TRUE(message[3]->sending);
-    EXPECT_EQ(4U, sender.outboundMessages.sendQueue.size());
-
-    // Clean Message 0
-    sender.cleanup();
-
-    EXPECT_FALSE(message[0]->sending);
-    EXPECT_TRUE(message[1]->sending);
-    EXPECT_TRUE(message[2]->sending);
-    EXPECT_TRUE(message[3]->sending);
-    EXPECT_EQ(3U, sender.outboundMessages.sendQueue.size());
-
-    // Clean Nothing
-    sender.cleanup();
-
-    EXPECT_TRUE(message[1]->sending);
-    EXPECT_TRUE(message[2]->sending);
-    EXPECT_TRUE(message[3]->sending);
-    EXPECT_EQ(3U, sender.outboundMessages.sendQueue.size());
-
-    message[1]->sentIndex = 9;
-
-    // Clean Message 1
-    sender.cleanup();
-
-    EXPECT_FALSE(message[1]->sending);
-    EXPECT_TRUE(message[2]->sending);
-    EXPECT_TRUE(message[3]->sending);
-    EXPECT_EQ(2U, sender.outboundMessages.sendQueue.size());
-
-    message[2]->sending = false;
-
-    // Clean All
-    sender.cleanup();
-
-    EXPECT_FALSE(message[2]->sending);
-    EXPECT_FALSE(message[3]->sending);
-    EXPECT_EQ(0U, sender.outboundMessages.sendQueue.size());
 }
 
 }  // namespace

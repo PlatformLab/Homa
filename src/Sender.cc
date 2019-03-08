@@ -153,26 +153,26 @@ Sender::sendMessage(OpContext* op)
         Protocol::MessageId msgId = message->msgId;
 
         outboundMessages.message.insert({msgId, op});
-        outboundMessages.sendQueue.push_back(op);
     }
 }
 
 /**
  * Inform the Sender that a Message is no longer needed.
  *
- * @param msgId
- *      Id of the Message that is no longer needed.
+ * @param op
+ *      The OpContext which contains the Message that is no longer needed.
  */
 void
-Sender::dropMessage(Protocol::MessageId msgId)
+Sender::dropMessage(OpContext* op)
 {
     std::lock_guard<SpinLock> lock(outboundMessages.mutex);
-    auto it = outboundMessages.message.find(msgId);
-    if (it != outboundMessages.message.end()) {
-        OpContext* op = it->second;
-        std::lock_guard<SpinLock> lock_op(op->mutex);
-        op->outMessage->sending = false;
-        outboundMessages.message.erase(it);
+    std::lock_guard<SpinLock> lock_op(op->mutex);
+    if (op->outMessage) {
+        auto it = outboundMessages.message.find(op->outMessage->msgId);
+        if (it != outboundMessages.message.end()) {
+            assert(op == it->second);
+            outboundMessages.message.erase(it);
+        }
     }
 }
 
@@ -183,7 +183,6 @@ void
 Sender::poll()
 {
     trySend();
-    cleanup();
 }
 
 /**
@@ -201,13 +200,12 @@ Sender::trySend()
     }
     std::lock_guard<SpinLock> lock(outboundMessages.mutex, std::adopt_lock);
     OpContext* op = nullptr;
-    auto it = outboundMessages.sendQueue.begin();
-    while (it != outboundMessages.sendQueue.end()) {
-        op = *it;
+    auto it = outboundMessages.message.begin();
+    while (it != outboundMessages.message.end()) {
+        op = it->second;
         op->mutex.lock();
         assert(op->outMessage);
-        if (op->outMessage->sending &&
-            op->outMessage->sentIndex < op->outMessage->getNumPackets() &&
+        if (op->outMessage->sentIndex < op->outMessage->getNumPackets() &&
             op->outMessage->grantIndex > op->outMessage->sentIndex) {
             // found a message to send.
             break;
@@ -232,30 +230,6 @@ Sender::trySend()
         message->driver->sendPackets(&packet, 1);
     }
     message->sentIndex = message->grantIndex;
-}
-
-/**
- * Clean up the internal data structures and remove outgoing messages that
- * are done. This is seperated from sending because the locks needed for
- * cleanup are not held during sending.
- */
-void
-Sender::cleanup()
-{
-    std::lock_guard<SpinLock> lock(outboundMessages.mutex);
-    while (!outboundMessages.sendQueue.empty()) {
-        OpContext* op = outboundMessages.sendQueue.front();
-        std::lock_guard<SpinLock> lock_op(op->mutex);
-        if (op->outMessage->sending &&
-            op->outMessage->sentIndex + 1 < op->outMessage->getNumPackets()) {
-            // Found an incomplete message, easier to just skip the reset of
-            // cleanup ranther than dealing with erasing somewhere in the middle
-            // of the sendQueue.
-            break;
-        }
-        outboundMessages.sendQueue.pop_front();
-        op->outMessage->sending = false;
-    }
 }
 
 }  // namespace Core
