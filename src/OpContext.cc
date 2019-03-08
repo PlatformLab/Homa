@@ -23,8 +23,9 @@ namespace Core {
 /**
  * OpContextPool constructor.
  */
-OpContextPool::OpContextPool()
+OpContextPool::OpContextPool(Transport* transport)
     : mutex()
+    , transport(transport)
     , pool()
 {}
 
@@ -39,7 +40,7 @@ OpContext*
 OpContextPool::construct(bool isServerOp)
 {
     std::lock_guard<SpinLock> lock(mutex);
-    return pool.construct(isServerOp);
+    return pool.construct(transport, isServerOp);
 }
 
 /**

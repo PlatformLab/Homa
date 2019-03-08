@@ -48,7 +48,7 @@ class ReceiverTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        opContextPool = new OpContextPool();
+        opContextPool = new OpContextPool(nullptr);
         scheduler = new Scheduler(&mockDriver);
         receiver = new Receiver(scheduler, opContextPool);
     }
@@ -206,8 +206,8 @@ TEST_F(ReceiverTest, handleDataPacket)
 
 TEST_F(ReceiverTest, receiveMessage)
 {
-    OpContext opToReturn0;
-    OpContext opToReturn1;
+    OpContext opToReturn0(nullptr);
+    OpContext opToReturn1(nullptr);
 
     receiver->receivedMessages.queue.push_back(&opToReturn0);
     receiver->receivedMessages.queue.push_back(&opToReturn1);
@@ -226,7 +226,7 @@ TEST_F(ReceiverTest, receiveMessage)
 TEST_F(ReceiverTest, registerMessage)
 {
     Protocol::MessageId msgId = {42, 32, 0};
-    OpContext op;
+    OpContext op(nullptr);
 
     EXPECT_TRUE(receiver->inboundMessages.message.find(msgId) ==
                 receiver->inboundMessages.message.end());
@@ -241,7 +241,7 @@ TEST_F(ReceiverTest, registerMessage)
 TEST_F(ReceiverTest, dropMessage)
 {
     Protocol::MessageId msgId = {42, 32, 0};
-    OpContext op;
+    OpContext op(nullptr);
     receiver->inboundMessages.message.insert({msgId, &op});
 
     EXPECT_FALSE(receiver->inboundMessages.message.find(msgId) ==

@@ -46,7 +46,7 @@ class SenderTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        opContextPool = new OpContextPool();
+        opContextPool = new OpContextPool(nullptr);
     }
 
     ~SenderTest()

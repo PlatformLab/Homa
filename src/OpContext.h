@@ -25,12 +25,18 @@
 namespace Homa {
 namespace Core {
 
+// forward declaration
+class Transport;
+
 /**
  * Holds all the relevant data and metadata for a RemoteOp or ServerOp.
  */
 struct OpContext {
     /// Monitor style lock for the context.
     SpinLock mutex;
+
+    /// The Core::Transport which manages this OpContext.
+    Transport* const transport;
 
     /// True if this context is for a ServerOp; false it is for a RemoteOp.
     const bool isServerOp;
@@ -41,8 +47,9 @@ struct OpContext {
     /// Message to be received as part of this Op.  Processed by the Receiver.
     Tub<Receiver::InboundMessage> inMessage;
 
-    explicit OpContext(bool isServerOp = true)
+    explicit OpContext(Transport* transport, bool isServerOp = true)
         : mutex()
+        , transport(transport)
         , isServerOp(isServerOp)
         , outMessage()
         , inMessage()
@@ -56,7 +63,7 @@ struct OpContext {
  */
 class OpContextPool {
   public:
-    OpContextPool();
+    explicit OpContextPool(Transport* transport);
     ~OpContextPool() {}
 
     OpContext* construct(bool isServerOp = true);
@@ -65,6 +72,9 @@ class OpContextPool {
   private:
     /// Monitor style lock for the pool.
     SpinLock mutex;
+
+    /// The Core::Transport which manages this OpContextPool.
+    Transport* const transport;
 
     /// Actual memory allocator for Message objects.
     ObjectPool<OpContext> pool;

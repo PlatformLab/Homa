@@ -23,7 +23,7 @@ namespace {
 
 TEST(OpContextPoolTest, basic)
 {
-    OpContextPool pool;
+    OpContextPool pool(nullptr);
     EXPECT_EQ(0U, pool.pool.outstandingObjects);
     OpContext* opContext = pool.construct();
     EXPECT_EQ(1U, pool.pool.outstandingObjects);
