@@ -154,14 +154,17 @@ Receiver::registerMessage(Protocol::MessageId msgId, OpContext* op)
 /**
  * Inform the Receiver that a Message is no longer needed.
  *
- * @param msgId
- *      Id of the Message that is no longer needed.
+ * @param op
+ *      The OpContext which contains the Message that is no longer needed.
  */
 void
-Receiver::dropMessage(Protocol::MessageId msgId)
+Receiver::dropMessage(OpContext* op)
 {
     std::lock_guard<SpinLock> lock(inboundMessages.mutex);
-    inboundMessages.message.erase(msgId);
+    std::lock_guard<SpinLock> lock_op(op->mutex);
+    if (op->inMessage) {
+        inboundMessages.message.erase(op->inMessage->msgId);
+    }
 }
 
 /**

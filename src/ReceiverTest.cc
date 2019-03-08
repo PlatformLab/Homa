@@ -242,13 +242,14 @@ TEST_F(ReceiverTest, dropMessage)
 {
     Protocol::MessageId msgId = {42, 32, 0};
     OpContext op(nullptr);
+    op.inMessage.construct(msgId, &mockDriver, 0, 0);
     receiver->inboundMessages.message.insert({msgId, &op});
 
     EXPECT_FALSE(receiver->inboundMessages.message.find(msgId) ==
                  receiver->inboundMessages.message.end());
     EXPECT_EQ(&op, receiver->inboundMessages.message.find(msgId)->second);
 
-    receiver->dropMessage(msgId);
+    receiver->dropMessage(&op);
 
     EXPECT_TRUE(receiver->inboundMessages.message.find(msgId) ==
                 receiver->inboundMessages.message.end());

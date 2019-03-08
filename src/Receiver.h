@@ -81,7 +81,7 @@ class Receiver {
     void handleDataPacket(Driver::Packet* packet, Driver* driver);
     OpContext* receiveMessage();
     void registerMessage(Protocol::MessageId msgId, OpContext* op);
-    void dropMessage(Protocol::MessageId msgId);
+    void dropMessage(OpContext* op);
     void poll();
 
   private:
