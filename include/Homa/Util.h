@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_UTIL_H
-#define HOMA_UTIL_H
+#ifndef HOMA_INCLUDE_HOMA_UTIL_H
+#define HOMA_INCLUDE_HOMA_UTIL_H
 
 #include <cassert>
 #include <cstdarg>
@@ -86,4 +86,4 @@ class unlock_guard {
 };  // namespace Util
 };  // namespace Homa
 
-#endif  // HOMA_UTIL_H
+#endif  // HOMA_INCLUDE_HOMA_UTIL_H

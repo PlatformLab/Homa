@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_DRIVER_H
-#define HOMA_DRIVER_H
+#ifndef HOMA_INCLUDE_HOMA_DRIVER_H
+#define HOMA_INCLUDE_HOMA_DRIVER_H
 
 #include "Homa/Exception.h"
 
@@ -103,8 +103,7 @@ class Driver {
         /// Pointer to an array of bytes containing the payload of this Packet.
         void* const payload;
 
-        /// Number of bytes the payload currently holds.  This value should be
-        /// updated when the payload is modifed.
+        /// Number of bytes in the payload.
         uint16_t length;
 
         /// Return the maximum number of bytes the payload can hold.
@@ -309,4 +308,4 @@ struct BadAddress : public Exception {
 
 }  // namespace Homa
 
-#endif  // HOMA_DRIVER_H
+#endif  // HOMA_INCLUDE_HOMA_DRIVER_H

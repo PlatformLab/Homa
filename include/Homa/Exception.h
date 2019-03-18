@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_EXCEPTION_H
-#define HOMA_EXCEPTION_H
+#ifndef HOMA_INCLUDE_HOMA_EXCEPTION_H
+#define HOMA_INCLUDE_HOMA_EXCEPTION_H
 
 #include "Homa/Util.h"
 
@@ -106,4 +106,4 @@ struct FatalError : public Exception {
 
 }  // namespace Homa
 
-#endif  // HOMA_EXCEPTION_H
+#endif  // HOMA_INCLUDE_HOMA_EXCEPTION_H

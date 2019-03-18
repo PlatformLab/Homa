@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_DRIVERS_DPDK_DPDKDRIVER_H
-#define HOMA_DRIVERS_DPDK_DPDKDRIVER_H
+#ifndef HOMA_INCLUDE_HOMA_DRIVERS_DPDK_DPDKDRIVER_H
+#define HOMA_INCLUDE_HOMA_DRIVERS_DPDK_DPDKDRIVER_H
 
 #include "Homa/Driver.h"
 
@@ -39,7 +39,7 @@ class DpdkDriver : public Driver {
      * DpdkDriver is the only part the application using DPDK. Note: This call
      * will initialize the DPDK EAL with default values.
      *
-     * The caller is responisble for calling `delete` on the returned Driver
+     * The caller is responsible for calling `delete` on the returned Driver
      * when the driver is no longer needed.
      *
      * @param port
@@ -50,18 +50,18 @@ class DpdkDriver : public Driver {
     static DpdkDriver* newDpdkDriver(int port);
 
     /**
-     * Create and return a pointer to a DpdkDriver and initilize the DPDK EAL
+     * Create and return a pointer to a DpdkDriver and initialize the DPDK EAL
      * using the provided _argc_ and _argv_. [Advanced Usage]
      *
      * This factory function should be used if the caller wants to control what
      * parameters are provided to DPDK EAL initialization. The input parameters
      * _argc_ and _argv_ will be provided to rte_eal_init() directly. See the
-     * DPDK documentation for initilization options.
+     * DPDK documentation for initialization options.
      *
      * This factory function will maintain the currently set thread affinity by
      * overriding the default affinity set by rte_eal_init().
      *
-     * The caller is responisble for calling `delete` on the returned Driver
+     * The caller is responsible for calling `delete` on the returned Driver
      * when the driver is no longer needed.
      *
      * @param port
@@ -79,15 +79,15 @@ class DpdkDriver : public Driver {
     /// not be initialized.
     enum NoEalInit { NO_EAL_INIT };
     /**
-     * Create and return a pointer to a DpdkDriver without initilizing the DPDK
+     * Create and return a pointer to a DpdkDriver without initializing the DPDK
      * EAL. [Advanced Usage]
      *
      * This factory function is used when parts of the application other than
-     * the DpdkDriver are using DPDK and the caller wants to take responsiblity
+     * the DpdkDriver are using DPDK and the caller wants to take resposability
      * for calling rte_eal_init(). The caller must ensure that rte_eal_init() is
      * called before calling this constructor.
      *
-     * The caller is responisble for calling `delete` on the returned Driver
+     * The caller is responsible for calling `delete` on the returned Driver
      * when the driver is no longer needed.
      *
      * @param port
@@ -145,4 +145,4 @@ class DpdkDriver : public Driver {
 }  // namespace Drivers
 }  // namespace Homa
 
-#endif  // HOMA_DRIVERS_DPDK_DPDKDRIVER_H
+#endif  // HOMA_INCLUDE_HOMA_DRIVERS_DPDK_DPDKDRIVER_H
