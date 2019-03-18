@@ -13,8 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_HOMA_H
-#define HOMA_HOMA_H
+#ifndef HOMA_INCLUDE_HOMA_HOMA_H
+#define HOMA_INCLUDE_HOMA_HOMA_H
 
 #include <Homa/Driver.h>
 
@@ -26,8 +26,9 @@ namespace Homa {
 // forward declarations
 class Transport;
 namespace Core {
+class Transport;
 class OpContext;
-}
+}  // namespace Core
 
 /**
  * A Message refers to an array of bytes that can be sent or is received over
@@ -92,29 +93,12 @@ class Message {
 class RemoteOp {
   public:
     /**
-     * Basic constructor to create an uninitialized RemoteOp object. Use by
-     * applications of the Homa library.
-     *
-     * RemoteOp objects can be initialized by moving the result of calling
-     * Transport::newRemoteOp().
-     */
-    RemoteOp();
-
-    /**
-     * Convenience constructor for an RemoteOp object.
+     * Constructor for an RemoteOp object.
      *
      * @param transport
      *      Pointer to the Homa::Transport which will send/receive this RPC.
-     * @param address
-     *      Address of a networked application that will process this RemoteOp.
      */
-    explicit RemoteOp(Transport* transport,
-                      Driver::Address* destination = nullptr);
-
-    /**
-     * Move constructor.
-     */
-    RemoteOp(RemoteOp&& other);
+    explicit RemoteOp(Transport* transport);
 
     /**
      * Default destructor for a RemoteOp object.
@@ -122,38 +106,24 @@ class RemoteOp {
     ~RemoteOp();
 
     /**
-     * Move assignment.
-     */
-    RemoteOp& operator=(RemoteOp&& other);
-
-    /**
-     * Returns true if the RemoteOp in initialized; false otherwise.
-     */
-    operator bool() const;
-
-    /**
-     * Set the destination network address for this RemoteOp.
-     *
-     * This operation cannot be performed after send() is called.
-     */
-    void setDestination(Driver::Address* destination);
-
-    /**
      * Send the RemoteOp asynchronously.
      *
      * WARNING: Do not modify the request after calling this method.
+     *
+     * @param destination
+     *      The network address to which the request will be sent.
      */
-    void send();
+    void send(Driver::Address* destination);
 
     /**
-     * Indicates whether the response has been received for this RemoteOp. Used
-     * to asynchronously process an RemoteOp. If this call returns true, the
-     * RemoteOp's response will be populated.
+     * Indicates whether this RemoteOp is done being processed.  Used to
+     * asynchronously process a RemoteOp.  If this call returns true, the
+     * RemoteOp has either completed with the response Message populated or
+     * failed with the response Message left pointing to nullptr.
      *
      * @return
-     *      True means that the RemoteOp has finished or been canceled; #wait
-     *      will not block.  False means that the RemoteOp is still being
-     *      processed.
+     *      True means that the RemoteOp has completed or failed; #wait will not
+     *      block.  False means that the RemoteOp is still being processed.
      */
     bool isReady();
 
@@ -175,6 +145,8 @@ class RemoteOp {
     // Disable Copy and Assign
     RemoteOp(const RemoteOp&) = delete;
     RemoteOp& operator=(const RemoteOp&) = delete;
+
+    friend class Transport;
 };
 
 /**
@@ -250,6 +222,8 @@ class ServerOp {
     // Disable Copy and Assign
     ServerOp(const ServerOp&) = delete;
     ServerOp& operator=(const ServerOp&) = delete;
+
+    friend class Transport;
 };
 
 /**
@@ -265,29 +239,27 @@ class ServerOp {
 class Transport {
   public:
     /**
-     * Return a new instance of a Homa-based transport.
-     *
-     * The caller is responsible for calling delete on the Transport when it is
-     * no longer needed.
+     * Constuct a new instance of a Homa-based transport.
      *
      * @param driver
      *      Driver with which this transport should send and receive packets.
      * @param transportId
      *      This transport's unique identifier in the group of transports among
      *      which this transport will communicate.
-     * @return
-     *      Pointer to a new Homa::Transport.
      */
-    static Transport* newTransport(Driver* driver, uint64_t transportId);
+    Transport(Driver* driver, uint64_t transportId);
+
+    /**
+     * Homa::Transport destructor.
+     */
+    ~Transport();
 
     /**
      * Return a ServerOp of an incomming request that has been received by this
      * Homa::Transport. If no request was received, the returned ServerOp will
      * be uninitialized.
-     *
-     * @sa Transport::sendMessage()
      */
-    virtual ServerOp receiveServerOp() = 0;
+    ServerOp receiveServerOp();
 
     /**
      * Return a network address handle for the given string representation of
@@ -300,8 +272,7 @@ class Transport {
      * @throw BadAddress
      *      _addressString_ is malformed.
      */
-    virtual Driver::Address* getAddress(
-        std::string const* const addressString) = 0;
+    Driver::Address* getAddress(std::string const* const addressString);
 
     /**
      * Make incremental progress performing all Transport functionality.
@@ -309,9 +280,20 @@ class Transport {
      * This method MUST be called for the Transport to make progress and should
      * be called frequently to ensure timely progress.
      */
-    virtual void poll() = 0;
+    void poll();
+
+  private:
+    /// Contains the internal implementation of Homa::Transport which does most
+    /// of the actual work.  Hides unnecessary details from users of libHoma.
+    std::unique_ptr<Core::Transport> internal;
+
+    // Disable Copy and Assign
+    Transport(const Transport&) = delete;
+    Transport& operator=(const Transport&) = delete;
+
+    friend class RemoteOp;
 };
 
 }  // namespace Homa
 
-#endif  // HOMA_HOMA_H
+#endif  // HOMA_INCLUDE_HOMA_HOMA_H

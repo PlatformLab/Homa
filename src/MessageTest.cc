@@ -17,7 +17,7 @@
 
 #include "Message.h"
 
-#include "MockDriver.h"
+#include "Mock/MockDriver.h"
 
 #include <Homa/Debug.h>
 
@@ -43,8 +43,7 @@ class MessageTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        Protocol::MessageId msgId(42, 32, 22);
-        msg = new Message(msgId, &mockDriver, 28);
+        msg = new Message(&mockDriver, 28, 0);
     }
 
     ~MessageTest()
@@ -53,11 +52,11 @@ class MessageTest : public ::testing::Test {
         Debug::setLogPolicy(savedLogPolicy);
     }
 
-    NiceMock<MockDriver> mockDriver;
+    NiceMock<Homa::Mock::MockDriver> mockDriver;
     Message* msg;
     char buf[4096];
-    MockDriver::MockPacket packet0;
-    MockDriver::MockPacket packet1;
+    Homa::Mock::MockDriver::MockPacket packet0;
+    Homa::Mock::MockDriver::MockPacket packet1;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
 
@@ -76,11 +75,8 @@ struct VectorHandler {
 TEST_F(MessageTest, constructor)
 {
     EXPECT_CALL(mockDriver, getMaxPayloadSize).WillOnce(Return(10000));
-    Protocol::MessageId msgId(42, 32, 22);
-    msg = new Message(msgId, &mockDriver, 999, 10);
+    msg = new Message(&mockDriver, 999, 10);
 
-    EXPECT_EQ(msgId, msg->msgId);
-    EXPECT_TRUE(nullptr == msg->address);
     EXPECT_EQ(&mockDriver, msg->driver);
     EXPECT_EQ(9001U, msg->PACKET_DATA_LENGTH);
     EXPECT_EQ(999, msg->PACKET_HEADER_LENGTH);
@@ -149,8 +145,7 @@ TEST_F(MessageTest, append_truncated)
     EXPECT_STREQ("append", m.function);
     EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
     EXPECT_EQ(
-        "Max message size limit (2068480B) reached; 7 of 14 bytes appended to "
-        "Message (42:32:22)",
+        "Max message size limit (2068480B) reached; 7 of 14 bytes appended",
         m.message);
 
     Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
@@ -216,10 +211,7 @@ TEST_F(MessageTest, get_missingPacket)
     EXPECT_STREQ("src/Message.cc", m.filename);
     EXPECT_STREQ("get", m.function);
     EXPECT_EQ(int(Debug::LogLevel::ERROR), m.logLevel);
-    EXPECT_EQ(
-        "Message (42:32:22) is missing data starting at offset 2020 (packet "
-        "index 1)",
-        m.message);
+    EXPECT_EQ("Message is missing data starting at packet index 1", m.message);
 
     Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
 }

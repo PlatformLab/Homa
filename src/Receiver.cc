@@ -57,6 +57,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     Protocol::MessageId msgId = header->common.messageId;
 
     OpContext* op = nullptr;
+    InboundMessage* message = nullptr;
     {
         std::lock_guard<SpinLock> lock(inboundMessages.mutex);
         auto it = inboundMessages.message.find(msgId);
@@ -64,22 +65,23 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             op = it->second;
         } else {
             op = opPool->construct();
+            op->inMessage.id = msgId;  // Touch OK w/o lock; op not externalized
             inboundMessages.message.insert(it, {msgId, op});
         }
-        op->mutex.lock();
+        message = &op->inMessage;
+        message->mutex.lock();
     }
 
-    std::lock_guard<SpinLock> lock_op(op->mutex, std::adopt_lock);
-    if (!op->inMessage) {
+    std::lock_guard<SpinLock> lock_op(message->mutex, std::adopt_lock);
+    assert(msgId == message->id);
+    if (!message->message) {
         uint32_t messageLength = header->totalLength;
-        op->inMessage.construct(msgId, driver, dataHeaderLength, messageLength);
+        message->message.construct(driver, dataHeaderLength, messageLength);
         // Get an address pointer from the driver; the one in the packet
         // may disappear when the packet goes away.
         std::string addrStr = packet->address->toString();
-        op->inMessage->address = driver->getAddress(&addrStr);
+        message->source = driver->getAddress(&addrStr);
     }
-
-    InboundMessage* message = op->inMessage.get();
 
     // All packets already received; must be a duplicate.
     if (message->fullMessageReceived) {
@@ -89,23 +91,24 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Things that must be true (sanity check)
-    assert(message->address->toString() == packet->address->toString());
-    assert(message->rawLength() == header->totalLength);
+    assert(message->source->toString() == packet->address->toString());
+    assert(message->message->rawLength() == header->totalLength);
 
     // Add the packet
-    bool packetAdded = message->setPacket(header->index, packet);
+    bool packetAdded = message->message->setPacket(header->index, packet);
     if (packetAdded) {
         // This value is technically sloppy since last packet of the message
         // which may not be a full packet. However, this should be fine since
         // receiving the last packet means we don't need the scheduler to GRANT
         // more packets anyway.
-        uint32_t totalReceivedBytes =
-            message->PACKET_DATA_LENGTH * message->getNumPackets();
+        uint32_t totalReceivedBytes = message->message->PACKET_DATA_LENGTH *
+                                      message->message->getNumPackets();
 
         // Let the Scheduler know that we received a packet.
-        scheduler->packetReceived(msgId, message->address, message->rawLength(),
+        scheduler->packetReceived(msgId, message->source,
+                                  message->message->rawLength(),
                                   totalReceivedBytes);
-        if (totalReceivedBytes >= message->rawLength()) {
+        if (totalReceivedBytes >= message->message->rawLength()) {
             std::lock_guard<SpinLock> lock(receivedMessages.mutex);
             message->fullMessageReceived = true;
             receivedMessages.queue.push_back(op);
@@ -148,11 +151,14 @@ void
 Receiver::registerMessage(Protocol::MessageId msgId, OpContext* op)
 {
     std::lock_guard<SpinLock> lock(inboundMessages.mutex);
+    std::lock_guard<SpinLock> lock_message(op->inMessage.mutex);
+    op->inMessage.id = msgId;
     inboundMessages.message.insert({msgId, op});
 }
 
 /**
- * Inform the Receiver that a Message is no longer needed.
+ * Inform the Receiver that a Message is no longer needed and the associated
+ * OpContext should no longer be used.
  *
  * @param op
  *      The OpContext which contains the Message that is no longer needed.
@@ -161,10 +167,8 @@ void
 Receiver::dropMessage(OpContext* op)
 {
     std::lock_guard<SpinLock> lock(inboundMessages.mutex);
-    std::lock_guard<SpinLock> lock_op(op->mutex);
-    if (op->inMessage) {
-        inboundMessages.message.erase(op->inMessage->msgId);
-    }
+    std::lock_guard<SpinLock> lock_message(op->inMessage.mutex);
+    inboundMessages.message.erase(op->inMessage.id);
 }
 
 /**

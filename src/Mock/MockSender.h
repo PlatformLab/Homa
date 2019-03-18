@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -13,31 +13,34 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <gtest/gtest.h>
+#ifndef HOMA_MOCK_MOCKSENDER_H
+#define HOMA_MOCK_MOCKSENDER_H
 
-#include "OpContext.h"
+#include <gmock/gmock.h>
 
-#include "Mock/MockDriver.h"
-#include "Transport.h"
-
-using ::testing::NiceMock;
+#include "Sender.h"
 
 namespace Homa {
-namespace Core {
-namespace {
+namespace Mock {
 
-TEST(OpContextPoolTest, basic)
-{
-    NiceMock<Homa::Mock::MockDriver> driver;
-    Transport transport(&driver, 0);
-    OpContextPool pool(&transport);
-    EXPECT_EQ(0U, pool.pool.outstandingObjects);
-    OpContext* opContext = pool.construct();
-    EXPECT_EQ(1U, pool.pool.outstandingObjects);
-    pool.destroy(opContext);
-    EXPECT_EQ(0U, pool.pool.outstandingObjects);
-}
+/**
+ * MockSender is a gmock supported mock implementation of Homa::Core::Sender
+ * that is used in unit testing.
+ *
+ * @sa Sender
+ */
+class MockSender : public Core::Sender {
+  public:
+    MOCK_METHOD2(handleGrantPacket,
+                 void(Driver::Packet* packet, Driver* driver));
+    MOCK_METHOD3(sendMessage,
+                 void(Protocol::MessageId id, Driver::Address* destination,
+                      Core::OpContext* op));
+    MOCK_METHOD1(dropMessage, void(Core::OpContext* op));
+    MOCK_METHOD0(poll, void());
+};
 
-}  // namespace
-}  // namespace Core
+}  // namespace Mock
 }  // namespace Homa
+
+#endif  // HOMA_MOCK_MOCKSENDER_H

@@ -17,7 +17,7 @@
 
 #include "Scheduler.h"
 
-#include "MockDriver.h"
+#include "Mock/MockDriver.h"
 
 #include <Homa/Debug.h>
 
@@ -48,8 +48,8 @@ class SchedulerTest : public ::testing::Test {
         Debug::setLogPolicy(savedLogPolicy);
     }
 
-    NiceMock<MockDriver> mockDriver;
-    NiceMock<MockDriver::MockPacket> mockPacket;
+    NiceMock<Homa::Mock::MockDriver> mockDriver;
+    NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     char payload[1000];
     Scheduler* scheduler;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
@@ -66,7 +66,7 @@ TEST_F(SchedulerTest, constructor)
 
 TEST_F(SchedulerTest, packetReceived)
 {
-    Protocol::MessageId msgId(42, 32);
+    Protocol::MessageId msgId(42, 32, 22);
     Driver::Address* sourceAddr = (Driver::Address*)22;
     uint32_t TOTAL_MESSAGE_LEN = 9000;
     uint32_t TOTAL_BYTES_RECEIVED = 1000;
@@ -79,7 +79,8 @@ TEST_F(SchedulerTest, packetReceived)
     scheduler->packetReceived(msgId, sourceAddr, TOTAL_MESSAGE_LEN,
                               TOTAL_BYTES_RECEIVED);
 
-    Protocol::Packet::GrantHeader* header = (Protocol::Packet::GrantHeader*)payload;
+    Protocol::Packet::GrantHeader* header =
+        (Protocol::Packet::GrantHeader*)payload;
     EXPECT_EQ(msgId, header->common.messageId);
     EXPECT_EQ(6000U, header->offset);
     EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);

@@ -88,20 +88,26 @@ struct OpId {
  * A unique identifier for a Message within an Operation.
  */
 struct MessageId : public OpId {
-    uint32_t messageId;  ///< Unique identifies this Message within the set
-                         ///< of messages that belong to the RemoteOp.
+    uint32_t tag;  ///< Uniquely identifies this Message within the set of
+                   ///< messages that belong to the RemoteOp.
 
     /// sequence number for the Message that contains a RemoteOp's initiating
     /// request RemoteOp (sent by the client).
-    static const uint32_t INITIAL_REQUEST_ID = 1;
+    static const uint32_t INITIAL_REQUEST_TAG = 1;
     /// sequence number for the Message that contains the final reply to the
     /// initial request (sent to the client).
-    static const uint32_t ULTIMATE_RESPONSE_ID = 0;
+    static const uint32_t ULTIMATE_RESPONSE_TAG = 0;
 
     /// MessageId constructor.
-    MessageId(uint64_t transportId, uint64_t sequence, uint32_t messageId = 1)
+    MessageId(uint64_t transportId, uint64_t sequence, uint32_t tag)
         : OpId(transportId, sequence)
-        , messageId(messageId)
+        , tag(tag)
+    {}
+
+    /// MessageId constructor.
+    MessageId(OpId opId, uint32_t tag)
+        : OpId(opId)
+        , tag(tag)
     {}
 
     /**
@@ -110,7 +116,7 @@ struct MessageId : public OpId {
     bool operator<(MessageId other) const
     {
         return OpId::operator<(other) ||
-               ((OpId::operator==(other)) && (messageId < other.messageId));
+               ((OpId::operator==(other)) && (tag < other.tag));
     }
 
     /**
@@ -118,7 +124,7 @@ struct MessageId : public OpId {
      */
     bool operator==(MessageId other) const
     {
-        return (OpId::operator==(other)) && (messageId == other.messageId);
+        return (OpId::operator==(other)) && (tag == other.tag);
     }
 
     /**
@@ -130,7 +136,7 @@ struct MessageId : public OpId {
         std::size_t operator()(const MessageId& msgId) const
         {
             std::size_t h1 = OpId::Hasher::operator()(msgId);
-            std::size_t h2 = std::hash<uint64_t>()(msgId.messageId);
+            std::size_t h2 = std::hash<uint64_t>()(msgId.tag);
             return h1 ^ (h2 << 1);
         }
     };

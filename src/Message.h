@@ -37,8 +37,8 @@ class Message : public Homa::Message {
     /// Define the maximum number of packets that a message can hold.
     static const uint16_t MAX_MESSAGE_PACKETS = 1024;
 
-    explicit Message(Protocol::MessageId msgId, Driver* driver,
-                     uint16_t packetHeaderLength, uint32_t messageLength = 0);
+    explicit Message(Driver* driver, uint16_t packetHeaderLength,
+                     uint32_t messageLength);
     ~Message();
 
     virtual void append(const void* source, uint32_t num);
@@ -85,13 +85,6 @@ class Message : public Homa::Message {
         assert(sizeof(MessageHeader) <= PACKET_DATA_LENGTH);
         return reinterpret_cast<MessageHeader*>(getHeader());
     }
-
-    /// Contains the unique identifier for this message.
-    const Protocol::MessageId msgId;
-
-    /// Contains the source address for a received message and the destination
-    /// for a sent message.
-    Driver::Address* address;
 
     /// Driver from which packets were allocated and to which they should be
     /// returned when this message is no longer needed.

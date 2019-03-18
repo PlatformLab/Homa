@@ -25,8 +25,6 @@ namespace Core {
 /**
  * Construct a Message.
  *
- * @param msgId
- *      Unique identifier for this message.
  * @param driver
  *      Driver from which packets were/will be allocated and to which they
  *      should be returned when this message is no longer needed.
@@ -39,11 +37,9 @@ namespace Core {
  *      Number of bytes know to be in this Message.  Used by the Receiver since
  *      it should know the length of the Message when the first packet arrives.
  */
-Message::Message(Protocol::MessageId msgId, Driver* driver,
-                 uint16_t packetHeaderLength, uint32_t messageLength)
-    : msgId(msgId)
-    , address(nullptr)
-    , driver(driver)
+Message::Message(Driver* driver, uint16_t packetHeaderLength,
+                 uint32_t messageLength)
+    : driver(driver)
     , PACKET_HEADER_LENGTH(packetHeaderLength)
     , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() - PACKET_HEADER_LENGTH)
     , MESSAGE_HEADER_LENGTH(0)
@@ -73,11 +69,8 @@ Message::append(const void* source, uint32_t num)
     uint32_t maxMessageLength = PACKET_DATA_LENGTH * MAX_MESSAGE_PACKETS;
 
     if (messageLength + num > maxMessageLength) {
-        WARNING(
-            "Max message size limit (%uB) reached; %u of %u bytes appended to "
-            "Message (%lu:%lu:%u)",
-            maxMessageLength, maxMessageLength - messageLength, num,
-            msgId.transportId, msgId.sequence, msgId.messageId);
+        WARNING("Max message size limit (%uB) reached; %u of %u bytes appended",
+                maxMessageLength, maxMessageLength - messageLength, num);
         num = maxMessageLength - messageLength;
     }
 
@@ -134,11 +127,8 @@ Message::get(uint32_t offset, void* destination, uint32_t num) const
             std::memcpy(static_cast<char*>(destination) + bytesCopied, source,
                         bytesToCopy);
         } else {
-            ERROR(
-                "Message (%lu:%lu:%u) is missing data starting at offset %u "
-                "(packet index %u)",
-                msgId.transportId, msgId.sequence, msgId.messageId,
-                packetIndex * PACKET_DATA_LENGTH, packetIndex);
+            ERROR("Message is missing data starting at packet index %u",
+                  packetIndex);
             break;
         }
         bytesCopied += bytesToCopy;

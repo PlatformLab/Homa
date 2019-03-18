@@ -43,7 +43,7 @@ add_library(Homa
     src/Sender.cc
     src/StringUtil.cc
     src/ThreadId.cc
-    # src/TransportImpl.cc
+    src/Transport.cc
     src/Util.cc
 )
 add_library(Homa::Homa ALIAS Homa)
@@ -235,7 +235,7 @@ add_executable(unit_test
     src/STLUtilTest.cc
     src/StringUtilTest.cc
     src/ThreadIdTest.cc
-    # src/TransportImplTest.cc
+    src/TransportTest.cc
     src/TubTest.cc
     src/UtilTest.cc
 )

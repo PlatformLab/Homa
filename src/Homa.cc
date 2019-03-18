@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,76 +16,65 @@
 #include <Homa/Homa.h>
 
 #include "OpContext.h"
+#include "Transport.h"
 
 namespace Homa {
 
-RemoteOp::RemoteOp()
+RemoteOp::RemoteOp(Transport* transport)
     : request(nullptr)
     , response(nullptr)
-    , op(nullptr)
-{}
-
-RemoteOp::RemoteOp(RemoteOp&& other)
-    : request(std::move(other.request))
-    , response(std::move(other.response))
-    , op(std::move(other.op))
+    , op(transport->internal->allocOp())
 {
-    other.request = nullptr;
-    other.response = nullptr;
-    other.op = nullptr;
+    request = op->outMessage.get();
 }
 
-RemoteOp::~RemoteOp() {}
-
-RemoteOp&
-RemoteOp::operator=(RemoteOp&& other)
+RemoteOp::~RemoteOp()
 {
-    request = std::move(other.request);
-    response = std::move(other.response);
-    op = std::move(other.op);
-    other.request = nullptr;
-    other.response = nullptr;
-    other.op = nullptr;
-    return *this;
-}
-
-RemoteOp::operator bool() const
-{
-    if (op != nullptr) {
-        return true;
-    } else {
-        return false;
-    }
+    op->transport->releaseOp(op);
 }
 
 void
-RemoteOp::setDestination(Driver::Address* destination)
+RemoteOp::send(Driver::Address* destination)
 {
-    if (op == nullptr) {
-        return;
-    }
-    assert(op->outMessage);
-    op->outMessage->address = destination;
-}
-
-void
-RemoteOp::send()
-{
-    // TODO(cstlee): hook send into the transport
+    // Don't let applications touch the outbound message while it is being
+    // processed by the Transport.
+    request = nullptr;
+    response = nullptr;
+    op->transport->sendRequest(op, destination);
 }
 
 bool
 RemoteOp::isReady()
 {
-    // TODO(cstlee): add thread-safe hook to test
-    return false;
+    Core::OpContext::State state = op->state.load();
+    switch (state) {
+        case Core::OpContext::State::NOT_STARTED:
+            // Fall through to IN_PROGRESS.
+        case Core::OpContext::State::IN_PROGRESS:
+            return false;
+            break;
+        case Core::OpContext::State::COMPLETED:
+            // Grant access to the received response.
+            response = op->inMessage.get();
+            // Fall through to FAILED.
+        case Core::OpContext::State::FAILED:
+            // Restore access to the request.
+            request = op->outMessage.get();
+            return true;
+            break;
+        default:
+            ERROR("Unexpected operation state.");
+            return false;
+            break;
+    }
 }
 
 void
 RemoteOp::wait()
 {
-    while (!isReady())
-        ;
+    while (!isReady()) {
+        op->transport->poll();
+    }
 }
 
 ServerOp::ServerOp()
@@ -104,7 +93,12 @@ ServerOp::ServerOp(ServerOp&& other)
     other.op = nullptr;
 }
 
-ServerOp::~ServerOp() {}
+ServerOp::~ServerOp()
+{
+    // if (op != nullptr) {
+    //     op->transport->releaseOp(op);
+    // }
+}
 
 ServerOp&
 ServerOp::operator=(ServerOp&& other)
@@ -130,15 +124,45 @@ ServerOp::operator bool() const
 void
 ServerOp::reply()
 {
-    // TODO(cstlee): hook send into the transport
+    response = nullptr;
+    op->transport->sendReply(op);
 }
 
 void
 ServerOp::deligate(Driver::Address* destination)
 {
-    assert(op->outMessage);
-    op->outMessage->address = destination;
-    // TODO(cstlee): hook send into the transport
+    response = nullptr;
+    op->transport->sendRequest(op, destination);
+}
+
+Transport::Transport(Driver* driver, uint64_t transportId)
+    : internal(new Core::Transport(driver, transportId))
+{}
+
+Transport::~Transport() = default;
+
+ServerOp
+Transport::receiveServerOp()
+{
+    ServerOp op;
+    op.op = internal->receiveOp();
+    if (op.op != nullptr) {
+        op.request = op.op->inMessage.get();
+        op.response = op.op->outMessage.get();
+    }
+    return op;
+}
+
+Driver::Address*
+Transport::getAddress(std::string const* const addressString)
+{
+    return internal->driver->getAddress(addressString);
+}
+
+void
+Transport::poll()
+{
+    internal->poll();
 }
 
 }  // namespace Homa

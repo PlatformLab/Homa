@@ -14,6 +14,7 @@
  */
 
 #include "OpContext.h"
+#include "Transport.h"
 
 #include <mutex>
 
@@ -34,13 +35,12 @@ OpContextPool::OpContextPool(Transport* transport)
  *
  * @param isServerOp
  *      True if this context is for a ServerOp; false it is for a RemoteOp.
- * @sa OpContext()
  */
 OpContext*
 OpContextPool::construct(bool isServerOp)
 {
     std::lock_guard<SpinLock> lock(mutex);
-    return pool.construct(transport, isServerOp);
+    return pool.construct(transport, transport->driver, isServerOp);
 }
 
 /**

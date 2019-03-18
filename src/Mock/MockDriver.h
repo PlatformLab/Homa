@@ -13,17 +13,18 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_MOCKDRIVER_H
-#define HOMA_MOCKDRIVER_H
+#ifndef HOMA_MOCK_MOCKDRIVER_H
+#define HOMA_MOCK_MOCKDRIVER_H
 
 #include <gmock/gmock.h>
 
 #include <Homa/Driver.h>
 
 namespace Homa {
+namespace Mock {
 
 /**
- * MockDriver is a gmock supported mock driver implmentation that is used
+ * MockDriver is a gmock supported mock driver implementation that is used
  * in unit testing.
  *
  * @sa Driver
@@ -68,6 +69,7 @@ class MockDriver : public Driver {
     MOCK_METHOD0(getLocalAddress, Address*());
 };
 
+}  // namespace Mock
 }  // namespace Homa
 
-#endif  // HOMA_MOCKDRIVER_H
+#endif  // HOMA_MOCK_MOCKDRIVER_H

@@ -20,7 +20,8 @@
 #include "Receiver.h"
 #include "Sender.h"
 #include "SpinLock.h"
-#include "Tub.h"
+
+#include <mutex>
 
 namespace Homa {
 namespace Core {
@@ -32,26 +33,40 @@ class Transport;
  * Holds all the relevant data and metadata for a RemoteOp or ServerOp.
  */
 struct OpContext {
-    /// Monitor style lock for the context.
-    SpinLock mutex;
-
     /// The Core::Transport which manages this OpContext.
     Transport* const transport;
+
+    /// True if this context is being held by the application in a RemoteOp or
+    /// a ServerOp; otherwise, false.
+    std::atomic<bool> retained;
 
     /// True if this context is for a ServerOp; false it is for a RemoteOp.
     const bool isServerOp;
 
+    /// Possible states of the operation.
+    enum class State {
+        NOT_STARTED,
+        IN_PROGRESS,
+        COMPLETED,
+        FAILED,
+    };
+
+    /// This operation's current state.
+    std::atomic<State> state;
+
     /// Message to be sent out as part of this Op.  Processed by the Sender.
-    Tub<Sender::OutboundMessage> outMessage;
+    Sender::OutboundMessage outMessage;
 
     /// Message to be received as part of this Op.  Processed by the Receiver.
-    Tub<Receiver::InboundMessage> inMessage;
+    Receiver::InboundMessage inMessage;
 
-    explicit OpContext(Transport* transport, bool isServerOp = true)
-        : mutex()
-        , transport(transport)
+    explicit OpContext(Transport* transport, Driver* driver,
+                       bool isServerOp = true)
+        : transport(transport)
+        , retained(false)
         , isServerOp(isServerOp)
-        , outMessage()
+        , state(State::NOT_STARTED)
+        , outMessage(driver)
         , inMessage()
     {}
 };

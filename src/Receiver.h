@@ -22,6 +22,7 @@
 #include "Protocol.h"
 #include "Scheduler.h"
 #include "SpinLock.h"
+#include "Tub.h"
 
 #include <deque>
 #include <mutex>
@@ -49,13 +50,35 @@ class Receiver {
      * InboundMessage objects are contained in the OpContext but should only be
      * accessed by the Receiver.
      */
-    class InboundMessage : public Message {
+    class InboundMessage {
       public:
-        InboundMessage(Protocol::MessageId msgId, Driver* driver,
-                       uint16_t dataHeaderLength, uint32_t messageLength)
-            : Message(msgId, driver, dataHeaderLength, messageLength)
+        InboundMessage()
+            // : Message(driver, dataHeaderLength, messageLength)
+            : mutex()
+            , id(0, 0, 0)
+            , source(nullptr)
+            , message()
             , fullMessageReceived(false)
         {}
+
+        /**
+         * Return a pointer to a Message object that can be read by applications
+         * of the Transport.  Otherwise, nullptr will be returned when no
+         * Message is available.
+         */
+        Message* get()
+        {
+            std::lock_guard<SpinLock> lock(mutex);
+            return message.get();
+        }
+
+        /**
+         * Return the unique identifier for this Message.
+         */
+        Protocol::MessageId getId()
+        {
+            return id;
+        }
 
         /**
          * Return true if the InboundMessage has been received; false otherwise.
@@ -63,13 +86,21 @@ class Receiver {
          * @param opLock
          *      Remind the caller that the OpContext mutex should be held.
          */
-        bool isReady(std::lock_guard<SpinLock>& opLock)
+        bool isReady(std::lock_guard<SpinLock>& opLock) const
         {
             (void)opLock;
             return fullMessageReceived;
         }
 
       private:
+        /// Monitor style lock.
+        SpinLock mutex;
+        /// Contains the unique identifier for this message.
+        Protocol::MessageId id;
+        /// Contains source address this message.
+        Driver::Address* source;
+        /// Collection of packets being received.
+        Tub<Message> message;
         /// True if all packets of the message have been received.
         bool fullMessageReceived;
 
@@ -77,12 +108,12 @@ class Receiver {
     };
 
     explicit Receiver(Scheduler* scheduler, OpContextPool* opPool);
-    ~Receiver();
-    void handleDataPacket(Driver::Packet* packet, Driver* driver);
-    OpContext* receiveMessage();
-    void registerMessage(Protocol::MessageId msgId, OpContext* op);
-    void dropMessage(OpContext* op);
-    void poll();
+    virtual ~Receiver();
+    virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
+    virtual OpContext* receiveMessage();
+    virtual void registerMessage(Protocol::MessageId msgId, OpContext* op);
+    virtual void dropMessage(OpContext* op);
+    virtual void poll();
 
   private:
     /// Scheduler that should be informed when message packets are received.

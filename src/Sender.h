@@ -23,6 +23,7 @@
 #include "SpinLock.h"
 
 #include <atomic>
+#include <mutex>
 #include <unordered_map>
 
 namespace Homa {
@@ -39,48 +40,68 @@ class OpContext;
 class Sender {
   public:
     /**
-     * Represents an outgoing message that is being sent.
+     * Represents an outgoing message that can be sent.
      *
      * OutboundMessage objects are contained in the OpContext but should only
      * be accessed by the Sender.
      */
-    class OutboundMessage : public Message {
+    class OutboundMessage {
       public:
         /**
          * Construct an OutboundMessage.
-         *
-         * @copydetails Core::Message::Message()
          */
-        OutboundMessage(Protocol::MessageId msgId, Driver* driver,
-                        uint16_t dataHeaderLength)
-            : Message(msgId, driver, dataHeaderLength)
-            , sending(false)
+        explicit OutboundMessage(Driver* driver)
+            : mutex()
+            , id(0, 0, 0)
+            , destination(nullptr)
+            , message(driver, sizeof(Protocol::Packet::DataHeader), 0)
             , grantOffset(0)
             , grantIndex(-1)
             , sentIndex(-1)
+            , sent(false)
         {}
 
-        /// True if this message is being sent; false otherwise.
-        bool sending;
+        /**
+         * Return a pointer to a Message object that can be populated by
+         * applications of the Transport.  Caller should take care not
+         * to provide access to the returned Message while the Sender is
+         * processing the Message.
+         */
+        Message* get()
+        {
+            std::lock_guard<SpinLock> lock(mutex);
+            return &message;
+        }
 
       private:
+        /// Monitor style lock.
+        SpinLock mutex;
+        /// Contains the unique identifier for this message.
+        Protocol::MessageId id;
+        /// Contains destination address this message.
+        Driver::Address* destination;
+        /// Collection of packets to be sent.
+        Message message;
         /// The offset up-to which we can send for this message.
         uint32_t grantOffset;
         /// The packet index that contains the grantOffset.
         int grantIndex;
         /// The packet index up to which all packets have been sent.
         int sentIndex;
+        /// True if this message has been fully sent; false otherwise.
+        bool sent;
 
         friend class Sender;
     };
 
     explicit Sender();
-    ~Sender();
+    virtual ~Sender();
 
-    void handleGrantPacket(Driver::Packet* packet, Driver* driver);
-    void sendMessage(OpContext* op);
-    void dropMessage(OpContext* op);
-    void poll();
+    virtual void handleGrantPacket(Driver::Packet* packet, Driver* driver);
+    virtual void sendMessage(Protocol::MessageId id,
+                             Driver::Address* destination, OpContext* op);
+    virtual void dropMessage(OpContext* op);
+    virtual void poll();
 
   private:
     /// Protects the top-level

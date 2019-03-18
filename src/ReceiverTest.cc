@@ -17,8 +17,9 @@
 
 #include "Receiver.h"
 
-#include "MockDriver.h"
+#include "Mock/MockDriver.h"
 #include "OpContext.h"
+#include "Transport.h"
 
 #include <Homa/Debug.h>
 
@@ -40,6 +41,8 @@ class ReceiverTest : public ::testing::Test {
     ReceiverTest()
         : mockDriver()
         , mockPacket(&payload)
+        , transport(&mockDriver, 41)
+        , opContextPool()
         , scheduler()
         , receiver()
         , savedLogPolicy(Debug::getLogPolicy())
@@ -48,7 +51,7 @@ class ReceiverTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        opContextPool = new OpContextPool(nullptr);
+        opContextPool = new OpContextPool(&transport);
         scheduler = new Scheduler(&mockDriver);
         receiver = new Receiver(scheduler, opContextPool);
     }
@@ -61,9 +64,10 @@ class ReceiverTest : public ::testing::Test {
         Debug::setLogPolicy(savedLogPolicy);
     }
 
-    NiceMock<MockDriver> mockDriver;
-    NiceMock<MockDriver::MockPacket> mockPacket;
+    NiceMock<Homa::Mock::MockDriver> mockDriver;
+    NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     char payload[1028];
+    Transport transport;
     OpContextPool* opContextPool;
     Scheduler* scheduler;
     Receiver* receiver;
@@ -81,7 +85,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     header->index = 1;
     header->totalLength = 1420;
     std::string addressStr("remote-location");
-    MockDriver::MockAddress mockAddress;
+    Homa::Mock::MockDriver::MockAddress mockAddress;
     mockPacket.address = &mockAddress;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
@@ -94,7 +98,7 @@ TEST_F(ReceiverTest, handleDataPacket)
                 getAddress(Matcher<std::string const*>(Pointee(addressStr))))
         .WillOnce(Return(&mockAddress));
     char grantPayload[1028];
-    MockDriver::MockPacket grantPacket(grantPayload);
+    Homa::Mock::MockDriver::MockPacket grantPacket(grantPayload);
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&grantPacket));
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&grantPacket), Eq(1)))
         .Times(1);
@@ -106,20 +110,19 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_TRUE(it != receiver->inboundMessages.message.end());
     OpContext* op = it->second;
     EXPECT_TRUE(op->isServerOp);
-    EXPECT_TRUE(op->inMessage);
-    Receiver::InboundMessage* message = op->inMessage.get();
-    EXPECT_EQ(&mockAddress, message->address);
-    EXPECT_EQ(1420U, message->messageLength);
-    EXPECT_TRUE(message->occupied.test(1));
-    EXPECT_EQ(1U, message->getNumPackets());
-    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
+    EXPECT_TRUE(op->inMessage.message);
+    EXPECT_EQ(&mockAddress, op->inMessage.source);
+    EXPECT_EQ(1420U, op->inMessage.message->messageLength);
+    EXPECT_TRUE(op->inMessage.message->occupied.test(1));
+    EXPECT_EQ(1U, op->inMessage.message->getNumPackets());
+    EXPECT_EQ(1000U, op->inMessage.message->PACKET_DATA_LENGTH);
     Protocol::Packet::GrantHeader* grantHeader =
         static_cast<Protocol::Packet::GrantHeader*>(grantPacket.payload);
     EXPECT_EQ(header->common.messageId, grantHeader->common.messageId);
     EXPECT_EQ(6000U, grantHeader->offset);
     EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
-    EXPECT_FALSE(message->fullMessageReceived);
+    EXPECT_FALSE(op->inMessage.fullMessageReceived);
     EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -143,10 +146,10 @@ TEST_F(ReceiverTest, handleDataPacket)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(1U, receiver->inboundMessages.message.size());
-    EXPECT_TRUE(message->occupied.test(1));
-    EXPECT_EQ(1U, message->getNumPackets());
-    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
-    EXPECT_FALSE(message->fullMessageReceived);
+    EXPECT_TRUE(op->inMessage.message->occupied.test(1));
+    EXPECT_EQ(1U, op->inMessage.message->getNumPackets());
+    EXPECT_EQ(1000U, op->inMessage.message->PACKET_DATA_LENGTH);
+    EXPECT_FALSE(op->inMessage.fullMessageReceived);
     EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -171,14 +174,14 @@ TEST_F(ReceiverTest, handleDataPacket)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(1U, receiver->inboundMessages.message.size());
-    EXPECT_TRUE(message->occupied.test(0));
-    EXPECT_EQ(2U, message->getNumPackets());
-    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
+    EXPECT_TRUE(op->inMessage.message->occupied.test(0));
+    EXPECT_EQ(2U, op->inMessage.message->getNumPackets());
+    EXPECT_EQ(1000U, op->inMessage.message->PACKET_DATA_LENGTH);
     EXPECT_EQ(header->common.messageId, grantHeader->common.messageId);
     EXPECT_EQ(7000U, grantHeader->offset);
     EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), grantPacket.length);
     EXPECT_EQ(&mockAddress, grantPacket.address);
-    EXPECT_TRUE(message->fullMessageReceived);
+    EXPECT_TRUE(op->inMessage.fullMessageReceived);
     EXPECT_EQ(1U, receiver->receivedMessages.queue.size());
     EXPECT_EQ(op, receiver->receivedMessages.queue.front());
 
@@ -206,17 +209,17 @@ TEST_F(ReceiverTest, handleDataPacket)
 
 TEST_F(ReceiverTest, receiveMessage)
 {
-    OpContext opToReturn0(nullptr);
-    OpContext opToReturn1(nullptr);
+    OpContext* opToReturn0 = opContextPool->construct();
+    OpContext* opToReturn1 = opContextPool->construct();
 
-    receiver->receivedMessages.queue.push_back(&opToReturn0);
-    receiver->receivedMessages.queue.push_back(&opToReturn1);
+    receiver->receivedMessages.queue.push_back(opToReturn0);
+    receiver->receivedMessages.queue.push_back(opToReturn1);
     EXPECT_EQ(2U, receiver->receivedMessages.queue.size());
 
-    EXPECT_EQ(&opToReturn0, receiver->receiveMessage());
+    EXPECT_EQ(opToReturn0, receiver->receiveMessage());
     EXPECT_EQ(1U, receiver->receivedMessages.queue.size());
 
-    EXPECT_EQ(&opToReturn1, receiver->receiveMessage());
+    EXPECT_EQ(opToReturn1, receiver->receiveMessage());
     EXPECT_EQ(0U, receiver->receivedMessages.queue.size());
 
     EXPECT_EQ(nullptr, receiver->receiveMessage());
@@ -226,30 +229,31 @@ TEST_F(ReceiverTest, receiveMessage)
 TEST_F(ReceiverTest, registerMessage)
 {
     Protocol::MessageId msgId = {42, 32, 0};
-    OpContext op(nullptr);
+    OpContext* op = opContextPool->construct();
 
     EXPECT_TRUE(receiver->inboundMessages.message.find(msgId) ==
                 receiver->inboundMessages.message.end());
 
-    receiver->registerMessage(msgId, &op);
+    receiver->registerMessage(msgId, op);
 
     EXPECT_FALSE(receiver->inboundMessages.message.find(msgId) ==
                  receiver->inboundMessages.message.end());
-    EXPECT_EQ(&op, receiver->inboundMessages.message.find(msgId)->second);
+    EXPECT_EQ(op, receiver->inboundMessages.message.find(msgId)->second);
+    EXPECT_EQ(msgId, op->inMessage.id);
 }
 
 TEST_F(ReceiverTest, dropMessage)
 {
     Protocol::MessageId msgId = {42, 32, 0};
-    OpContext op(nullptr);
-    op.inMessage.construct(msgId, &mockDriver, 0, 0);
-    receiver->inboundMessages.message.insert({msgId, &op});
+    OpContext* op = opContextPool->construct();
+    op->inMessage.id = msgId;
+    receiver->inboundMessages.message.insert({msgId, op});
 
     EXPECT_FALSE(receiver->inboundMessages.message.find(msgId) ==
                  receiver->inboundMessages.message.end());
-    EXPECT_EQ(&op, receiver->inboundMessages.message.find(msgId)->second);
+    EXPECT_EQ(op, receiver->inboundMessages.message.find(msgId)->second);
 
-    receiver->dropMessage(&op);
+    receiver->dropMessage(op);
 
     EXPECT_TRUE(receiver->inboundMessages.message.find(msgId) ==
                 receiver->inboundMessages.message.end());

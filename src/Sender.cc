@@ -55,109 +55,103 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    OpContext* op = nullptr;
+    OutboundMessage* message = nullptr;
 
     {
         std::lock_guard<SpinLock> lock(outboundMessages.mutex);
         auto it = outboundMessages.message.find(msgId);
         if (it != outboundMessages.message.end()) {
-            op = it->second;
+            message = &it->second->outMessage;
         } else {
             // No message for this grant; grant must be old; just drop it.
             driver->releasePackets(&packet, 1);
             return;
         }
-        op->mutex.lock();
+        message->mutex.lock();
     }
-    std::lock_guard<SpinLock> lock_op(op->mutex, std::adopt_lock);
-
-    assert(op != nullptr);
-    assert(op->outMessage);
-    OutboundMessage* message = op->outMessage.get();
+    std::lock_guard<SpinLock> lock_op(message->mutex, std::adopt_lock);
     message->grantOffset = std::max(message->grantOffset, header->offset);
     message->grantOffset =
-        std::min(message->grantOffset, message->rawLength() - 1);
-    message->grantIndex = message->grantOffset / message->PACKET_DATA_LENGTH;
+        std::min(message->grantOffset, message->message.rawLength() - 1);
+    message->grantIndex =
+        message->grantOffset / message->message.PACKET_DATA_LENGTH;
     driver->releasePackets(&packet, 1);
 }
 
 /**
  * Queue a message to be sent.
  *
+ * @param id
+ *      Unique identifier for this message.
+ * @param destination
+ *      Destination address for this message.
  * @param op
- *      OpContext containing the OutboundMessage of the message to be sent.
+ *      OpContext containing the OutboundMessage to be sent.
+ *
+ * @sa dropMessage()
  */
 void
-Sender::sendMessage(OpContext* op)
+Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
+                    OpContext* op)
 {
     {
-        // Prepare the Message to be sent.  Lock the op the state is modified.
-        std::lock_guard<SpinLock> lock(op->mutex);
-        assert(op->outMessage);
-        OutboundMessage* message = op->outMessage.get();
-
-        if (message->sending) {
+        std::lock_guard<SpinLock> lock(outboundMessages.mutex);
+        if (outboundMessages.message.find(id) !=
+            outboundMessages.message.end()) {
             // message already sending, drop the send request.
             WARNING(
                 "Duplicate call to sendMessage for msgId (%lu:%lu:%u); send "
                 "request dropped.",
-                message->msgId.transportId, message->msgId.sequence,
-                message->msgId.messageId);
+                id.transportId, id.sequence, id.tag);
             return;
         } else {
-            message->sending = true;
+            outboundMessages.message.insert({id, op});
+            // Acquire this the outMessage lock with the top-level lock held
+            // ensures we don't race with other calls involving this message.
+            op->outMessage.mutex.lock();
         }
-
-        uint32_t unscheduledBytes =
-            RTT_TIME_US * (message->driver->getBandwidth() / 8);
-
-        uint32_t actualMessageLen = 0;
-        // fill out metadata.
-        for (uint16_t i = 0; i < message->getNumPackets(); ++i) {
-            Driver::Packet* packet = message->getPacket(i);
-            if (packet == nullptr) {
-                ERROR(
-                    "Incomplete message with id (%lu:%lu:%u); missing packet "
-                    "at offset %d; send request dropped.",
-                    message->msgId.transportId, message->msgId.sequence,
-                    message->msgId.messageId, i * message->PACKET_DATA_LENGTH);
-                return;
-            }
-
-            packet->address = message->address;
-            packet->priority = 0;
-            new (packet->payload) Protocol::Packet::DataHeader(
-                message->msgId, message->rawLength(), i);
-            actualMessageLen +=
-                (packet->length - message->PACKET_HEADER_LENGTH);
-        }
-
-        // perform sanity checks.
-        assert(message->rawLength() == actualMessageLen);
-        assert(message->PACKET_HEADER_LENGTH ==
-               sizeof(Protocol::Packet::DataHeader));
-
-        message->grantOffset =
-            std::min(unscheduledBytes - 1, message->rawLength() - 1);
-        message->grantIndex =
-            message->grantOffset / message->PACKET_DATA_LENGTH;
-    }  // Release the op mutex.
-
-    // Re-acquire the locks to ensure a safe order.
-    std::lock(outboundMessages.mutex, op->mutex);
-    std::lock_guard<SpinLock> lock(outboundMessages.mutex, std::adopt_lock);
-    std::lock_guard<SpinLock> lock_op(op->mutex, std::adopt_lock);
-    // Re-check to make sure we still should be sending the message.
-    if (op->outMessage) {
-        OutboundMessage* message = op->outMessage.get();
-        Protocol::MessageId msgId = message->msgId;
-
-        outboundMessages.message.insert({msgId, op});
     }
+    OutboundMessage* message = &op->outMessage;
+    std::lock_guard<SpinLock> lock(message->mutex, std::adopt_lock);
+    message->id = id;
+    message->destination = destination;
+    uint32_t unscheduledBytes =
+        RTT_TIME_US * (message->message.driver->getBandwidth() / 8);
+
+    uint32_t actualMessageLen = 0;
+    // fill out metadata.
+    for (uint16_t i = 0; i < message->message.getNumPackets(); ++i) {
+        Driver::Packet* packet = message->message.getPacket(i);
+        if (packet == nullptr) {
+            PANIC(
+                "Incomplete message with id (%lu:%lu:%u); missing packet "
+                "at offset %d; this shouldn't happen.",
+                message->id.transportId, message->id.sequence, message->id.tag,
+                i * message->message.PACKET_DATA_LENGTH);
+        }
+
+        packet->address = message->destination;
+        packet->priority = 0;
+        new (packet->payload) Protocol::Packet::DataHeader(
+            message->id, message->message.rawLength(), i);
+        actualMessageLen +=
+            (packet->length - message->message.PACKET_HEADER_LENGTH);
+    }
+
+    // perform sanity checks.
+    assert(message->message.rawLength() == actualMessageLen);
+    assert(message->message.PACKET_HEADER_LENGTH ==
+           sizeof(Protocol::Packet::DataHeader));
+
+    message->grantOffset =
+        std::min(unscheduledBytes - 1, message->message.rawLength() - 1);
+    message->grantIndex =
+        message->grantOffset / message->message.PACKET_DATA_LENGTH;
 }
 
 /**
- * Inform the Sender that a Message is no longer needed.
+ * Inform the Sender that a Message is no longer needed and the associated
+ * OpContext should no longer be used.
  *
  * @param op
  *      The OpContext which contains the Message that is no longer needed.
@@ -166,13 +160,11 @@ void
 Sender::dropMessage(OpContext* op)
 {
     std::lock_guard<SpinLock> lock(outboundMessages.mutex);
-    std::lock_guard<SpinLock> lock_op(op->mutex);
-    if (op->outMessage) {
-        auto it = outboundMessages.message.find(op->outMessage->msgId);
-        if (it != outboundMessages.message.end()) {
-            assert(op == it->second);
-            outboundMessages.message.erase(it);
-        }
+    std::lock_guard<SpinLock> lock_message(op->outMessage.mutex);
+    auto it = outboundMessages.message.find(op->outMessage.id);
+    if (it != outboundMessages.message.end()) {
+        assert(op == it->second);
+        outboundMessages.message.erase(it);
     }
 }
 
@@ -199,37 +191,40 @@ Sender::trySend()
         return;
     }
     std::lock_guard<SpinLock> lock(outboundMessages.mutex, std::adopt_lock);
-    OpContext* op = nullptr;
+    OutboundMessage* message = nullptr;
     auto it = outboundMessages.message.begin();
     while (it != outboundMessages.message.end()) {
-        op = it->second;
-        op->mutex.lock();
-        assert(op->outMessage);
-        if (op->outMessage->sentIndex < op->outMessage->getNumPackets() &&
-            op->outMessage->grantIndex > op->outMessage->sentIndex) {
+        message = &it->second->outMessage;
+        message->mutex.lock();
+        if (message->sentIndex + 1 < message->message.getNumPackets() &&
+            message->grantIndex > message->sentIndex) {
             // found a message to send.
             break;
         }
-        op->mutex.unlock();
-        op = nullptr;
+        message->mutex.unlock();
+        message = nullptr;
         it++;
     }
 
-    if (op == nullptr) {
+    if (message == nullptr) {
         // nothing found to send
         return;
     }
 
     // otherwise; send the next packets.
-    std::lock_guard<SpinLock> lock_op(op->mutex, std::adopt_lock);
-    OutboundMessage* message = op->outMessage.get();
-    assert(message->grantIndex < message->getNumPackets());
+    std::lock_guard<SpinLock> lock_op(message->mutex, std::adopt_lock);
+    assert(message->grantIndex < message->message.getNumPackets());
     int numPkts = message->grantIndex - message->sentIndex;
     for (int i = 1; i <= numPkts; ++i) {
-        Driver::Packet* packet = message->getPacket(message->sentIndex + i);
-        message->driver->sendPackets(&packet, 1);
+        Driver::Packet* packet =
+            message->message.getPacket(message->sentIndex + i);
+        message->message.driver->sendPackets(&packet, 1);
     }
     message->sentIndex = message->grantIndex;
+    if (message->sentIndex + 1 >= message->message.getNumPackets()) {
+        // We have finished sending the message.
+        message->sent = true;
+    }
 }
 
 }  // namespace Core
