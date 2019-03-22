@@ -18,8 +18,8 @@
 #include "Sender.h"
 
 #include "Mock/MockDriver.h"
+#include "ObjectPool.h"
 #include "OpContext.h"
-#include "Transport.h"
 
 #include <Homa/Debug.h>
 
@@ -39,7 +39,6 @@ class SenderTest : public ::testing::Test {
     SenderTest()
         : mockDriver()
         , mockPacket(&payload)
-        , transport(&mockDriver, 42)
         , opContextPool()
         , sender()
         , savedLogPolicy(Debug::getLogPolicy())
@@ -48,7 +47,7 @@ class SenderTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        opContextPool = new OpContextPool(&transport);
+        opContextPool = new ObjectPool<OpContext>();
     }
 
     ~SenderTest()
@@ -60,8 +59,7 @@ class SenderTest : public ::testing::Test {
     NiceMock<Homa::Mock::MockDriver> mockDriver;
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     char payload[1028];
-    Transport transport;
-    OpContextPool* opContextPool;
+    ObjectPool<OpContext>* opContextPool;
     Sender sender;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 
@@ -83,7 +81,7 @@ class SenderTest : public ::testing::Test {
 TEST_F(SenderTest, handleGrantPacket_basic)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
     op->outMessage.message.messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, msgId, op, 4999);
@@ -106,7 +104,7 @@ TEST_F(SenderTest, handleGrantPacket_basic)
 TEST_F(SenderTest, handleGrantPacket_staleGrant)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
     op->outMessage.message.messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, msgId, op, 4999);
@@ -129,7 +127,7 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
 TEST_F(SenderTest, handleGrantPacket_excessGrant)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
     op->outMessage.message.messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, msgId, op, 4999);
@@ -166,7 +164,7 @@ TEST_F(SenderTest, handleGrantPacket_dropGrant)
 TEST_F(SenderTest, sendMessage_basic)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
 
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 420;
@@ -200,7 +198,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
     NiceMock<Homa::Mock::MockDriver::MockPacket> packet0(payload0);
     NiceMock<Homa::Mock::MockDriver::MockPacket> packet1(payload1);
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
 
     op->outMessage.message.setPacket(0, &packet0);
     op->outMessage.message.setPacket(1, &packet1);
@@ -249,7 +247,7 @@ TEST_F(SenderTest, sendMessage_missingPacket)
     // Debug::setLogHandler(std::ref(handler));
 
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
     op->outMessage.message.setPacket(1, &mockPacket);
 
     EXPECT_DEATH(sender.sendMessage(msgId, nullptr, op),
@@ -263,7 +261,7 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
     Debug::setLogHandler(std::ref(handler));
 
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 420;
     mockPacket.length = op->outMessage.message.messageLength +
@@ -294,7 +292,7 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
 TEST_F(SenderTest, sendMessage_unsheduledLimit)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
     for (int i = 0; i < 9; ++i) {
         op->outMessage.message.setPacket(i, &mockPacket);
     }
@@ -320,7 +318,7 @@ TEST_F(SenderTest, sendMessage_unsheduledLimit)
 TEST_F(SenderTest, dropMessage)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
     op->outMessage.message.messageLength = 9000;
     Sender::OutboundMessage* message =
         SenderTest::addMessage(&sender, msgId, op, 4999);
@@ -342,7 +340,7 @@ TEST_F(SenderTest, trySend_basic)
     OpContext* op[4];
     Sender::OutboundMessage* message[4];
     for (uint64_t i = 0; i < 4; ++i) {
-        op[i] = opContextPool->construct();
+        op[i] = opContextPool->construct(nullptr, &mockDriver);
         Protocol::MessageId msgId = {42, 10 + i, 1};
         message[i] = SenderTest::addMessage(&sender, msgId, op[i], 4999);
     }
@@ -402,7 +400,7 @@ TEST_F(SenderTest, trySend_basic)
 TEST_F(SenderTest, trySend_alreadyRunning)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    OpContext* op = opContextPool->construct();
+    OpContext* op = opContextPool->construct(nullptr, &mockDriver);
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 1000;
     EXPECT_EQ(1U, op->outMessage.message.getNumPackets());

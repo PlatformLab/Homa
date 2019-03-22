@@ -38,11 +38,12 @@ Transport::Transport(Driver* driver, uint64_t transportId)
     : driver(driver)
     , transportId(transportId)
     , nextOpSequenceNumber(1)
-    , opContextPool(this)
-    , serverOpQueue()
     , sender(new Sender())
     , scheduler(new Scheduler(driver))
-    , receiver(new Receiver(scheduler.get(), &opContextPool))
+    , receiver(new Receiver(scheduler.get()))
+    , mutex()
+    , opContextPool()
+    , serverOpQueue()
 {}
 
 /**
@@ -56,7 +57,11 @@ Transport::~Transport() = default;
 OpContext*
 Transport::allocOp()
 {
-    OpContext* op = opContextPool.construct(false);
+    OpContext* op = nullptr;
+    {
+        std::lock_guard<SpinLock> lock(mutex);
+        op = opContextPool.construct(this, driver, false);
+    }
     op->outMessage.get()->defineHeader<Protocol::Message::Header>();
     op->retained.store(true);
     return op;
@@ -71,10 +76,10 @@ Transport::receiveOp()
 {
     OpContext* op = nullptr;
     {
-        std::lock_guard<SpinLock> lock(serverOpQueue.mutex);
-        if (!serverOpQueue.queue.empty()) {
-            op = serverOpQueue.queue.front();
-            serverOpQueue.queue.pop_front();
+        std::lock_guard<SpinLock> lock(mutex);
+        if (!serverOpQueue.empty()) {
+            op = serverOpQueue.front();
+            serverOpQueue.pop_front();
         }
     }
     if (op != nullptr) {
@@ -86,10 +91,13 @@ Transport::receiveOp()
 
 /**
  * Signal that a previously returned OpContext from either Transport::allocOp()
- * or Transport::receiveOp() is no longer needed by the application.
+ * or Transport::receiveOp() is no longer needed by the application.  The
+ * OpContext should not be used by higher-level software after this call.
  *
  * @param op
  *      OpContext which is no longer needed.
+ *
+ * @sa Homa::Core::Transport; no support for concurrent calls to same OpContext.
  */
 void
 Transport::releaseOp(OpContext* op)
@@ -105,20 +113,23 @@ Transport::releaseOp(OpContext* op)
  *      OpContext that contains the request Message to be sent.
  * @param destination
  *      Network address to which the request should be sent.
+
+ * @sa Homa::Core::Transport; no support for concurrent calls to same OpContext.
  */
 void
 Transport::sendRequest(OpContext* op, Driver::Address* destination)
 {
+    // Transport::mutex not needed
     if (op->isServerOp) {
-        Protocol::MessageId requestId(op->inMessage.getId());
+        Protocol::MessageId requestId(op->inMessage.load()->getId());
         Protocol::MessageId delegationId(Protocol::OpId(requestId),
                                          requestId.tag + 1);
         sender->sendMessage(delegationId, destination, op);
     } else {
         Protocol::OpId opId(transportId, nextOpSequenceNumber++);
         op->state.store(OpContext::State::IN_PROGRESS);
-        receiver->registerMessage(
-            {opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG}, op);
+        receiver->registerOp({opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG},
+                             op);
         sender->sendMessage({opId, Protocol::MessageId::INITIAL_REQUEST_TAG},
                             destination, op);
     }
@@ -129,14 +140,17 @@ Transport::sendRequest(OpContext* op, Driver::Address* destination)
  *
  * @param op
  *      OpContext that contains the reply Message to be sent.
+ *
+ * @sa Homa::Core::Transport; no support for concurrent calls to same OpContext.
  */
 void
 Transport::sendReply(OpContext* op)
 {
     assert(op->isServerOp);
-    Protocol::OpId opId(op->inMessage.getId());
+    Protocol::OpId opId(op->inMessage.load()->getId());
     Driver::Address* replyAddress =
-        driver->getAddress(&op->inMessage.get()
+        driver->getAddress(&op->inMessage.load()
+                                ->get()
                                 ->getHeader<Protocol::Message::Header>()
                                 ->replyAddress);
     op->state.store(OpContext::State::IN_PROGRESS);
@@ -156,7 +170,7 @@ Transport::poll()
     receiver->poll();
 
     // Process any incomming Messages
-    processMessages();
+    processInboundMessages();
 }
 
 /**
@@ -175,9 +189,11 @@ Transport::processPackets()
         assert(packet->length >= sizeof(Protocol::Packet::CommonHeader));
         Protocol::Packet::CommonHeader* header =
             static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
+        OpContext* op = nullptr;
         switch (header->opcode) {
             case Protocol::Packet::DATA:
-                receiver->handleDataPacket(packet, driver);
+                op = receiver->handleDataPacket(packet, driver);
+                processReceivedMessage(op);
                 break;
             case Protocol::Packet::GRANT:
                 sender->handleGrantPacket(packet, driver);
@@ -187,17 +203,45 @@ Transport::processPackets()
 }
 
 /**
- * Helper method to process any completed incomming messages to be dispatched up
- * to the application.
+ * Helper method to process any incomming messages.
  */
 void
-Transport::processMessages()
+Transport::processInboundMessages()
 {
-    for (OpContext* op = receiver->receiveMessage(); op != nullptr;
-         op = receiver->receiveMessage()) {
+    for (Receiver::InboundMessage* message = receiver->receiveMessage();
+         message != nullptr; message = receiver->receiveMessage()) {
+        Protocol::MessageId id = message->getId();
+        if (id.tag == Protocol::MessageId::ULTIMATE_RESPONSE_TAG) {
+            // The response message is not registered so there is no RemoteOp
+            // waiting for it;  Drop the message.
+            receiver->dropMessage(message);
+        } else {
+            // Incomming message is a request.
+            OpContext* op = nullptr;
+            {
+                std::lock_guard<SpinLock> lock(mutex);
+                op = opContextPool.construct(this, driver, true);
+            }
+            receiver->registerOp(id, op);
+        }
+    }
+}
+
+/**
+ * Helper method to process an OpContext with an InboundMessage that has been
+ * fully received.
+ *
+ * @param op
+ *      OpContext with a fully received InboundMessage.
+ */
+void
+Transport::processReceivedMessage(OpContext* op)
+{
+    if (op != nullptr) {
+        assert(op->inMessage.load()->isReady());
         if (op->isServerOp) {
-            std::lock_guard<SpinLock> lock_queue(serverOpQueue.mutex);
-            serverOpQueue.queue.push_back(op);
+            std::lock_guard<SpinLock> lock(mutex);
+            serverOpQueue.push_back(op);
         } else {
             op->state.store(OpContext::State::COMPLETED);
         }

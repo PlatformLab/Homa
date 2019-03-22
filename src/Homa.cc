@@ -55,7 +55,7 @@ RemoteOp::isReady()
             break;
         case Core::OpContext::State::COMPLETED:
             // Grant access to the received response.
-            response = op->inMessage.get();
+            response = op->inMessage.load()->get();
             // Fall through to FAILED.
         case Core::OpContext::State::FAILED:
             // Restore access to the request.
@@ -147,7 +147,7 @@ Transport::receiveServerOp()
     ServerOp op;
     op.op = internal->receiveOp();
     if (op.op != nullptr) {
-        op.request = op.op->inMessage.get();
+        op.request = op.op->inMessage.load()->get();
         op.response = op.op->outMessage.get();
     }
     return op;

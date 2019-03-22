@@ -19,6 +19,7 @@
 #include "Homa/Driver.h"
 
 #include "Message.h"
+#include "ObjectPool.h"
 #include "Protocol.h"
 #include "Scheduler.h"
 #include "SpinLock.h"
@@ -33,7 +34,6 @@ namespace Core {
 
 // Forward declaration
 class OpContext;
-class OpContextPool;
 
 /**
  * The Receiver processes incomming Data packets, assembling them into messages
@@ -82,19 +82,16 @@ class Receiver {
 
         /**
          * Return true if the InboundMessage has been received; false otherwise.
-         *
-         * @param opLock
-         *      Remind the caller that the OpContext mutex should be held.
          */
-        bool isReady(std::lock_guard<SpinLock>& opLock) const
+        bool isReady() const
         {
-            (void)opLock;
+            std::lock_guard<SpinLock> lock(mutex);
             return fullMessageReceived;
         }
 
       private:
         /// Monitor style lock.
-        SpinLock mutex;
+        mutable SpinLock mutex;
         /// Contains the unique identifier for this message.
         Protocol::MessageId id;
         /// Contains source address this message.
@@ -107,41 +104,39 @@ class Receiver {
         friend class Receiver;
     };
 
-    explicit Receiver(Scheduler* scheduler, OpContextPool* opPool);
+    explicit Receiver(Scheduler* scheduler);
     virtual ~Receiver();
-    virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
-    virtual OpContext* receiveMessage();
-    virtual void registerMessage(Protocol::MessageId msgId, OpContext* op);
-    virtual void dropMessage(OpContext* op);
+    virtual OpContext* handleDataPacket(Driver::Packet* packet, Driver* driver);
+    virtual InboundMessage* receiveMessage();
+    virtual void dropMessage(InboundMessage* message);
+    virtual void registerOp(Protocol::MessageId id, OpContext* op);
+    virtual void dropOp(OpContext* op);
     virtual void poll();
 
   private:
+    /// Mutext for monitor-style locking of Receiver state.
+    SpinLock mutex;
+
     /// Scheduler that should be informed when message packets are received.
     Scheduler* const scheduler;
 
+    /// Tracks the set of OpContext objects with expected InboundMessages.
+    std::unordered_map<Protocol::MessageId, OpContext*,
+                       Protocol::MessageId::Hasher>
+        registeredOps;
+
+    /// Tracks the set of InboundMessage objects that do not have an associated
+    /// OpContext.
+    std::unordered_map<Protocol::MessageId, InboundMessage*,
+                       Protocol::MessageId::Hasher>
+        unregisteredMessages;
+
+    /// Unregistered InboundMessage objects to be processed by the transport.
+    std::deque<InboundMessage*> receivedMessages;
+
     /// Used to allocate additional OpContext objects when receiving a new
     /// unregistered Message.
-    OpContextPool* const opPool;
-
-    /// Tracks the set of incomming messages.
-    struct {
-        /// Protects the inboundMessages structure.
-        SpinLock mutex;
-
-        /// Contains the associated OpContext for a given MessageId.
-        std::unordered_map<Protocol::MessageId, OpContext*,
-                           Protocol::MessageId::Hasher>
-            message;
-    } inboundMessages;
-
-    /// Messages that have been received but not yet requested by the transport.
-    struct {
-        /// Protects the receivedMessages structure.
-        SpinLock mutex;
-
-        /// Collection of received messages.
-        std::deque<OpContext*> queue;
-    } receivedMessages;
+    ObjectPool<InboundMessage> messagePool;
 };
 
 }  // namespace Core

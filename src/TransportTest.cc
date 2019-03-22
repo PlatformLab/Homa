@@ -27,6 +27,7 @@ namespace Homa {
 namespace Core {
 namespace {
 
+using ::testing::_;
 using ::testing::DoAll;
 using ::testing::Eq;
 using ::testing::Matcher;
@@ -75,13 +76,13 @@ TEST_F(TransportTest, allocOp)
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
 
-    EXPECT_EQ(0U, transport->opContextPool.pool.outstandingObjects);
+    EXPECT_EQ(0U, transport->opContextPool.outstandingObjects);
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
 
     OpContext* op = transport->allocOp();
 
-    EXPECT_EQ(1U, transport->opContextPool.pool.outstandingObjects);
+    EXPECT_EQ(1U, transport->opContextPool.outstandingObjects);
     EXPECT_EQ(sizeof(Protocol::Message::Header),
               op->outMessage.message.rawLength());
     EXPECT_TRUE(op->retained.load());
@@ -92,8 +93,9 @@ TEST_F(TransportTest, receiveOp)
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
 
-    OpContext* serverOp = transport->opContextPool.construct();
-    transport->serverOpQueue.queue.push_back(serverOp);
+    OpContext* serverOp =
+        transport->opContextPool.construct(transport, &mockDriver, true);
+    transport->serverOpQueue.push_back(serverOp);
     EXPECT_EQ(OpContext::State::NOT_STARTED, serverOp->state.load());
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
@@ -103,13 +105,13 @@ TEST_F(TransportTest, receiveOp)
     EXPECT_EQ(serverOp, op);
     EXPECT_EQ(sizeof(Protocol::Message::Header),
               op->outMessage.message.rawLength());
-    EXPECT_TRUE(transport->serverOpQueue.queue.empty());
+    EXPECT_TRUE(transport->serverOpQueue.empty());
     EXPECT_TRUE(op->retained.load());
 }
 
 TEST_F(TransportTest, receiveOp_empty)
 {
-    EXPECT_TRUE(transport->serverOpQueue.queue.empty());
+    EXPECT_TRUE(transport->serverOpQueue.empty());
     EXPECT_CALL(mockDriver, allocPacket).Times(0);
 
     OpContext* op = transport->receiveOp();
@@ -119,7 +121,8 @@ TEST_F(TransportTest, receiveOp_empty)
 
 TEST_F(TransportTest, releaseOp)
 {
-    OpContext* op = transport->opContextPool.construct(false);
+    OpContext* op =
+        transport->opContextPool.construct(transport, &mockDriver, false);
     op->retained.store(true);
 
     transport->releaseOp(op);
@@ -129,10 +132,13 @@ TEST_F(TransportTest, releaseOp)
 
 TEST_F(TransportTest, sendRequest_ServerOp)
 {
-    OpContext* op = transport->opContextPool.construct(true);
+    OpContext* op =
+        transport->opContextPool.construct(transport, &mockDriver, true);
+    Receiver::InboundMessage message;
     Protocol::MessageId expectedId = {transport->transportId, 42, 3};
-    op->inMessage.id = expectedId;
-    op->inMessage.id.tag--;
+    op->inMessage = &message;
+    op->inMessage.load()->id = expectedId;
+    op->inMessage.load()->id.tag--;
     Driver::Address* destination = (Driver::Address*)22;
 
     EXPECT_CALL(mockSender,
@@ -143,18 +149,18 @@ TEST_F(TransportTest, sendRequest_ServerOp)
 
 TEST_F(TransportTest, sendRequest_RemoteOp)
 {
-    OpContext* op = transport->opContextPool.construct(false);
+    OpContext* op =
+        transport->opContextPool.construct(transport, &mockDriver, false);
 
     Protocol::OpId expectedOpId = {transport->transportId,
                                    transport->nextOpSequenceNumber};
     Driver::Address* destination = (Driver::Address*)22;
 
-    EXPECT_CALL(
-        mockReceiver,
-        registerMessage(
-            Eq(Protocol::MessageId(expectedOpId,
-                                   Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
-            Eq(op)));
+    EXPECT_CALL(mockReceiver,
+                registerOp(Eq(Protocol::MessageId(
+                               expectedOpId,
+                               Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
+                           Eq(op)));
     EXPECT_CALL(mockSender,
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
@@ -171,15 +177,17 @@ TEST_F(TransportTest, sendReply)
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
     Driver::Address* replyAddress = (Driver::Address*)22;
-    OpContext* op = transport->opContextPool.construct(true);
+    OpContext* op =
+        transport->opContextPool.construct(transport, &mockDriver, true);
     Protocol::OpId expectedOpId = {42, 32};
-
-    op->inMessage.id = Protocol::MessageId(expectedOpId, 2);
-    op->inMessage.message.construct(transport->driver,
-                                    sizeof(Protocol::Packet::DataHeader), 0);
-    op->inMessage.message->setPacket(0, &packet);
+    Receiver::InboundMessage message;
+    message.id = Protocol::MessageId(expectedOpId, 2);
+    message.message.construct(transport->driver,
+                              sizeof(Protocol::Packet::DataHeader), 0);
+    message.message->setPacket(0, &packet);
     Protocol::Message::Header* header =
-        op->inMessage.message->defineHeader<Protocol::Message::Header>();
+        message.message->defineHeader<Protocol::Message::Header>();
+    op->inMessage = &message;
 
     EXPECT_CALL(mockDriver, getAddress(Matcher<Driver::Address::Raw const*>(
                                 Eq(&header->replyAddress))))
@@ -194,61 +202,6 @@ TEST_F(TransportTest, sendReply)
 
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
 }
-
-// TEST_F(TransportTest, newMessage)
-// {
-//     EXPECT_EQ(0U, transport->messagePool.pool.outstandingObjects);
-
-//     Message message = transport->newMessage();
-
-//     EXPECT_EQ(1U, transport->messagePool.pool.outstandingObjects);
-//     EXPECT_EQ(transport, message.transportImpl);
-// }
-
-// TEST_F(TransportTest, receiveMessage)
-// {
-//     EXPECT_EQ(24U, sizeof(Protocol::Packet::DataHeader));
-//     Protocol::MessageId msgId = {42, 1};
-//     MessageContext* context =
-//         transport->receiver.contextPool->construct(msgId, 24, &mockDriver);
-//     transport->receiver.messageMap.insert(
-//         {msgId, transport->receiver.inboundPool.construct(context)});
-//     transport->receiver.messageQueue.push_back(context);
-
-//     EXPECT_EQ(1U, context->refCount);
-
-//     Message message = transport->receiveMessage();
-
-//     EXPECT_EQ(0U, transport->receiver.messageQueue.size());
-//     EXPECT_EQ(context, message.context);
-//     EXPECT_EQ(transport, message.transportImpl);
-// }
-
-// TEST_F(TransportTest, sendMessage)
-// {
-//     char payload[1024];
-//     MockDriver::MockPacket mockPacket(payload);
-//     Message message = transport->newMessage();
-//     message.context->setPacket(0, &mockPacket);
-//     message.context->messageLength = 420;
-//     mockPacket.length =
-//         message.context->messageLength + message.context->DATA_HEADER_LENGTH;
-//     message.context->address = (Driver::Address*)22;
-
-//     EXPECT_EQ(0U, transport->sender.sendQueue.size());
-//     EXPECT_EQ(0U, transport->sender.outboundPool.outstandingObjects);
-
-//     transport->sendMessage(&message);
-
-//     EXPECT_EQ(22U, (uint64_t)mockPacket.address);
-//     EXPECT_EQ(0U, mockPacket.priority);
-//     Protocol::Packet::DataHeader* header =
-//         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
-//     EXPECT_EQ(message.context->msgId, header->common.msgId);
-//     EXPECT_EQ(message.context->messageLength, header->totalLength);
-//     EXPECT_EQ(1U, transport->sender.sendQueue.size());
-//     EXPECT_EQ(1U, transport->sender.outboundPool.outstandingObjects);
-// }
 
 TEST_F(TransportTest, poll)
 {
@@ -287,21 +240,65 @@ TEST_F(TransportTest, processPackets)
     transport->processPackets();
 }
 
-TEST_F(TransportTest, processMessages)
+TEST_F(TransportTest, processInboundMessages_newRequest)
 {
-    OpContext* serverOp = transport->opContextPool.construct();
-    OpContext* remoteOp = transport->opContextPool.construct(false);
-    EXPECT_TRUE(transport->serverOpQueue.queue.empty());
-    EXPECT_EQ(OpContext::State::NOT_STARTED, remoteOp->state.load());
+    Protocol::MessageId id(42, 32, Protocol::MessageId::INITIAL_REQUEST_TAG);
+    Receiver::InboundMessage message;
+    message.id = id;
+
+    EXPECT_EQ(0U, transport->opContextPool.outstandingObjects);
 
     EXPECT_CALL(mockReceiver, receiveMessage)
-        .WillOnce(Return(serverOp))
-        .WillOnce(Return(remoteOp))
+        .WillOnce(Return(&message))
         .WillOnce(Return(nullptr));
+    EXPECT_CALL(mockReceiver, registerOp(Eq(id), _));
 
-    transport->processMessages();
+    transport->processInboundMessages();
 
-    EXPECT_EQ(serverOp, transport->serverOpQueue.queue.front());
+    EXPECT_EQ(1U, transport->opContextPool.outstandingObjects);
+}
+
+TEST_F(TransportTest, processInboundMessages_dropResponse)
+{
+    Protocol::MessageId id(42, 32, Protocol::MessageId::ULTIMATE_RESPONSE_TAG);
+    Receiver::InboundMessage message;
+    message.id = id;
+
+    EXPECT_CALL(mockReceiver, receiveMessage)
+        .WillOnce(Return(&message))
+        .WillOnce(Return(nullptr));
+    EXPECT_CALL(mockReceiver, dropMessage(Eq(&message)));
+
+    transport->processInboundMessages();
+}
+
+TEST_F(TransportTest, processReceivedMessage_ServerOp)
+{
+    OpContext* serverOp =
+        transport->opContextPool.construct(transport, &mockDriver, true);
+    Receiver::InboundMessage message;
+    message.fullMessageReceived = true;
+    serverOp->inMessage = &message;
+
+    EXPECT_TRUE(transport->serverOpQueue.empty());
+
+    transport->processReceivedMessage(serverOp);
+
+    EXPECT_EQ(serverOp, transport->serverOpQueue.front());
+}
+
+TEST_F(TransportTest, processReceivedMessage_RemoteOp)
+{
+    OpContext* remoteOp =
+        transport->opContextPool.construct(transport, &mockDriver, false);
+    Receiver::InboundMessage message;
+    message.fullMessageReceived = true;
+    remoteOp->inMessage = &message;
+
+    EXPECT_EQ(OpContext::State::NOT_STARTED, remoteOp->state.load());
+
+    transport->processReceivedMessage(remoteOp);
+
     EXPECT_EQ(OpContext::State::COMPLETED, remoteOp->state.load());
 }
 

@@ -32,15 +32,15 @@ namespace Mock {
 class MockReceiver : public Core::Receiver {
   public:
     MockReceiver()
-        : Receiver(nullptr, nullptr)
+        : Receiver(nullptr)
     {}
 
     MOCK_METHOD2(handleDataPacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD0(receiveMessage, Core::OpContext*());
-    MOCK_METHOD2(registerMessage,
-                 void(Protocol::MessageId msgId, Core::OpContext* op));
-    MOCK_METHOD1(dropMessage, void(Core::OpContext* op));
+                 Core::OpContext*(Driver::Packet* packet, Driver* driver));
+    MOCK_METHOD0(receiveMessage, InboundMessage*());
+    MOCK_METHOD1(dropMessage, void(InboundMessage* op));
+    MOCK_METHOD2(registerOp, void(Protocol::MessageId id, Core::OpContext* op));
+    MOCK_METHOD1(dropOp, void(Core::OpContext* op));
     MOCK_METHOD0(poll, void());
 };
 

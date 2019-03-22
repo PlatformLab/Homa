@@ -136,13 +136,15 @@ TEST_F(HomaTest, RemoteOp_isReady_COMPLETED)
     RemoteOp op(transport);
     op.request = nullptr;
     op.response = nullptr;
-    op.op->inMessage.id = Protocol::MessageId(42, 32, 22);
-    op.op->inMessage.message.construct(&mockDriver, 28, 0);
+    Core::Receiver::InboundMessage inMessage;
+    inMessage.id = Protocol::MessageId(42, 32, 22);
+    inMessage.message.construct(&mockDriver, 28, 0);
+    op.op->inMessage = &inMessage;
 
     op.op->state = Core::OpContext::State::COMPLETED;
     EXPECT_TRUE(op.isReady());
     EXPECT_EQ(op.op->outMessage.get(), op.request);
-    EXPECT_EQ(op.op->inMessage.get(), op.response);
+    EXPECT_EQ(op.op->inMessage.load()->get(), op.response);
 }
 
 TEST_F(HomaTest, RemoteOp_wait)
@@ -205,11 +207,14 @@ TEST_F(HomaTest, Transport_receiveServerOp)
 {
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
-    Core::OpContext* opContext = transport->internal->opContextPool.construct();
-    opContext->inMessage.id = Protocol::MessageId(42, 1, 1);
-    opContext->inMessage.message.construct(
-        &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
-    transport->internal->serverOpQueue.queue.push_back(opContext);
+    Core::OpContext* opContext = transport->internal->opContextPool.construct(
+        transport->internal.get(), transport->internal->driver);
+    Core::Receiver::InboundMessage inMessage;
+    inMessage.id = Protocol::MessageId(42, 1, 1);
+    inMessage.message.construct(&mockDriver,
+                                sizeof(Protocol::Packet::DataHeader), 0);
+    opContext->inMessage = &inMessage;
+    transport->internal->serverOpQueue.push_back(opContext);
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
 
@@ -217,7 +222,7 @@ TEST_F(HomaTest, Transport_receiveServerOp)
 
     EXPECT_TRUE(op);
     EXPECT_EQ(opContext, op.op);
-    EXPECT_EQ(op.request, op.op->inMessage.get());
+    EXPECT_EQ(op.request, op.op->inMessage.load()->get());
     EXPECT_EQ(op.response, op.op->outMessage.get());
 }
 

@@ -16,12 +16,8 @@
 #ifndef HOMA_CORE_OPCONTEXT_H
 #define HOMA_CORE_OPCONTEXT_H
 
-#include "ObjectPool.h"
 #include "Receiver.h"
 #include "Sender.h"
-#include "SpinLock.h"
-
-#include <mutex>
 
 namespace Homa {
 namespace Core {
@@ -58,7 +54,7 @@ struct OpContext {
     Sender::OutboundMessage outMessage;
 
     /// Message to be received as part of this Op.  Processed by the Receiver.
-    Receiver::InboundMessage inMessage;
+    std::atomic<Receiver::InboundMessage*> inMessage;
 
     explicit OpContext(Transport* transport, Driver* driver,
                        bool isServerOp = true)
@@ -67,35 +63,8 @@ struct OpContext {
         , isServerOp(isServerOp)
         , state(State::NOT_STARTED)
         , outMessage(driver)
-        , inMessage()
+        , inMessage(nullptr)
     {}
-};
-
-/**
- * Provides a pool allocator for OpContext objects.
- *
- * This class is thread-safe.
- */
-class OpContextPool {
-  public:
-    explicit OpContextPool(Transport* transport);
-    ~OpContextPool() {}
-
-    OpContext* construct(bool isServerOp = true);
-    void destroy(OpContext* opContext);
-
-  private:
-    /// Monitor style lock for the pool.
-    SpinLock mutex;
-
-    /// The Core::Transport which manages this OpContextPool.
-    Transport* const transport;
-
-    /// Actual memory allocator for Message objects.
-    ObjectPool<OpContext> pool;
-
-    OpContextPool(const OpContextPool&) = delete;
-    OpContextPool& operator=(const OpContextPool&) = delete;
 };
 
 }  // namespace Core

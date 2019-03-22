@@ -25,14 +25,14 @@ namespace Core {
  *
  * @param scheduler
  *      Scheduler that should be informed when message packets are received.
- * @param opPool
- *      OpContextPool from which the Receiver can allocate OpContext objects.
  */
-Receiver::Receiver(Scheduler* scheduler, OpContextPool* opPool)
-    : scheduler(scheduler)
-    , opPool(opPool)
-    , inboundMessages()
+Receiver::Receiver(Scheduler* scheduler)
+    : mutex()
+    , scheduler(scheduler)
+    , registeredOps()
+    , unregisteredMessages()
     , receivedMessages()
+    , messagePool()
 {}
 
 /**
@@ -47,33 +47,48 @@ Receiver::~Receiver() {}
  *      The incoming packet to be processed.
  * @param driver
  *      The driver from which the packet was received.
+ * @return
+ *      OpContext which holds the Message associated with the incomming packet,
+ *      if the Message is fully received; otherwise, nullptr.
  */
-void
+OpContext*
 Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 {
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(packet->payload);
     uint16_t dataHeaderLength = sizeof(Protocol::Packet::DataHeader);
-    Protocol::MessageId msgId = header->common.messageId;
+    Protocol::MessageId id = header->common.messageId;
 
     OpContext* op = nullptr;
     InboundMessage* message = nullptr;
     {
-        std::lock_guard<SpinLock> lock(inboundMessages.mutex);
-        auto it = inboundMessages.message.find(msgId);
-        if (it != inboundMessages.message.end()) {
+        std::lock_guard<SpinLock> lock(mutex);
+        auto it = registeredOps.find(id);
+        if (it != registeredOps.end()) {
+            // Registered Op
             op = it->second;
+            assert(op->inMessage != nullptr);
+            message = op->inMessage;
         } else {
-            op = opPool->construct();
-            op->inMessage.id = msgId;  // Touch OK w/o lock; op not externalized
-            inboundMessages.message.insert(it, {msgId, op});
+            // Unregistered Message
+            auto it = unregisteredMessages.find(id);
+            if (it != unregisteredMessages.end()) {
+                // Existing unregistered message
+                message = it->second;
+            } else {
+                // New unregistered message
+                message = messagePool.construct();
+                // Touch OK w/o lock before externalizing.
+                message->id = id;
+                unregisteredMessages.insert(it, {id, message});
+                receivedMessages.push_back(message);
+            }
         }
-        message = &op->inMessage;
         message->mutex.lock();
     }
 
-    std::lock_guard<SpinLock> lock_op(message->mutex, std::adopt_lock);
-    assert(msgId == message->id);
+    std::lock_guard<SpinLock> lock_message(message->mutex, std::adopt_lock);
+    assert(id == message->id);
     if (!message->message) {
         uint32_t messageLength = header->totalLength;
         message->message.construct(driver, dataHeaderLength, messageLength);
@@ -87,7 +102,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     if (message->fullMessageReceived) {
         // drop packet
         driver->releasePackets(&packet, 1);
-        return;
+        return nullptr;
     }
 
     // Things that must be true (sanity check)
@@ -105,55 +120,94 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
                                       message->message->getNumPackets();
 
         // Let the Scheduler know that we received a packet.
-        scheduler->packetReceived(msgId, message->source,
+        scheduler->packetReceived(id, message->source,
                                   message->message->rawLength(),
                                   totalReceivedBytes);
         if (totalReceivedBytes >= message->message->rawLength()) {
-            std::lock_guard<SpinLock> lock(receivedMessages.mutex);
             message->fullMessageReceived = true;
-            receivedMessages.queue.push_back(op);
+        } else {
+            // Message not fully received
+            op = nullptr;
         }
     } else {
         // must be a duplicate packet; drop packet.
         driver->releasePackets(&packet, 1);
+        op = nullptr;
     }
+    return op;
 }
 
 /**
- * Return a fully received message if available.
+ * Return an InboundMessage that has not been registered with an OpContext.
+ *
+ * The Transport should regularly call this method to insure incomming messages
+ * are processed.  The Transport can choose to register the InboundMessage with
+ * an OpContext or drop the message if it is not of interest.
+ *
+ * Returned message may not be fully received.  The Receiver will continue to
+ * process packets into the returned InboundMessage until it is dropped.
  *
  * @return
- *      OpContext containing a fully received incomming Message if available;
- *      otherwise, nullptr.
+ *      A new InboundMessage which has been at least partially received but not
+ *      register, if available; otherwise, nullptr.
+ *
+ * @sa registerOp(), dropMessage()
  */
-OpContext*
+Receiver::InboundMessage*
 Receiver::receiveMessage()
 {
-    std::lock_guard<SpinLock> lock(receivedMessages.mutex);
-    OpContext* op = nullptr;
-    if (!receivedMessages.queue.empty()) {
-        op = receivedMessages.queue.front();
-        receivedMessages.queue.pop_front();
+    std::lock_guard<SpinLock> lock(mutex);
+    InboundMessage* message = nullptr;
+    if (!receivedMessages.empty()) {
+        message = receivedMessages.front();
+        receivedMessages.pop_front();
     }
-    return op;
+    return message;
+}
+
+/**
+ * Inform the Receiver that an InboundMessage returned by receiveMessage() is
+ * not needed and can be dropped.
+ *
+ * @param message
+ *      InboundMessage which will be dropped.
+ */
+void
+Receiver::dropMessage(InboundMessage* message)
+{
+    std::lock_guard<SpinLock> lock(mutex);
+    message->mutex.lock();
+    unregisteredMessages.erase(message->id);
+    messagePool.destroy(message);
 }
 
 /**
  * Inform the Receiver that an incomming Message is expected and should be
  * associated with a particular OpContext.
  *
- * @param msgId
+ * @param id
  *      Id of the Message that should be expected.
  * @param op
  *      OpContext where the expected Message should be accumulated.
  */
 void
-Receiver::registerMessage(Protocol::MessageId msgId, OpContext* op)
+Receiver::registerOp(Protocol::MessageId id, OpContext* op)
 {
-    std::lock_guard<SpinLock> lock(inboundMessages.mutex);
-    std::lock_guard<SpinLock> lock_message(op->inMessage.mutex);
-    op->inMessage.id = msgId;
-    inboundMessages.message.insert({msgId, op});
+    std::lock_guard<SpinLock> lock(mutex);
+    InboundMessage* message;
+    auto it = unregisteredMessages.find(id);
+    if (it != unregisteredMessages.end()) {
+        // Existing message
+        message = it->second;
+        unregisteredMessages.erase(it);
+    } else {
+        // New message
+        message = messagePool.construct();
+        // Touch OK w/o lock before externalizing.
+        message->id = id;
+    }
+    op->inMessage = message;
+    registeredOps.insert({id, op});
 }
 
 /**
@@ -164,11 +218,15 @@ Receiver::registerMessage(Protocol::MessageId msgId, OpContext* op)
  *      The OpContext which contains the Message that is no longer needed.
  */
 void
-Receiver::dropMessage(OpContext* op)
+Receiver::dropOp(OpContext* op)
 {
-    std::lock_guard<SpinLock> lock(inboundMessages.mutex);
-    std::lock_guard<SpinLock> lock_message(op->inMessage.mutex);
-    inboundMessages.message.erase(op->inMessage.id);
+    std::lock_guard<SpinLock> lock(mutex);
+    assert(op->inMessage != nullptr);
+    InboundMessage* message = op->inMessage;
+    message->mutex.lock();
+    op->inMessage = nullptr;
+    registeredOps.erase(message->id);
+    messagePool.destroy(message);
 }
 
 /**

@@ -37,7 +37,6 @@ add_library(Homa
     src/Debug.cc
     src/Homa.cc
     src/Message.cc
-    src/OpContext.cc
     src/Receiver.cc
     src/Scheduler.cc
     src/Sender.cc
@@ -227,7 +226,6 @@ add_executable(unit_test
     src/HomaTest.cc
     src/MessageTest.cc
     src/ObjectPoolTest.cc
-    src/OpContextTest.cc
     src/ReceiverTest.cc
     src/SchedulerTest.cc
     src/SenderTest.cc

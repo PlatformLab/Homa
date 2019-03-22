@@ -16,6 +16,7 @@
 #ifndef HOMA_CORE_TRANSPORT_H
 #define HOMA_CORE_TRANSPORT_H
 
+#include "ObjectPool.h"
 #include "OpContext.h"
 #include "Protocol.h"
 #include "Receiver.h"
@@ -34,9 +35,12 @@ namespace Homa {
 namespace Core {
 
 /**
- * Provides the implementation of Homa::Transport.
+ * Internal implementation of Homa::Transport.
  *
- * This class is thread-safe.
+ * This class is thread-safe for concurrent calls operating of different
+ * OpContext objects.  This class does NOT support concurrent calls on the same
+ * OpContext object; unsupported calls should be avoided by the calling
+ * interface (Homa::RemoteOp, Homa::ServerOp, Homa::Transport).
  */
 class Transport {
   public:
@@ -55,22 +59,10 @@ class Transport {
 
   private:
     /// Unique identifier for this transport.
-    const uint64_t transportId;
+    const std::atomic<uint64_t> transportId;
 
     /// Unique identifier for the next RemoteOp this transport sends.
     std::atomic<uint64_t> nextOpSequenceNumber;
-
-    /// Pool from which this transport will allocate OpContext objects.
-    OpContextPool opContextPool;
-
-    /// Collection of ServerOp contexts that are ready but have not yet been
-    /// delivered to the application.
-    struct {
-        /// Protects the serverOpQueue;
-        SpinLock mutex;
-        /// Holds the undelivered ServerOp contexts.
-        std::deque<OpContext*> queue;
-    } serverOpQueue;
 
     /// Module which controls the sending of message.
     std::unique_ptr<Core::Sender> sender;
@@ -81,8 +73,19 @@ class Transport {
     /// Module which receives packets and forms them into messages.
     std::unique_ptr<Core::Receiver> receiver;
 
+    /// Protects the internal state of the Transport.
+    SpinLock mutex;
+
+    /// Pool from which this transport will allocate OpContext objects.
+    ObjectPool<OpContext> opContextPool;
+
+    /// Collection of ServerOp contexts that are ready but have not yet been
+    /// delivered to the application.
+    std::deque<OpContext*> serverOpQueue;
+
     void processPackets();
-    void processMessages();
+    void processInboundMessages();
+    void processReceivedMessage(OpContext* op);
 };
 
 }  // namespace Core

@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -32,9 +32,10 @@ namespace Core {
 class Scheduler {
   public:
     explicit Scheduler(Driver* driver);
-    void packetReceived(Protocol::MessageId msgId, Driver::Address* sourceAddr,
-                        uint32_t totalMessageLength,
-                        uint32_t totalBytesReceived);
+    virtual void packetReceived(Protocol::MessageId msgId,
+                                Driver::Address* sourceAddr,
+                                uint32_t totalMessageLength,
+                                uint32_t totalBytesReceived);
 
   private:
     /// Driver that can be used to send packets.
