@@ -1,4 +1,5 @@
 /* Copyright (c) 2018-2019, Stanford University
+    Lock
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -54,6 +55,9 @@ Receiver::~Receiver() {}
 OpContext*
 Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 {
+    SpinLock::UniqueLock lock(mutex);
+    Tub<SpinLock::Lock> lock_op;
+
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(packet->payload);
     uint16_t dataHeaderLength = sizeof(Protocol::Packet::DataHeader);
@@ -61,33 +65,36 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 
     OpContext* op = nullptr;
     InboundMessage* message = nullptr;
-    {
-        std::lock_guard<SpinLock> lock(mutex);
-        auto it = registeredOps.find(id);
-        if (it != registeredOps.end()) {
-            // Registered Op
-            op = it->second;
-            assert(op->inMessage != nullptr);
-            message = op->inMessage;
+
+    auto it = registeredOps.find(id);
+    if (it != registeredOps.end()) {
+        // Registered Op
+        op = it->second;
+        assert(op->inMessage != nullptr);
+        message = op->inMessage;
+    } else {
+        // Unregistered Message
+        auto it = unregisteredMessages.find(id);
+        if (it != unregisteredMessages.end()) {
+            // Existing unregistered message
+            message = it->second;
         } else {
-            // Unregistered Message
-            auto it = unregisteredMessages.find(id);
-            if (it != unregisteredMessages.end()) {
-                // Existing unregistered message
-                message = it->second;
-            } else {
-                // New unregistered message
-                message = messagePool.construct();
-                // Touch OK w/o lock before externalizing.
-                message->id = id;
-                unregisteredMessages.insert(it, {id, message});
-                receivedMessages.push_back(message);
-            }
+            // New unregistered message
+            message = messagePool.construct();
+            // Touch OK w/o lock before externalizing.
+            message->id = id;
+            unregisteredMessages.insert(it, {id, message});
+            receivedMessages.push_back(message);
         }
-        message->mutex.lock();
     }
 
-    std::lock_guard<SpinLock> lock_message(message->mutex, std::adopt_lock);
+    // Lock handoff
+    if (op != nullptr) {
+        lock_op.construct(op->mutex);
+    }
+    SpinLock::Lock lock_message(message->mutex);
+    lock.unlock();
+
     assert(id == message->id);
     if (!message->message) {
         uint32_t messageLength = header->totalLength;
@@ -156,7 +163,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 Receiver::InboundMessage*
 Receiver::receiveMessage()
 {
-    std::lock_guard<SpinLock> lock(mutex);
+    SpinLock::Lock lock(mutex);
     InboundMessage* message = nullptr;
     if (!receivedMessages.empty()) {
         message = receivedMessages.front();
@@ -175,10 +182,11 @@ Receiver::receiveMessage()
 void
 Receiver::dropMessage(InboundMessage* message)
 {
-    std::lock_guard<SpinLock> lock(mutex);
+    SpinLock::Lock lock(mutex);
     message->mutex.lock();
-    unregisteredMessages.erase(message->id);
-    messagePool.destroy(message);
+    if (unregisteredMessages.erase(message->id) > 0) {
+        messagePool.destroy(message);
+    }
 }
 
 /**
@@ -193,7 +201,8 @@ Receiver::dropMessage(InboundMessage* message)
 void
 Receiver::registerOp(Protocol::MessageId id, OpContext* op)
 {
-    std::lock_guard<SpinLock> lock(mutex);
+    SpinLock::Lock lock(mutex);
+    SpinLock::Lock lock_op(op->mutex);
     InboundMessage* message;
     auto it = unregisteredMessages.find(id);
     if (it != unregisteredMessages.end()) {
@@ -220,13 +229,15 @@ Receiver::registerOp(Protocol::MessageId id, OpContext* op)
 void
 Receiver::dropOp(OpContext* op)
 {
-    std::lock_guard<SpinLock> lock(mutex);
-    assert(op->inMessage != nullptr);
-    InboundMessage* message = op->inMessage;
-    message->mutex.lock();
-    op->inMessage = nullptr;
-    registeredOps.erase(message->id);
-    messagePool.destroy(message);
+    SpinLock::Lock lock(mutex);
+    SpinLock::Lock lock_op(op->mutex);
+    if (op->inMessage != nullptr) {
+        InboundMessage* message = op->inMessage;
+        message->mutex.lock();
+        op->inMessage = nullptr;
+        registeredOps.erase(message->id);
+        messagePool.destroy(message);
+    }
 }
 
 /**

@@ -26,7 +26,6 @@
 #include "Tub.h"
 
 #include <deque>
-#include <mutex>
 #include <unordered_map>
 
 namespace Homa {
@@ -68,7 +67,7 @@ class Receiver {
          */
         Message* get()
         {
-            std::lock_guard<SpinLock> lock(mutex);
+            SpinLock::Lock lock(mutex);
             return message.get();
         }
 
@@ -85,7 +84,7 @@ class Receiver {
          */
         bool isReady() const
         {
-            std::lock_guard<SpinLock> lock(mutex);
+            SpinLock::Lock lock(mutex);
             return fullMessageReceived;
         }
 

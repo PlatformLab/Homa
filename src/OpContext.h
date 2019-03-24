@@ -18,6 +18,7 @@
 
 #include "Receiver.h"
 #include "Sender.h"
+#include "SpinLock.h"
 
 namespace Homa {
 namespace Core {
@@ -50,6 +51,9 @@ struct OpContext {
     /// This operation's current state.
     std::atomic<State> state;
 
+    /// Mutex for controlling internal access to OpContext members.
+    SpinLock mutex;
+
     /// Message to be sent out as part of this Op.  Processed by the Sender.
     Sender::OutboundMessage outMessage;
 
@@ -62,6 +66,7 @@ struct OpContext {
         , retained(false)
         , isServerOp(isServerOp)
         , state(State::NOT_STARTED)
+        , mutex()
         , outMessage(driver)
         , inMessage(nullptr)
     {}

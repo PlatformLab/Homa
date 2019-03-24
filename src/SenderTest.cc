@@ -23,8 +23,6 @@
 
 #include <Homa/Debug.h>
 
-#include <mutex>
-
 namespace Homa {
 namespace Core {
 namespace {
@@ -73,7 +71,7 @@ class SenderTest : public ::testing::Test {
         message->grantOffset = grantOffset;
         message->grantIndex =
             message->grantOffset / message->message.PACKET_DATA_LENGTH;
-        sender->outboundMessages.message.insert({id, op});
+        sender->outboundMessages.insert({id, op});
         return message;
     }
 };
@@ -172,8 +170,8 @@ TEST_F(SenderTest, sendMessage_basic)
                         op->outMessage.message.PACKET_HEADER_LENGTH;
     Driver::Address* destination = (Driver::Address*)22;
 
-    EXPECT_FALSE(sender.outboundMessages.message.find(msgId) !=
-                 sender.outboundMessages.message.end());
+    EXPECT_FALSE(sender.outboundMessages.find(msgId) !=
+                 sender.outboundMessages.end());
 
     sender.sendMessage(msgId, destination, op);
 
@@ -184,9 +182,9 @@ TEST_F(SenderTest, sendMessage_basic)
     EXPECT_EQ(op->outMessage.id, header->common.messageId);
     EXPECT_EQ(destination, op->outMessage.destination);
     EXPECT_EQ(op->outMessage.message.messageLength, header->totalLength);
-    EXPECT_TRUE(sender.outboundMessages.message.find(msgId) !=
-                sender.outboundMessages.message.end());
-    EXPECT_EQ(op, sender.outboundMessages.message.find(msgId)->second);
+    EXPECT_TRUE(sender.outboundMessages.find(msgId) !=
+                sender.outboundMessages.end());
+    EXPECT_EQ(op, sender.outboundMessages.find(msgId)->second);
     EXPECT_EQ(419U, op->outMessage.grantOffset);
     EXPECT_EQ(0U, op->outMessage.grantIndex);
 }
@@ -306,9 +304,9 @@ TEST_F(SenderTest, sendMessage_unsheduledLimit)
 
     sender.sendMessage(msgId, destination, op);
 
-    EXPECT_TRUE(sender.outboundMessages.message.find(msgId) !=
-                sender.outboundMessages.message.end());
-    EXPECT_EQ(op, sender.outboundMessages.message.find(msgId)->second);
+    EXPECT_TRUE(sender.outboundMessages.find(msgId) !=
+                sender.outboundMessages.end());
+    EXPECT_EQ(op, sender.outboundMessages.find(msgId)->second);
     EXPECT_EQ(msgId, op->outMessage.id);
     EXPECT_EQ(destination, op->outMessage.destination);
     EXPECT_EQ(4999U, op->outMessage.grantOffset);
@@ -325,8 +323,8 @@ TEST_F(SenderTest, dropMessage)
 
     sender.dropMessage(op);
 
-    EXPECT_FALSE(sender.outboundMessages.message.find(msgId) !=
-                 sender.outboundMessages.message.end());
+    EXPECT_FALSE(sender.outboundMessages.find(msgId) !=
+                 sender.outboundMessages.end());
 }
 
 TEST_F(SenderTest, poll)
@@ -409,7 +407,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
     EXPECT_EQ(0, message->grantIndex);
     EXPECT_EQ(-1, message->sentIndex);
 
-    std::lock_guard<SpinLock> _(sender.outboundMessages.mutex);
+    sender.sending.test_and_set();
 
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
 
@@ -420,7 +418,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
 
 TEST_F(SenderTest, trySend_nothingToSend)
 {
-    EXPECT_TRUE(sender.outboundMessages.message.empty());
+    EXPECT_TRUE(sender.outboundMessages.empty());
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
     sender.trySend();
 }

@@ -19,7 +19,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <mutex>
 #include <utility>
 
 namespace Homa {
@@ -57,11 +56,13 @@ Transport::~Transport() = default;
 OpContext*
 Transport::allocOp()
 {
-    OpContext* op = nullptr;
-    {
-        std::lock_guard<SpinLock> lock(mutex);
-        op = opContextPool.construct(this, driver, false);
-    }
+    SpinLock::UniqueLock lock(mutex);
+    OpContext* op = opContextPool.construct(this, driver, false);
+
+    // Lock handoff
+    SpinLock::Lock lock_op(op->mutex);
+    lock.unlock();
+
     op->outMessage.get()->defineHeader<Protocol::Message::Header>();
     op->retained.store(true);
     return op;
@@ -74,15 +75,16 @@ Transport::allocOp()
 OpContext*
 Transport::receiveOp()
 {
+    SpinLock::UniqueLock lock(mutex);
     OpContext* op = nullptr;
-    {
-        std::lock_guard<SpinLock> lock(mutex);
-        if (!serverOpQueue.empty()) {
-            op = serverOpQueue.front();
-            serverOpQueue.pop_front();
-        }
-    }
-    if (op != nullptr) {
+    if (!serverOpQueue.empty()) {
+        op = serverOpQueue.front();
+        serverOpQueue.pop_front();
+
+        // Lock handoff
+        SpinLock::Lock lock_op(op->mutex);
+        lock.unlock();
+
         op->outMessage.get()->defineHeader<Protocol::Message::Header>();
         op->retained.store(true);
     }
@@ -119,15 +121,17 @@ Transport::releaseOp(OpContext* op)
 void
 Transport::sendRequest(OpContext* op, Driver::Address* destination)
 {
-    // Transport::mutex not needed
+    SpinLock::UniqueLock lock_op(op->mutex);
     if (op->isServerOp) {
         Protocol::MessageId requestId(op->inMessage.load()->getId());
         Protocol::MessageId delegationId(Protocol::OpId(requestId),
                                          requestId.tag + 1);
+        lock_op.unlock();  // Allow Sender to take the lock.
         sender->sendMessage(delegationId, destination, op);
     } else {
         Protocol::OpId opId(transportId, nextOpSequenceNumber++);
         op->state.store(OpContext::State::IN_PROGRESS);
+        lock_op.unlock();  // Allow Sender/Receiver to take the lock.
         receiver->registerOp({opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG},
                              op);
         sender->sendMessage({opId, Protocol::MessageId::INITIAL_REQUEST_TAG},
@@ -146,6 +150,7 @@ Transport::sendRequest(OpContext* op, Driver::Address* destination)
 void
 Transport::sendReply(OpContext* op)
 {
+    SpinLock::UniqueLock lock_op(op->mutex);
     assert(op->isServerOp);
     Protocol::OpId opId(op->inMessage.load()->getId());
     Driver::Address* replyAddress =
@@ -154,6 +159,7 @@ Transport::sendReply(OpContext* op)
                                 ->getHeader<Protocol::Message::Header>()
                                 ->replyAddress);
     op->state.store(OpContext::State::IN_PROGRESS);
+    lock_op.unlock();  // Allow Sender to take the lock.
     sender->sendMessage({opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG},
                         replyAddress, op);
 }
@@ -219,7 +225,7 @@ Transport::processInboundMessages()
             // Incomming message is a request.
             OpContext* op = nullptr;
             {
-                std::lock_guard<SpinLock> lock(mutex);
+                SpinLock::Lock lock(mutex);
                 op = opContextPool.construct(this, driver, true);
             }
             receiver->registerOp(id, op);
@@ -237,10 +243,11 @@ Transport::processInboundMessages()
 void
 Transport::processReceivedMessage(OpContext* op)
 {
+    SpinLock::Lock lock(mutex);
     if (op != nullptr) {
+        SpinLock::Lock lock_op(op->mutex);
         assert(op->inMessage.load()->isReady());
         if (op->isServerOp) {
-            std::lock_guard<SpinLock> lock(mutex);
             serverOpQueue.push_back(op);
         } else {
             op->state.store(OpContext::State::COMPLETED);

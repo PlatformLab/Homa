@@ -23,7 +23,6 @@
 #include "SpinLock.h"
 
 #include <atomic>
-#include <mutex>
 #include <unordered_map>
 
 namespace Homa {
@@ -36,6 +35,8 @@ class OpContext;
  * The Sender takes takes outgoing messages and sends out the message's packets
  * based on Homa's send policy and information (GRANTS) received from  the
  * Scheduler at the message's destination.
+ *
+ * This class is thread-safe.
  */
 class Sender {
   public:
@@ -51,8 +52,7 @@ class Sender {
          * Construct an OutboundMessage.
          */
         explicit OutboundMessage(Driver* driver)
-            : mutex()
-            , id(0, 0, 0)
+            : id(0, 0, 0)
             , destination(nullptr)
             , message(driver, sizeof(Protocol::Packet::DataHeader), 0)
             , grantOffset(0)
@@ -69,13 +69,10 @@ class Sender {
          */
         Message* get()
         {
-            std::lock_guard<SpinLock> lock(mutex);
             return &message;
         }
 
       private:
-        /// Monitor style lock.
-        SpinLock mutex;
         /// Contains the unique identifier for this message.
         Protocol::MessageId id;
         /// Contains destination address this message.
@@ -105,18 +102,17 @@ class Sender {
 
   private:
     /// Protects the top-level
-    SpinLock sendMutex;
+    SpinLock mutex;
 
-    /// Tracks the set of outbound messages.
-    struct {
-        /// Protects the outboundMessages structure.
-        SpinLock mutex;
+    /// Tracks the set of outbound messages; contains the associated OpContext
+    /// for a given MessageId.
+    std::unordered_map<Protocol::MessageId, OpContext*,
+                       Protocol::MessageId::Hasher>
+        outboundMessages;
 
-        /// Contains the associated OpContext for a given MessageId.
-        std::unordered_map<Protocol::MessageId, OpContext*,
-                           Protocol::MessageId::Hasher>
-            message;
-    } outboundMessages;
+    /// True if the Sender is currently executing trySend(); false, otherwise.
+    /// Use to prevent concurrent calls to trySend() from blocking on eachother.
+    std::atomic_flag sending = ATOMIC_FLAG_INIT;
 
     void trySend();
 };

@@ -17,6 +17,7 @@
 #define HOMA_SPINLOCK_H
 
 #include <atomic>
+#include <mutex>
 
 namespace Homa {
 
@@ -44,7 +45,7 @@ class SpinLock {
      */
     explicit SpinLock()
     {
-        // It should have already been initilized to false but we clear it here
+        // It should have already been initialized to false but we clear it here
         // just in case.
         flag.clear();
     }
@@ -89,6 +90,16 @@ class SpinLock {
     {
         flag.clear();
     }
+
+    /**
+     * Define a type alias for an RAII SpinLock lock_guard for convience.
+     */
+    using Lock = std::lock_guard<SpinLock>;
+
+    /**
+     * Define a type alias for a movable SpinLock unique_lock for convience.
+     */
+    using UniqueLock = std::unique_lock<SpinLock>;
 
   private:
     // Disable copy and assign

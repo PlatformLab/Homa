@@ -32,8 +32,6 @@
 #include <rte_ring.h>
 #include <rte_version.h>
 
-#include <mutex>
-
 #include <unistd.h>
 
 namespace Homa {
@@ -298,7 +296,7 @@ DpdkDriverImpl::~DpdkDriverImpl()
 Driver::Address*
 DpdkDriverImpl::getAddress(std::string const* const addressString)
 {
-    std::lock_guard<SpinLock> lock(addressLock);
+    SpinLock::Lock lock(addressLock);
 
     Driver::Address* addr;
 
@@ -328,7 +326,7 @@ DpdkDriverImpl::allocPacket()
 {
     DpdkPacket* packet = _allocMbufPacket();
     if (unlikely(packet == nullptr)) {
-        std::lock_guard<SpinLock> lock(packetLock);
+        SpinLock::Lock lock(packetLock);
         OverflowBuffer* buf = overflowBufferPool.construct();
         packet = packetPool.construct(buf);
         NOTICE("OverflowBuffer used.");
@@ -468,7 +466,7 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
     // as well as from the loopback ring.
     uint32_t incomingPkts = 0;
     {
-        std::lock_guard<SpinLock> lock(rxLock);
+        SpinLock::Lock lock(rxLock);
         incomingPkts = rte_eth_rx_burst(portId, 0, mPkts,
                                         Util::downCast<uint16_t>(maxPackets));
     }
@@ -535,7 +533,7 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
 
         DpdkPacket* packet = nullptr;
         {
-            std::lock_guard<SpinLock> lock(packetLock);
+            SpinLock::Lock lock(packetLock);
             packet = packetPool.construct(m, payload);
         }
         packet->address = sender;
@@ -552,7 +550,7 @@ void
 DpdkDriverImpl::releasePackets(Packet* packets[], uint16_t numPackets)
 {
     for (uint16_t i = 0; i < numPackets; ++i) {
-        std::lock_guard<SpinLock> lock(packetLock);
+        SpinLock::Lock lock(packetLock);
         DpdkPacket* packet = static_cast<DpdkPacket*>(packets[i]);
         if (likely(packet->bufType == DpdkPacket::MBUF)) {
             rte_pktmbuf_free(packet->bufRef.mbuf);
@@ -818,7 +816,7 @@ DpdkDriverImpl::_allocMbufPacket()
 
     // Perform packet operations with the lock held.
     {
-        std::lock_guard<SpinLock> _(packetLock);
+        SpinLock::Lock _(packetLock);
         packet = packetPool.construct(mbuf, buf + PACKET_HDR_LEN);
     }
     return packet;

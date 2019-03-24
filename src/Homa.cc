@@ -25,6 +25,7 @@ RemoteOp::RemoteOp(Transport* transport)
     , response(nullptr)
     , op(transport->internal->allocOp())
 {
+    SpinLock::Lock lock(op->mutex);
     request = op->outMessage.get();
 }
 
@@ -46,6 +47,7 @@ RemoteOp::send(Driver::Address* destination)
 bool
 RemoteOp::isReady()
 {
+    SpinLock::Lock lock(op->mutex);
     Core::OpContext::State state = op->state.load();
     switch (state) {
         case Core::OpContext::State::NOT_STARTED:
@@ -147,6 +149,7 @@ Transport::receiveServerOp()
     ServerOp op;
     op.op = internal->receiveOp();
     if (op.op != nullptr) {
+        SpinLock::Lock lock(op.op->mutex);
         op.request = op.op->inMessage.load()->get();
         op.response = op.op->outMessage.get();
     }

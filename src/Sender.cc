@@ -18,7 +18,6 @@
 #include "OpContext.h"
 
 #include <algorithm>
-#include <mutex>
 
 namespace Homa {
 namespace Core {
@@ -31,8 +30,9 @@ const uint32_t RTT_TIME_US = 5;
  * Sender Constructor.
  */
 Sender::Sender()
-    : sendMutex()
+    : mutex()
     , outboundMessages()
+    , sending()
 {}
 
 /**
@@ -52,24 +52,27 @@ Sender::~Sender() {}
 void
 Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
 {
+    SpinLock::UniqueLock lock(mutex);
+
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    OutboundMessage* message = nullptr;
+    OpContext* op = nullptr;
 
-    {
-        std::lock_guard<SpinLock> lock(outboundMessages.mutex);
-        auto it = outboundMessages.message.find(msgId);
-        if (it != outboundMessages.message.end()) {
-            message = &it->second->outMessage;
-        } else {
-            // No message for this grant; grant must be old; just drop it.
-            driver->releasePackets(&packet, 1);
-            return;
-        }
-        message->mutex.lock();
+    auto it = outboundMessages.find(msgId);
+    if (it != outboundMessages.end()) {
+        op = it->second;
+    } else {
+        // No message for this grant; grant must be old; just drop it.
+        driver->releasePackets(&packet, 1);
+        return;
     }
-    std::lock_guard<SpinLock> lock_op(message->mutex, std::adopt_lock);
+
+    // Lock handoff
+    SpinLock::Lock lock_op(op->mutex);
+    lock.unlock();
+
+    OutboundMessage* message = &op->outMessage;
     message->grantOffset = std::max(message->grantOffset, header->offset);
     message->grantOffset =
         std::min(message->grantOffset, message->message.rawLength() - 1);
@@ -94,25 +97,23 @@ void
 Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
                     OpContext* op)
 {
-    {
-        std::lock_guard<SpinLock> lock(outboundMessages.mutex);
-        if (outboundMessages.message.find(id) !=
-            outboundMessages.message.end()) {
-            // message already sending, drop the send request.
-            WARNING(
-                "Duplicate call to sendMessage for msgId (%lu:%lu:%u); send "
-                "request dropped.",
-                id.transportId, id.sequence, id.tag);
-            return;
-        } else {
-            outboundMessages.message.insert({id, op});
-            // Acquire this the outMessage lock with the top-level lock held
-            // ensures we don't race with other calls involving this message.
-            op->outMessage.mutex.lock();
-        }
+    SpinLock::UniqueLock lock(mutex);
+    SpinLock::Lock lock_op(op->mutex);
+
+    if (outboundMessages.find(id) != outboundMessages.end()) {
+        // message already sending, drop the send request.
+        WARNING(
+            "Duplicate call to sendMessage for msgId (%lu:%lu:%u); send "
+            "request dropped.",
+            id.transportId, id.sequence, id.tag);
+        return;
+    } else {
+        outboundMessages.insert({id, op});
     }
+
+    lock.unlock();  // End sender critical section.
+
     OutboundMessage* message = &op->outMessage;
-    std::lock_guard<SpinLock> lock(message->mutex, std::adopt_lock);
     message->id = id;
     message->destination = destination;
     uint32_t unscheduledBytes =
@@ -159,12 +160,12 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
 void
 Sender::dropMessage(OpContext* op)
 {
-    std::lock_guard<SpinLock> lock(outboundMessages.mutex);
-    std::lock_guard<SpinLock> lock_message(op->outMessage.mutex);
-    auto it = outboundMessages.message.find(op->outMessage.id);
-    if (it != outboundMessages.message.end()) {
+    SpinLock::Lock lock(mutex);
+    SpinLock::Lock lock_message(op->mutex);
+    auto it = outboundMessages.find(op->outMessage.id);
+    if (it != outboundMessages.end()) {
         assert(op == it->second);
-        outboundMessages.message.erase(it);
+        outboundMessages.erase(it);
     }
 }
 
@@ -185,46 +186,47 @@ Sender::poll()
 void
 Sender::trySend()
 {
-    // TODO(cstlee): improve concurrency
-    if (!outboundMessages.mutex.try_lock()) {
-        // a different poller is already working on it.
+    // Skip sending if another poller is already working on it.
+    if (sending.test_and_set()) {
         return;
     }
-    std::lock_guard<SpinLock> lock(outboundMessages.mutex, std::adopt_lock);
-    OutboundMessage* message = nullptr;
-    auto it = outboundMessages.message.begin();
-    while (it != outboundMessages.message.end()) {
-        message = &it->second->outMessage;
-        message->mutex.lock();
+
+    SpinLock::Lock lock(mutex);
+    OpContext* op = nullptr;
+    auto it = outboundMessages.begin();
+    while (it != outboundMessages.end()) {
+        op = it->second;
+        op->mutex.lock();
+        OutboundMessage* message = &op->outMessage;
         if (message->sentIndex + 1 < message->message.getNumPackets() &&
             message->grantIndex > message->sentIndex) {
             // found a message to send.
             break;
         }
-        message->mutex.unlock();
-        message = nullptr;
+        op->mutex.unlock();
+        op = nullptr;
         it++;
     }
 
-    if (message == nullptr) {
-        // nothing found to send
-        return;
+    // If there is a message to send; send the next packets.
+    if (op != nullptr) {
+        SpinLock::Lock lock_op(op->mutex, std::adopt_lock);
+        OutboundMessage* message = &op->outMessage;
+        assert(message->grantIndex < message->message.getNumPackets());
+        int numPkts = message->grantIndex - message->sentIndex;
+        for (int i = 1; i <= numPkts; ++i) {
+            Driver::Packet* packet =
+                message->message.getPacket(message->sentIndex + i);
+            message->message.driver->sendPackets(&packet, 1);
+        }
+        message->sentIndex = message->grantIndex;
+        if (message->sentIndex + 1 >= message->message.getNumPackets()) {
+            // We have finished sending the message.
+            message->sent = true;
+        }
     }
 
-    // otherwise; send the next packets.
-    std::lock_guard<SpinLock> lock_op(message->mutex, std::adopt_lock);
-    assert(message->grantIndex < message->message.getNumPackets());
-    int numPkts = message->grantIndex - message->sentIndex;
-    for (int i = 1; i <= numPkts; ++i) {
-        Driver::Packet* packet =
-            message->message.getPacket(message->sentIndex + i);
-        message->message.driver->sendPackets(&packet, 1);
-    }
-    message->sentIndex = message->grantIndex;
-    if (message->sentIndex + 1 >= message->message.getNumPackets()) {
-        // We have finished sending the message.
-        message->sent = true;
-    }
+    sending.clear();
 }
 
 }  // namespace Core
