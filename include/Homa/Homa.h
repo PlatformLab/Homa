@@ -85,7 +85,7 @@ class Message {
  *
  * An RPC (Remote Procedure Call) is a simple example of a RemoteOp.  Unlike
  * RPCs, however, the processing of the operation maybe fully or partially
- * deligated by one server to another.  As such, the response may not come from
+ * delegated by one server to another.  As such, the response may not come from
  * the server that initally received the request.
  *
  * This class is NOT thread-safe.
@@ -155,10 +155,10 @@ class RemoteOp {
  * processing the operation.
  *
  * The request may come directly from the client or from another server that is
- * deligating the processing all or part of the operation.  The response can
- * either be sent back sent to the original client or deligated to a different
+ * delegating the processing all or part of the operation.  The response can
+ * either be sent back sent to the original client or delegated to a different
  * server for additional processing. Used by servers to handle incomming direct
- * or deligated requests.
+ * or delegated requests.
  *
  * This class is NOT thread-safe.
  */
@@ -198,21 +198,21 @@ class ServerOp {
     void reply();
 
     /**
-     * Send the outMessage as a deligated request to the provided destination.
+     * Send the outMessage as a delegated request to the provided destination.
      *
      * @param destination
-     *      The network address to which the deligated request will be sent.
+     *      The network address to which the delegated request will be sent.
      */
-    void deligate(Driver::Address* destination);
+    void delegate(Driver::Address* destination);
 
     /// Message containing a direct or indirect operation request.
     const Message* request;
 
     /// Message containing the result of processing the operation.  Message can
-    /// be sent as a reply back to the client or deligated to a different server
+    /// be sent as a reply back to the client or delegated to a different server
     /// for further processing.
     ///
-    /// @sa reply(), deligate()
+    /// @sa reply(), delegate()
     Message* response;
 
   private:

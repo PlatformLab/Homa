@@ -131,7 +131,7 @@ ServerOp::reply()
 }
 
 void
-ServerOp::deligate(Driver::Address* destination)
+ServerOp::delegate(Driver::Address* destination)
 {
     response = nullptr;
     op->transport->sendRequest(op, destination);
