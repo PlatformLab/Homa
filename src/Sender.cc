@@ -15,9 +15,9 @@
 
 #include "Sender.h"
 
-#include "OpContext.h"
-
 #include <algorithm>
+
+#include "Debug.h"
 
 namespace Homa {
 namespace Core {
@@ -57,7 +57,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    OpContext* op = nullptr;
+    Transport::Op* op = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
@@ -89,13 +89,13 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
  * @param destination
  *      Destination address for this message.
  * @param op
- *      OpContext containing the OutboundMessage to be sent.
+ *      Transport::Op containing the OutboundMessage to be sent.
  *
  * @sa dropMessage()
  */
 void
 Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
-                    OpContext* op)
+                    Transport::Op* op)
 {
     SpinLock::UniqueLock lock(mutex);
     SpinLock::Lock lock_op(op->mutex);
@@ -152,13 +152,13 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
 
 /**
  * Inform the Sender that a Message is no longer needed and the associated
- * OpContext should no longer be used.
+ * Transport::Op should no longer be used.
  *
  * @param op
- *      The OpContext which contains the Message that is no longer needed.
+ *      The Transport::Op which contains the Message that is no longer needed.
  */
 void
-Sender::dropMessage(OpContext* op)
+Sender::dropMessage(Transport::Op* op)
 {
     SpinLock::Lock lock(mutex);
     SpinLock::Lock lock_message(op->mutex);
@@ -192,7 +192,7 @@ Sender::trySend()
     }
 
     SpinLock::Lock lock(mutex);
-    OpContext* op = nullptr;
+    Transport::Op* op = nullptr;
     auto it = outboundMessages.begin();
     while (it != outboundMessages.end()) {
         op = it->second;

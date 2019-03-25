@@ -16,9 +16,7 @@
 #ifndef HOMA_CORE_OPCONTEXT_H
 #define HOMA_CORE_OPCONTEXT_H
 
-#include "Receiver.h"
-#include "Sender.h"
-#include "SpinLock.h"
+#include <atomic>
 
 namespace Homa {
 namespace Core {
@@ -30,15 +28,20 @@ class Transport;
  * Holds all the relevant data and metadata for a RemoteOp or ServerOp.
  */
 struct OpContext {
+    /// Constructor.
+    explicit OpContext(Transport* transport)
+        : transport(transport)
+        , state(State::NOT_STARTED)
+    {}
+
+    /// Return a pointer to the Outbound Message.
+    virtual Message* getOutMessage() = 0;
+
+    /// Return a pointer to the Inbound Message.
+    virtual const Message* getInMessage() = 0;
+
     /// The Core::Transport which manages this OpContext.
     Transport* const transport;
-
-    /// True if this context is being held by the application in a RemoteOp or
-    /// a ServerOp; otherwise, false.
-    std::atomic<bool> retained;
-
-    /// True if this context is for a ServerOp; false it is for a RemoteOp.
-    const bool isServerOp;
 
     /// Possible states of the operation.
     enum class State {
@@ -50,26 +53,6 @@ struct OpContext {
 
     /// This operation's current state.
     std::atomic<State> state;
-
-    /// Mutex for controlling internal access to OpContext members.
-    SpinLock mutex;
-
-    /// Message to be sent out as part of this Op.  Processed by the Sender.
-    Sender::OutboundMessage outMessage;
-
-    /// Message to be received as part of this Op.  Processed by the Receiver.
-    std::atomic<Receiver::InboundMessage*> inMessage;
-
-    explicit OpContext(Transport* transport, Driver* driver,
-                       bool isServerOp = true)
-        : transport(transport)
-        , retained(false)
-        , isServerOp(isServerOp)
-        , state(State::NOT_STARTED)
-        , mutex()
-        , outMessage(driver)
-        , inMessage(nullptr)
-    {}
 };
 
 }  // namespace Core

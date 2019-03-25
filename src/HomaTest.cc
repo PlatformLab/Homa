@@ -73,7 +73,7 @@ TEST_F(HomaTest, RemoteOp_constructor)
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
     RemoteOp op(transport);
 
-    EXPECT_EQ(op.op->outMessage.get(), op.request);
+    EXPECT_EQ(op.op->getOutMessage(), op.request);
 }
 
 TEST_F(HomaTest, RemoteOp_destructor)
@@ -126,7 +126,7 @@ TEST_F(HomaTest, RemoteOp_isReady_FAILED)
 
     op.op->state = Core::OpContext::State::FAILED;
     EXPECT_TRUE(op.isReady());
-    EXPECT_EQ(op.op->outMessage.get(), op.request);
+    EXPECT_EQ(op.op->getOutMessage(), op.request);
     EXPECT_EQ(nullptr, op.response);
 }
 
@@ -136,15 +136,15 @@ TEST_F(HomaTest, RemoteOp_isReady_COMPLETED)
     RemoteOp op(transport);
     op.request = nullptr;
     op.response = nullptr;
-    Core::Receiver::InboundMessage inMessage;
+    Core::InboundMessage inMessage;
     inMessage.id = Protocol::MessageId(42, 32, 22);
     inMessage.message.construct(&mockDriver, 28, 0);
-    op.op->inMessage = &inMessage;
+    static_cast<Core::Transport::Op*>(op.op)->inMessage = &inMessage;
 
     op.op->state = Core::OpContext::State::COMPLETED;
     EXPECT_TRUE(op.isReady());
-    EXPECT_EQ(op.op->outMessage.get(), op.request);
-    EXPECT_EQ(op.op->inMessage.load()->get(), op.response);
+    EXPECT_EQ(op.op->getOutMessage(), op.request);
+    EXPECT_EQ(op.op->getInMessage(), op.response);
 }
 
 TEST_F(HomaTest, RemoteOp_wait)
@@ -207,30 +207,30 @@ TEST_F(HomaTest, Transport_receiveServerOp)
 {
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
-    Core::OpContext* opContext = transport->internal->opContextPool.construct(
+    Core::Transport::Op* op = transport->internal->opPool.construct(
         transport->internal.get(), transport->internal->driver);
-    Core::Receiver::InboundMessage inMessage;
+    Core::InboundMessage inMessage;
     inMessage.id = Protocol::MessageId(42, 1, 1);
     inMessage.message.construct(&mockDriver,
                                 sizeof(Protocol::Packet::DataHeader), 0);
-    opContext->inMessage = &inMessage;
-    transport->internal->serverOpQueue.push_back(opContext);
+    op->inMessage = &inMessage;
+    transport->internal->serverOpQueue.push_back(op);
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
 
-    ServerOp op = transport->receiveServerOp();
+    ServerOp serverOp = transport->receiveServerOp();
 
-    EXPECT_TRUE(op);
-    EXPECT_EQ(opContext, op.op);
-    EXPECT_EQ(op.request, op.op->inMessage.load()->get());
-    EXPECT_EQ(op.response, op.op->outMessage.get());
+    EXPECT_TRUE(serverOp);
+    EXPECT_EQ(op, serverOp.op);
+    EXPECT_EQ(serverOp.request, serverOp.op->getInMessage());
+    EXPECT_EQ(serverOp.response, serverOp.op->getOutMessage());
 }
 
 TEST_F(HomaTest, Transport_receiveServerOp_empty)
 {
-    ServerOp op = transport->receiveServerOp();
-    EXPECT_FALSE(op);
-    EXPECT_EQ(nullptr, op.op);
+    ServerOp serverOp = transport->receiveServerOp();
+    EXPECT_FALSE(serverOp);
+    EXPECT_EQ(nullptr, serverOp.op);
 }
 
 }  // namespace

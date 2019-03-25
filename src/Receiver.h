@@ -18,21 +18,20 @@
 
 #include "Homa/Driver.h"
 
-#include "Message.h"
+#include <deque>
+#include <unordered_map>
+
+#include "InboundMessage.h"
 #include "ObjectPool.h"
 #include "Protocol.h"
 #include "Scheduler.h"
 #include "SpinLock.h"
-#include "Tub.h"
-
-#include <deque>
-#include <unordered_map>
+#include "Transport.h"
 
 namespace Homa {
 namespace Core {
 
 // Forward declaration
-class OpContext;
 
 /**
  * The Receiver processes incomming Data packets, assembling them into messages
@@ -42,74 +41,14 @@ class OpContext;
  */
 class Receiver {
   public:
-    /**
-     * Represents an incoming message that is being assembled or being processed
-     * by the application.
-     *
-     * InboundMessage objects are contained in the OpContext but should only be
-     * accessed by the Receiver.
-     */
-    class InboundMessage {
-      public:
-        InboundMessage()
-            // : Message(driver, dataHeaderLength, messageLength)
-            : mutex()
-            , id(0, 0, 0)
-            , source(nullptr)
-            , message()
-            , fullMessageReceived(false)
-        {}
-
-        /**
-         * Return a pointer to a Message object that can be read by applications
-         * of the Transport.  Otherwise, nullptr will be returned when no
-         * Message is available.
-         */
-        Message* get()
-        {
-            SpinLock::Lock lock(mutex);
-            return message.get();
-        }
-
-        /**
-         * Return the unique identifier for this Message.
-         */
-        Protocol::MessageId getId()
-        {
-            return id;
-        }
-
-        /**
-         * Return true if the InboundMessage has been received; false otherwise.
-         */
-        bool isReady() const
-        {
-            SpinLock::Lock lock(mutex);
-            return fullMessageReceived;
-        }
-
-      private:
-        /// Monitor style lock.
-        mutable SpinLock mutex;
-        /// Contains the unique identifier for this message.
-        Protocol::MessageId id;
-        /// Contains source address this message.
-        Driver::Address* source;
-        /// Collection of packets being received.
-        Tub<Message> message;
-        /// True if all packets of the message have been received.
-        bool fullMessageReceived;
-
-        friend class Receiver;
-    };
-
     explicit Receiver(Scheduler* scheduler);
     virtual ~Receiver();
-    virtual OpContext* handleDataPacket(Driver::Packet* packet, Driver* driver);
+    virtual Transport::Op* handleDataPacket(Driver::Packet* packet,
+                                            Driver* driver);
     virtual InboundMessage* receiveMessage();
     virtual void dropMessage(InboundMessage* message);
-    virtual void registerOp(Protocol::MessageId id, OpContext* op);
-    virtual void dropOp(OpContext* op);
+    virtual void registerOp(Protocol::MessageId id, Transport::Op* op);
+    virtual void dropOp(Transport::Op* op);
     virtual void poll();
 
   private:
@@ -119,13 +58,13 @@ class Receiver {
     /// Scheduler that should be informed when message packets are received.
     Scheduler* const scheduler;
 
-    /// Tracks the set of OpContext objects with expected InboundMessages.
-    std::unordered_map<Protocol::MessageId, OpContext*,
+    /// Tracks the set of Transport::Op objects with expected InboundMessages.
+    std::unordered_map<Protocol::MessageId, Transport::Op*,
                        Protocol::MessageId::Hasher>
         registeredOps;
 
     /// Tracks the set of InboundMessage objects that do not have an associated
-    /// OpContext.
+    /// Transport::Op.
     std::unordered_map<Protocol::MessageId, InboundMessage*,
                        Protocol::MessageId::Hasher>
         unregisteredMessages;
@@ -133,7 +72,7 @@ class Receiver {
     /// Unregistered InboundMessage objects to be processed by the transport.
     std::deque<InboundMessage*> receivedMessages;
 
-    /// Used to allocate additional OpContext objects when receiving a new
+    /// Used to allocate additional Transport::Op objects when receiving a new
     /// unregistered Message.
     ObjectPool<InboundMessage> messagePool;
 };

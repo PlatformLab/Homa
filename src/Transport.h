@@ -16,23 +16,27 @@
 #ifndef HOMA_CORE_TRANSPORT_H
 #define HOMA_CORE_TRANSPORT_H
 
-#include "ObjectPool.h"
-#include "OpContext.h"
-#include "Protocol.h"
-#include "Receiver.h"
-#include "Scheduler.h"
-#include "Sender.h"
-#include "SpinLock.h"
-
 #include <atomic>
 #include <bitset>
+#include <deque>
 #include <vector>
+
+#include "InboundMessage.h"
+#include "ObjectPool.h"
+#include "OpContext.h"
+#include "OutboundMessage.h"
+#include "Scheduler.h"
+#include "SpinLock.h"
 
 /**
  * Homa
  */
 namespace Homa {
 namespace Core {
+
+// Forward Declarations
+class Receiver;
+class Sender;
 
 /**
  * Internal implementation of Homa::Transport.
@@ -44,20 +48,76 @@ namespace Core {
  */
 class Transport {
   public:
+    /**
+     * Contains the state for an operation that is sent and received by the
+     * Transport and its helper modules.
+     */
+    struct Op : public OpContext {
+        /**
+         * Constructor.
+         */
+        explicit Op(Transport* transport, Driver* driver,
+                    bool isServerOp = true)
+            : OpContext(transport)
+            , mutex()
+            , retained(false)
+            , isServerOp(isServerOp)
+            , outMessage(driver)
+        {}
+
+        /// @copydoc OpContext::getOutMessage()
+        virtual Message* getOutMessage()
+        {
+            SpinLock::Lock lock(mutex);
+            return outMessage.get();
+        }
+
+        /// @copydoc OpContext::getInMessage()
+        virtual const Message* getInMessage()
+        {
+            SpinLock::Lock lock(mutex);
+            if (inMessage != nullptr) {
+                return inMessage->get();
+            }
+            return nullptr;
+        }
+
+        /// Mutex for controlling internal access to OpContext members.
+        SpinLock mutex;
+
+        /// True if this context is being held by the application in a RemoteOp
+        /// or a ServerOp; otherwise, false.
+        std::atomic<bool> retained;
+
+        /// True if this context is for a ServerOp; false it is for a RemoteOp.
+        const bool isServerOp;
+
+        /// Message to be sent out as part of this Op.  Processed by the Sender.
+        OutboundMessage outMessage;
+
+        /// Message to be received as part of this Op.  Processed by the
+        /// Receiver.
+        InboundMessage* inMessage;
+    };
+
     explicit Transport(Driver* driver, uint64_t transportId);
 
     ~Transport();
     OpContext* allocOp();
     OpContext* receiveOp();
-    void releaseOp(OpContext* op);
-    void sendRequest(OpContext* op, Driver::Address* destination);
-    void sendReply(OpContext* op);
+    void releaseOp(OpContext* context);
+    void sendRequest(OpContext* context, Driver::Address* destination);
+    void sendReply(OpContext* context);
     void poll();
 
     /// Driver from which this transport will send and receive packets.
     Driver* const driver;
 
   private:
+    void processPackets();
+    void processInboundMessages();
+    void processReceivedMessage(Op* context);
+
     /// Unique identifier for this transport.
     const std::atomic<uint64_t> transportId;
 
@@ -76,16 +136,12 @@ class Transport {
     /// Protects the internal state of the Transport.
     SpinLock mutex;
 
-    /// Pool from which this transport will allocate OpContext objects.
-    ObjectPool<OpContext> opContextPool;
+    /// Pool from which this transport will allocate Op objects.
+    ObjectPool<Op> opPool;
 
     /// Collection of ServerOp contexts that are ready but have not yet been
     /// delivered to the application.
-    std::deque<OpContext*> serverOpQueue;
-
-    void processPackets();
-    void processInboundMessages();
-    void processReceivedMessage(OpContext* op);
+    std::deque<Op*> serverOpQueue;
 };
 
 }  // namespace Core

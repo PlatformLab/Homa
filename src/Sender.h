@@ -18,18 +18,17 @@
 
 #include "Homa/Driver.h"
 
-#include "Message.h"
-#include "Protocol.h"
-#include "SpinLock.h"
-
 #include <atomic>
 #include <unordered_map>
 
+#include "Message.h"
+#include "OutboundMessage.h"
+#include "Protocol.h"
+#include "SpinLock.h"
+#include "Transport.h"
+
 namespace Homa {
 namespace Core {
-
-// Forward declaration
-class OpContext;
 
 /**
  * The Sender takes takes outgoing messages and sends out the message's packets
@@ -40,73 +39,22 @@ class OpContext;
  */
 class Sender {
   public:
-    /**
-     * Represents an outgoing message that can be sent.
-     *
-     * OutboundMessage objects are contained in the OpContext but should only
-     * be accessed by the Sender.
-     */
-    class OutboundMessage {
-      public:
-        /**
-         * Construct an OutboundMessage.
-         */
-        explicit OutboundMessage(Driver* driver)
-            : id(0, 0, 0)
-            , destination(nullptr)
-            , message(driver, sizeof(Protocol::Packet::DataHeader), 0)
-            , grantOffset(0)
-            , grantIndex(-1)
-            , sentIndex(-1)
-            , sent(false)
-        {}
-
-        /**
-         * Return a pointer to a Message object that can be populated by
-         * applications of the Transport.  Caller should take care not
-         * to provide access to the returned Message while the Sender is
-         * processing the Message.
-         */
-        Message* get()
-        {
-            return &message;
-        }
-
-      private:
-        /// Contains the unique identifier for this message.
-        Protocol::MessageId id;
-        /// Contains destination address this message.
-        Driver::Address* destination;
-        /// Collection of packets to be sent.
-        Message message;
-        /// The offset up-to which we can send for this message.
-        uint32_t grantOffset;
-        /// The packet index that contains the grantOffset.
-        int grantIndex;
-        /// The packet index up to which all packets have been sent.
-        int sentIndex;
-        /// True if this message has been fully sent; false otherwise.
-        bool sent;
-
-        friend class Sender;
-    };
-
     explicit Sender();
     virtual ~Sender();
 
     virtual void handleGrantPacket(Driver::Packet* packet, Driver* driver);
     virtual void sendMessage(Protocol::MessageId id,
-                             Driver::Address* destination, OpContext* op);
-    virtual void dropMessage(OpContext* op);
+                             Driver::Address* destination, Transport::Op* op);
+    virtual void dropMessage(Transport::Op* op);
     virtual void poll();
 
   private:
     /// Protects the top-level
     SpinLock mutex;
 
-    /// Tracks the set of outbound messages; contains the associated OpContext
+    /// Tracks the set of outbound messages; contains the associated Op
     /// for a given MessageId.
-    std::unordered_map<Protocol::MessageId, OpContext*,
+    std::unordered_map<Protocol::MessageId, Transport::Op*,
                        Protocol::MessageId::Hasher>
         outboundMessages;
 

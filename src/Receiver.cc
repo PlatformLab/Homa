@@ -16,8 +16,6 @@
 
 #include "Receiver.h"
 
-#include "OpContext.h"
-
 namespace Homa {
 namespace Core {
 
@@ -49,10 +47,10 @@ Receiver::~Receiver() {}
  * @param driver
  *      The driver from which the packet was received.
  * @return
- *      OpContext which holds the Message associated with the incomming packet,
- *      if the Message is fully received; otherwise, nullptr.
+ *      Transport::Op which holds the Message associated with the incomming
+ * packet, if the Message is fully received; otherwise, nullptr.
  */
-OpContext*
+Transport::Op*
 Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 {
     SpinLock::UniqueLock lock(mutex);
@@ -63,7 +61,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     uint16_t dataHeaderLength = sizeof(Protocol::Packet::DataHeader);
     Protocol::MessageId id = header->common.messageId;
 
-    OpContext* op = nullptr;
+    Transport::Op* op = nullptr;
     InboundMessage* message = nullptr;
 
     auto it = registeredOps.find(id);
@@ -145,11 +143,11 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 }
 
 /**
- * Return an InboundMessage that has not been registered with an OpContext.
+ * Return an InboundMessage that has not been registered with an Transport::Op.
  *
  * The Transport should regularly call this method to insure incomming messages
  * are processed.  The Transport can choose to register the InboundMessage with
- * an OpContext or drop the message if it is not of interest.
+ * an Transport::Op or drop the message if it is not of interest.
  *
  * Returned message may not be fully received.  The Receiver will continue to
  * process packets into the returned InboundMessage until it is dropped.
@@ -160,7 +158,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
  *
  * @sa registerOp(), dropMessage()
  */
-Receiver::InboundMessage*
+InboundMessage*
 Receiver::receiveMessage()
 {
     SpinLock::Lock lock(mutex);
@@ -191,15 +189,15 @@ Receiver::dropMessage(InboundMessage* message)
 
 /**
  * Inform the Receiver that an incomming Message is expected and should be
- * associated with a particular OpContext.
+ * associated with a particular Transport::Op.
  *
  * @param id
  *      Id of the Message that should be expected.
  * @param op
- *      OpContext where the expected Message should be accumulated.
+ *      Transport::Op where the expected Message should be accumulated.
  */
 void
-Receiver::registerOp(Protocol::MessageId id, OpContext* op)
+Receiver::registerOp(Protocol::MessageId id, Transport::Op* op)
 {
     SpinLock::Lock lock(mutex);
     SpinLock::Lock lock_op(op->mutex);
@@ -221,13 +219,13 @@ Receiver::registerOp(Protocol::MessageId id, OpContext* op)
 
 /**
  * Inform the Receiver that a Message is no longer needed and the associated
- * OpContext should no longer be used.
+ * Transport::Op should no longer be used.
  *
  * @param op
- *      The OpContext which contains the Message that is no longer needed.
+ *      The Transport::Op which contains the Message that is no longer needed.
  */
 void
-Receiver::dropOp(OpContext* op)
+Receiver::dropOp(Transport::Op* op)
 {
     SpinLock::Lock lock(mutex);
     SpinLock::Lock lock_op(op->mutex);

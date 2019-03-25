@@ -15,11 +15,13 @@
 
 #include "Transport.h"
 
-#include "Protocol.h"
-
 #include <algorithm>
 #include <memory>
 #include <utility>
+
+#include "Protocol.h"
+#include "Receiver.h"
+#include "Sender.h"
 
 namespace Homa {
 namespace Core {
@@ -41,7 +43,7 @@ Transport::Transport(Driver* driver, uint64_t transportId)
     , scheduler(new Scheduler(driver))
     , receiver(new Receiver(scheduler.get()))
     , mutex()
-    , opContextPool()
+    , opPool()
     , serverOpQueue()
 {}
 
@@ -57,7 +59,7 @@ OpContext*
 Transport::allocOp()
 {
     SpinLock::UniqueLock lock(mutex);
-    OpContext* op = opContextPool.construct(this, driver, false);
+    Op* op = opPool.construct(this, driver, false);
 
     // Lock handoff
     SpinLock::Lock lock_op(op->mutex);
@@ -76,7 +78,7 @@ OpContext*
 Transport::receiveOp()
 {
     SpinLock::UniqueLock lock(mutex);
-    OpContext* op = nullptr;
+    Op* op = nullptr;
     if (!serverOpQueue.empty()) {
         op = serverOpQueue.front();
         serverOpQueue.pop_front();
@@ -96,14 +98,15 @@ Transport::receiveOp()
  * or Transport::receiveOp() is no longer needed by the application.  The
  * OpContext should not be used by higher-level software after this call.
  *
- * @param op
+ * @param context
  *      OpContext which is no longer needed.
  *
  * @sa Homa::Core::Transport; no support for concurrent calls to same OpContext.
  */
 void
-Transport::releaseOp(OpContext* op)
+Transport::releaseOp(OpContext* context)
 {
+    Op* op = static_cast<Op*>(context);
     op->retained.store(false);
     // TODO(cstlee): Hook into GC mechanism.
 }
@@ -111,7 +114,7 @@ Transport::releaseOp(OpContext* op)
 /**
  * Signal that the outbound Message should be sent as a request.
  *
- * @param op
+ * @param context
  *      OpContext that contains the request Message to be sent.
  * @param destination
  *      Network address to which the request should be sent.
@@ -119,11 +122,12 @@ Transport::releaseOp(OpContext* op)
  * @sa Homa::Core::Transport; no support for concurrent calls to same OpContext.
  */
 void
-Transport::sendRequest(OpContext* op, Driver::Address* destination)
+Transport::sendRequest(OpContext* context, Driver::Address* destination)
 {
+    Op* op = static_cast<Op*>(context);
     SpinLock::UniqueLock lock_op(op->mutex);
     if (op->isServerOp) {
-        Protocol::MessageId requestId(op->inMessage.load()->getId());
+        Protocol::MessageId requestId(op->inMessage->getId());
         Protocol::MessageId delegationId(Protocol::OpId(requestId),
                                          requestId.tag + 1);
         lock_op.unlock();  // Allow Sender to take the lock.
@@ -142,20 +146,20 @@ Transport::sendRequest(OpContext* op, Driver::Address* destination)
 /**
  * Signal that the outbound Message should be sent as a reply.
  *
- * @param op
+ * @param context
  *      OpContext that contains the reply Message to be sent.
  *
  * @sa Homa::Core::Transport; no support for concurrent calls to same OpContext.
  */
 void
-Transport::sendReply(OpContext* op)
+Transport::sendReply(OpContext* context)
 {
+    Op* op = static_cast<Op*>(context);
     SpinLock::UniqueLock lock_op(op->mutex);
     assert(op->isServerOp);
-    Protocol::OpId opId(op->inMessage.load()->getId());
+    Protocol::OpId opId(op->inMessage->getId());
     Driver::Address* replyAddress =
-        driver->getAddress(&op->inMessage.load()
-                                ->get()
+        driver->getAddress(&op->inMessage->get()
                                 ->getHeader<Protocol::Message::Header>()
                                 ->replyAddress);
     op->state.store(OpContext::State::IN_PROGRESS);
@@ -195,7 +199,7 @@ Transport::processPackets()
         assert(packet->length >= sizeof(Protocol::Packet::CommonHeader));
         Protocol::Packet::CommonHeader* header =
             static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
-        OpContext* op = nullptr;
+        Op* op = nullptr;
         switch (header->opcode) {
             case Protocol::Packet::DATA:
                 op = receiver->handleDataPacket(packet, driver);
@@ -214,7 +218,7 @@ Transport::processPackets()
 void
 Transport::processInboundMessages()
 {
-    for (Receiver::InboundMessage* message = receiver->receiveMessage();
+    for (InboundMessage* message = receiver->receiveMessage();
          message != nullptr; message = receiver->receiveMessage()) {
         Protocol::MessageId id = message->getId();
         if (id.tag == Protocol::MessageId::ULTIMATE_RESPONSE_TAG) {
@@ -223,10 +227,10 @@ Transport::processInboundMessages()
             receiver->dropMessage(message);
         } else {
             // Incomming message is a request.
-            OpContext* op = nullptr;
+            Op* op = nullptr;
             {
                 SpinLock::Lock lock(mutex);
-                op = opContextPool.construct(this, driver, true);
+                op = opPool.construct(this, driver, true);
             }
             receiver->registerOp(id, op);
         }
@@ -238,15 +242,15 @@ Transport::processInboundMessages()
  * fully received.
  *
  * @param op
- *      OpContext with a fully received InboundMessage.
+ *      Op with a fully received InboundMessage.
  */
 void
-Transport::processReceivedMessage(OpContext* op)
+Transport::processReceivedMessage(Op* op)
 {
     SpinLock::Lock lock(mutex);
     if (op != nullptr) {
         SpinLock::Lock lock_op(op->mutex);
-        assert(op->inMessage.load()->isReady());
+        assert(op->inMessage->isReady());
         if (op->isServerOp) {
             serverOpQueue.push_back(op);
         } else {

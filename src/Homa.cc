@@ -25,8 +25,7 @@ RemoteOp::RemoteOp(Transport* transport)
     , response(nullptr)
     , op(transport->internal->allocOp())
 {
-    SpinLock::Lock lock(op->mutex);
-    request = op->outMessage.get();
+    request = op->getOutMessage();
 }
 
 RemoteOp::~RemoteOp()
@@ -47,7 +46,6 @@ RemoteOp::send(Driver::Address* destination)
 bool
 RemoteOp::isReady()
 {
-    SpinLock::Lock lock(op->mutex);
     Core::OpContext::State state = op->state.load();
     switch (state) {
         case Core::OpContext::State::NOT_STARTED:
@@ -57,11 +55,11 @@ RemoteOp::isReady()
             break;
         case Core::OpContext::State::COMPLETED:
             // Grant access to the received response.
-            response = op->inMessage.load()->get();
+            response = op->getInMessage();
             // Fall through to FAILED.
         case Core::OpContext::State::FAILED:
             // Restore access to the request.
-            request = op->outMessage.get();
+            request = op->getOutMessage();
             return true;
             break;
         default:
@@ -149,9 +147,8 @@ Transport::receiveServerOp()
     ServerOp op;
     op.op = internal->receiveOp();
     if (op.op != nullptr) {
-        SpinLock::Lock lock(op.op->mutex);
-        op.request = op.op->inMessage.load()->get();
-        op.response = op.op->outMessage.get();
+        op.request = op.op->getInMessage();
+        op.response = op.op->getOutMessage();
     }
     return op;
 }
