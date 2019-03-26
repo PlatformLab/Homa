@@ -57,6 +57,14 @@ class OutboundMessage {
         return &message;
     }
 
+    /**
+     * True if the sending of this Message is complete; false, otherwise.
+     */
+    bool isDone()
+    {
+        return sent;
+    }
+
   private:
     /// Contains the unique identifier for this message.
     Protocol::MessageId id;

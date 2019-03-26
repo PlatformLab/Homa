@@ -46,11 +46,8 @@ Receiver::~Receiver() {}
  *      The incoming packet to be processed.
  * @param driver
  *      The driver from which the packet was received.
- * @return
- *      Transport::Op which holds the Message associated with the incomming
- * packet, if the Message is fully received; otherwise, nullptr.
  */
-Transport::Op*
+void
 Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 {
     SpinLock::UniqueLock lock(mutex);
@@ -107,7 +104,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     if (message->fullMessageReceived) {
         // drop packet
         driver->releasePackets(&packet, 1);
-        return nullptr;
+        return;
     }
 
     // Things that must be true (sanity check)
@@ -130,16 +127,15 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
                                   totalReceivedBytes);
         if (totalReceivedBytes >= message->message->rawLength()) {
             message->fullMessageReceived = true;
-        } else {
-            // Message not fully received
-            op = nullptr;
+            if (op != nullptr) {
+                op->hintUpdate();
+            }
         }
     } else {
         // must be a duplicate packet; drop packet.
         driver->releasePackets(&packet, 1);
-        op = nullptr;
     }
-    return op;
+    return;
 }
 
 /**
@@ -207,6 +203,7 @@ Receiver::registerOp(Protocol::MessageId id, Transport::Op* op)
         // Existing message
         message = it->second;
         unregisteredMessages.erase(it);
+        op->hintUpdate();
     } else {
         // New message
         message = messagePool.construct();

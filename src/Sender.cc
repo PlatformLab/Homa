@@ -223,6 +223,7 @@ Sender::trySend()
         if (message->sentIndex + 1 >= message->message.getNumPackets()) {
             // We have finished sending the message.
             message->sent = true;
+            op->hintUpdate();
         }
     }
 

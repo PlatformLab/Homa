@@ -17,12 +17,13 @@
 
 #include "Receiver.h"
 
-#include "Mock/MockDriver.h"
-#include "Mock/MockScheduler.h"
+#include <mutex>
 
 #include <Homa/Debug.h>
 
-#include <mutex>
+#include "Mock/MockDriver.h"
+#include "Mock/MockScheduler.h"
+#include "Transport.h"
 
 namespace Homa {
 namespace Core {
@@ -50,11 +51,13 @@ class ReceiverTest : public ::testing::Test {
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         receiver = new Receiver(&mockScheduler);
+        transport = new Transport(&mockDriver, 1);
     }
 
     ~ReceiverTest()
     {
         delete receiver;
+        delete transport;
         Debug::setLogPolicy(savedLogPolicy);
     }
 
@@ -63,14 +66,14 @@ class ReceiverTest : public ::testing::Test {
     NiceMock<Homa::Mock::MockScheduler> mockScheduler;
     char payload[1028];
     Receiver* receiver;
+    Transport* transport;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
 
 TEST_F(ReceiverTest, handleDataPacket_basic)
 {
     // Setup registered op
-    Transport::Op op_(nullptr, &mockDriver);
-    Transport::Op* op = &op_;
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     Protocol::MessageId id(42, 32, 22);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
@@ -79,8 +82,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 
     EXPECT_TRUE(receiver->unregisteredMessages.empty());
     EXPECT_TRUE(receiver->receivedMessages.empty());
-
-    Transport::Op* ret = nullptr;
 
     // receive packet 1
     Protocol::Packet::DataHeader* header =
@@ -106,7 +107,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
                                Eq(header->totalLength), Eq(1000)))
         .Times(1);
 
-    ret = receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(receiver->unregisteredMessages.empty());
     EXPECT_TRUE(receiver->receivedMessages.empty());
@@ -117,7 +118,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(1U, op->inMessage->message->getNumPackets());
     EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
     EXPECT_FALSE(op->inMessage->fullMessageReceived);
-    EXPECT_EQ(nullptr, ret);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
@@ -136,7 +137,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
         .RetiresOnSaturation();
     EXPECT_CALL(mockScheduler, packetReceived).Times(0);
 
-    ret = receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(receiver->unregisteredMessages.empty());
     EXPECT_TRUE(receiver->receivedMessages.empty());
@@ -144,7 +145,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(1U, op->inMessage->message->getNumPackets());
     EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
     EXPECT_FALSE(op->inMessage->fullMessageReceived);
-    EXPECT_EQ(nullptr, ret);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
@@ -167,7 +168,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
                                Eq(header->totalLength), Eq(2000)))
         .Times(1);
 
-    ret = receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(receiver->unregisteredMessages.empty());
     EXPECT_TRUE(receiver->receivedMessages.empty());
@@ -175,7 +176,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(2U, op->inMessage->message->getNumPackets());
     EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
     EXPECT_TRUE(op->inMessage->fullMessageReceived);
-    EXPECT_EQ(op, ret);
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
@@ -190,11 +191,10 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_CALL(mockAddress, toString).Times(0);
     EXPECT_CALL(mockScheduler, packetReceived).Times(0);
 
-    ret = receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(receiver->unregisteredMessages.empty());
     EXPECT_TRUE(receiver->receivedMessages.empty());
-    EXPECT_EQ(nullptr, ret);
     Mock::VerifyAndClearExpectations(&mockDriver);
 }
 
@@ -302,8 +302,7 @@ TEST_F(ReceiverTest, dropMessage)
 TEST_F(ReceiverTest, registerOp_existingMessage)
 {
     Protocol::MessageId id = {42, 32, 1};
-    Transport::Op op_(nullptr, &mockDriver);
-    Transport::Op* op = &op_;
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
     receiver->unregisteredMessages.insert({id, message});
@@ -324,8 +323,7 @@ TEST_F(ReceiverTest, registerOp_existingMessage)
 TEST_F(ReceiverTest, registerOp_newMessage)
 {
     Protocol::MessageId id = {42, 32, 0};
-    Transport::Op op_(nullptr, &mockDriver);
-    Transport::Op* op = &op_;
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
 
     EXPECT_EQ(0U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(receiver->registeredOps.end(), receiver->registeredOps.find(id));
@@ -340,8 +338,7 @@ TEST_F(ReceiverTest, registerOp_newMessage)
 TEST_F(ReceiverTest, dropOp)
 {
     Protocol::MessageId id = {42, 32, 1};
-    Transport::Op op_(nullptr, &mockDriver);
-    Transport::Op* op = &op_;
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
     op->inMessage = message;

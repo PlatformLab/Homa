@@ -27,6 +27,67 @@ namespace Homa {
 namespace Core {
 
 /**
+ * Check for any state changes and perform any necessary actions.
+ *
+ * @param lock
+ *      Used to remind the caller to hold the Op's mutex while calling
+ *      this method.
+ */
+void
+Transport::Op::processUpdates(const SpinLock::Lock& lock)
+{
+    (void)lock;
+    if (destroy) {
+        return;
+    }
+
+    State copyOfState = state.load();
+
+    if (isServerOp) {
+        if (copyOfState == State::NOT_STARTED) {
+            if (inMessage->isReady()) {
+                SpinLock::Lock lock_queue(transport->pendingServerOps.mutex);
+                transport->pendingServerOps.queue.push_back(this);
+                state.store(State::IN_PROGRESS);
+            }
+        } else if (copyOfState == State::IN_PROGRESS) {
+            if (outMessage.isDone()) {
+                state.store(State::COMPLETED);
+                hintUpdate();
+            }
+        } else if (copyOfState == State::COMPLETED) {
+            if (!retained) {
+                drop(lock);
+            }
+        } else if (copyOfState == State::FAILED) {
+            if (!retained) {
+                drop(lock);
+            }
+        } else {
+            PANIC("Unknown ServerOp state.");
+        }
+    } else {
+        if (!retained) {
+            // If the client is no longer interested we can just remove the Op.
+            drop(lock);
+        } else if (copyOfState == State::NOT_STARTED) {
+            // Nothing to do.
+        } else if (copyOfState == State::IN_PROGRESS) {
+            if (inMessage->isReady()) {
+                state.store(State::COMPLETED);
+                hintUpdate();
+            }
+        } else if (copyOfState == State::COMPLETED) {
+            // Nothing to do.
+        } else if (copyOfState == State::FAILED) {
+            // Nothing to do.
+        } else {
+            PANIC("Unknown RemoteOp state.");
+        }
+    }
+}
+
+/**
  * Construct an instances of a Homa-based transport.
  *
  * @param driver
@@ -44,7 +105,10 @@ Transport::Transport(Driver* driver, uint64_t transportId)
     , receiver(new Receiver(scheduler.get()))
     , mutex()
     , opPool()
-    , serverOpQueue()
+    , activeOps()
+    , updateHints()
+    , unusedOps()
+    , pendingServerOps()
 {}
 
 /**
@@ -60,6 +124,7 @@ Transport::allocOp()
 {
     SpinLock::UniqueLock lock(mutex);
     Op* op = opPool.construct(this, driver, false);
+    activeOps.insert(op);
 
     // Lock handoff
     SpinLock::Lock lock_op(op->mutex);
@@ -77,16 +142,14 @@ Transport::allocOp()
 OpContext*
 Transport::receiveOp()
 {
-    SpinLock::UniqueLock lock(mutex);
+    SpinLock::UniqueLock lock_queue(pendingServerOps.mutex);
     Op* op = nullptr;
-    if (!serverOpQueue.empty()) {
-        op = serverOpQueue.front();
-        serverOpQueue.pop_front();
+    if (!pendingServerOps.queue.empty()) {
+        op = pendingServerOps.queue.front();
+        pendingServerOps.queue.pop_front();
+        lock_queue.unlock();
 
-        // Lock handoff
         SpinLock::Lock lock_op(op->mutex);
-        lock.unlock();
-
         op->outMessage.get()->defineHeader<Protocol::Message::Header>();
         op->retained.store(true);
     }
@@ -108,7 +171,7 @@ Transport::releaseOp(OpContext* context)
 {
     Op* op = static_cast<Op*>(context);
     op->retained.store(false);
-    // TODO(cstlee): Hook into GC mechanism.
+    op->hintUpdate();
 }
 
 /**
@@ -179,8 +242,9 @@ Transport::poll()
     sender->poll();
     receiver->poll();
 
-    // Process any incomming Messages
     processInboundMessages();
+    checkForUpdates();
+    cleanupOps();
 }
 
 /**
@@ -199,11 +263,9 @@ Transport::processPackets()
         assert(packet->length >= sizeof(Protocol::Packet::CommonHeader));
         Protocol::Packet::CommonHeader* header =
             static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
-        Op* op = nullptr;
         switch (header->opcode) {
             case Protocol::Packet::DATA:
-                op = receiver->handleDataPacket(packet, driver);
-                processReceivedMessage(op);
+                receiver->handleDataPacket(packet, driver);
                 break;
             case Protocol::Packet::GRANT:
                 sender->handleGrantPacket(packet, driver);
@@ -231,6 +293,7 @@ Transport::processInboundMessages()
             {
                 SpinLock::Lock lock(mutex);
                 op = opPool.construct(this, driver, true);
+                activeOps.insert(op);
             }
             receiver->registerOp(id, op);
         }
@@ -238,24 +301,81 @@ Transport::processInboundMessages()
 }
 
 /**
- * Helper method to process an OpContext with an InboundMessage that has been
- * fully received.
- *
- * @param op
- *      Op with a fully received InboundMessage.
+ * Helper method to check on any updated Op objects and trigger any necessary
+ * actions.
  */
 void
-Transport::processReceivedMessage(Op* op)
+Transport::checkForUpdates()
 {
-    SpinLock::Lock lock(mutex);
-    if (op != nullptr) {
-        SpinLock::Lock lock_op(op->mutex);
-        assert(op->inMessage->isReady());
-        if (op->isServerOp) {
-            serverOpQueue.push_back(op);
-        } else {
-            op->state.store(OpContext::State::COMPLETED);
+    // Limit the number of hints to check this round.
+    uint hints = 0;
+    {
+        SpinLock::Lock lock(updateHints.mutex);
+        hints = updateHints.ops.size();
+        assert(updateHints.order.size() == hints);
+    }
+
+    for (uint i = 0; i < hints; ++i) {
+        Op* op = nullptr;
+        // Take a hint.
+        {
+            SpinLock::Lock lock(updateHints.mutex);
+            if (updateHints.order.empty()) {
+                break;
+            } else {
+                op = updateHints.order.front();
+                updateHints.order.pop_front();
+                updateHints.ops.erase(op);
+            }
         }
+        // Check that the hinted Op is still active.
+        SpinLock::UniqueLock lock(mutex);
+        if (activeOps.count(op) == 0) {
+            continue;
+        }
+
+        // Lock handoff
+        SpinLock::Lock lock_op(op->mutex);
+        lock.unlock();
+
+        // Trigger any necessary actions.
+        op->processUpdates(lock_op);
+    }
+}
+
+/**
+ * Helper method to garbage collect any unused Op objects.
+ */
+void
+Transport::cleanupOps()
+{
+    // Limit the number of Op objects to garbage collect this round.
+    uint count = 0;
+    {
+        SpinLock::Lock lock(unusedOps.mutex);
+        count = unusedOps.queue.size();
+    }
+
+    for (uint i = 0; i < count; ++i) {
+        Op* op = nullptr;
+        {
+            SpinLock::Lock lock(unusedOps.mutex);
+            if (unusedOps.queue.empty()) {
+                break;
+            } else {
+                op = unusedOps.queue.front();
+                unusedOps.queue.pop_front();
+            }
+        }
+
+        SpinLock::Lock lock(mutex);
+        if (activeOps.count(op) == 0) {
+            continue;
+        }
+        op->mutex.lock();
+        assert(op->destroy);
+        activeOps.erase(op);
+        opPool.destroy(op);
     }
 }
 

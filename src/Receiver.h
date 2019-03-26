@@ -43,8 +43,7 @@ class Receiver {
   public:
     explicit Receiver(Scheduler* scheduler);
     virtual ~Receiver();
-    virtual Transport::Op* handleDataPacket(Driver::Packet* packet,
-                                            Driver* driver);
+    virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
     virtual InboundMessage* receiveMessage();
     virtual void dropMessage(InboundMessage* message);
     virtual void registerOp(Protocol::MessageId id, Transport::Op* op);

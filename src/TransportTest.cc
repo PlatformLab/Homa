@@ -71,12 +71,291 @@ class TransportTest : public ::testing::Test {
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
 
+TEST_F(TransportTest, Op_hintUpdate)
+{
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+    EXPECT_TRUE(transport->updateHints.order.empty());
+
+    op->hintUpdate();
+
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_EQ(1U, transport->updateHints.order.size());
+    EXPECT_EQ(op, transport->updateHints.order.front());
+
+    op->hintUpdate();
+
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_EQ(1U, transport->updateHints.order.size());
+    EXPECT_EQ(op, transport->updateHints.order.front());
+}
+
+TEST_F(TransportTest, Op_drop)
+{
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+
+    EXPECT_FALSE(op->destroy);
+    EXPECT_TRUE(transport->unusedOps.queue.empty());
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->drop(lock);
+    }
+
+    EXPECT_TRUE(op->destroy);
+    EXPECT_EQ(1U, transport->unusedOps.queue.size());
+    EXPECT_EQ(op, transport->unusedOps.queue.front());
+    transport->unusedOps.queue.pop_front();
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->drop(lock);
+    }
+
+    EXPECT_TRUE(op->destroy);
+    EXPECT_TRUE(transport->unusedOps.queue.empty());
+}
+
+TEST_F(TransportTest, Op_processUpdates_destroy)
+{
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    op->state.store(OpContext::State::IN_PROGRESS);
+    op->destroy = true;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+    // Nothing to test.
+}
+
+TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, true);
+    InboundMessage inMessage;
+    op->inMessage = &inMessage;
+    EXPECT_EQ(OpContext::State::NOT_STARTED, op->state.load());
+    EXPECT_FALSE(op->inMessage->isReady());
+    EXPECT_TRUE(transport->pendingServerOps.queue.empty());
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::NOT_STARTED, op->state.load());
+    EXPECT_TRUE(transport->pendingServerOps.queue.empty());
+    EXPECT_FALSE(op->destroy);
+
+    inMessage.fullMessageReceived = true;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
+    EXPECT_EQ(1U, transport->pendingServerOps.queue.size());
+    EXPECT_EQ(op, transport->pendingServerOps.queue.front());
+    EXPECT_FALSE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, true);
+    op->state.store(OpContext::State::IN_PROGRESS);
+    EXPECT_FALSE(op->outMessage.isDone());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+    EXPECT_FALSE(op->destroy);
+
+    op->outMessage.sent = true;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_FALSE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_ServerOp_COMPLETED)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, true);
+    op->state.store(OpContext::State::COMPLETED);
+    op->retained = true;
+    EXPECT_FALSE(op->destroy);
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_FALSE(op->destroy);
+
+    op->retained = false;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_TRUE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_ServerOp_FAILED)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, true);
+    op->state.store(OpContext::State::FAILED);
+    op->retained = true;
+    EXPECT_FALSE(op->destroy);
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::FAILED, op->state.load());
+    EXPECT_FALSE(op->destroy);
+
+    op->retained = false;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::FAILED, op->state.load());
+    EXPECT_TRUE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_RemoteOp_not_retained)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, false);
+    op->retained = true;
+    EXPECT_FALSE(op->destroy);
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_FALSE(op->destroy);
+
+    op->retained = false;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_TRUE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_RemoteOp_NOT_STARTED)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, false);
+    op->state.store(OpContext::State::NOT_STARTED);
+    op->retained = true;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::NOT_STARTED, op->state.load());
+    EXPECT_FALSE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, false);
+    InboundMessage inMessage;
+    op->inMessage = &inMessage;
+    op->state.store(OpContext::State::IN_PROGRESS);
+    op->retained = true;
+    EXPECT_FALSE(op->inMessage->isReady());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+    EXPECT_FALSE(op->destroy);
+
+    inMessage.fullMessageReceived = true;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_FALSE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_RemoteOp_COMPLETED)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, false);
+    op->state.store(OpContext::State::COMPLETED);
+    op->retained = true;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_FALSE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_RemoteOp_FAILED)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, false);
+    op->state.store(OpContext::State::FAILED);
+    op->retained = true;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::FAILED, op->state.load());
+    EXPECT_FALSE(op->destroy);
+}
+
 TEST_F(TransportTest, allocOp)
 {
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
 
     EXPECT_EQ(0U, transport->opPool.outstandingObjects);
+    EXPECT_TRUE(transport->activeOps.empty());
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
 
@@ -84,6 +363,7 @@ TEST_F(TransportTest, allocOp)
 
     Transport::Op* op = static_cast<Transport::Op*>(context);
     EXPECT_EQ(1U, transport->opPool.outstandingObjects);
+    EXPECT_EQ(1U, transport->activeOps.count(op));
     EXPECT_EQ(sizeof(Protocol::Message::Header),
               op->outMessage.message.rawLength());
     EXPECT_TRUE(op->retained.load());
@@ -96,8 +376,9 @@ TEST_F(TransportTest, receiveOp)
 
     Transport::Op* serverOp =
         transport->opPool.construct(transport, &mockDriver, true);
-    transport->serverOpQueue.push_back(serverOp);
+    transport->pendingServerOps.queue.push_back(serverOp);
     EXPECT_EQ(OpContext::State::NOT_STARTED, serverOp->state.load());
+    EXPECT_EQ(1U, transport->pendingServerOps.queue.size());
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
 
@@ -107,13 +388,14 @@ TEST_F(TransportTest, receiveOp)
     EXPECT_EQ(serverOp, op);
     EXPECT_EQ(sizeof(Protocol::Message::Header),
               op->outMessage.message.rawLength());
-    EXPECT_TRUE(transport->serverOpQueue.empty());
+    EXPECT_TRUE(transport->pendingServerOps.queue.empty());
     EXPECT_TRUE(op->retained.load());
+    EXPECT_EQ(0U, transport->pendingServerOps.queue.size());
 }
 
 TEST_F(TransportTest, receiveOp_empty)
 {
-    EXPECT_TRUE(transport->serverOpQueue.empty());
+    EXPECT_TRUE(transport->pendingServerOps.queue.empty());
     EXPECT_CALL(mockDriver, allocPacket).Times(0);
 
     OpContext* context = transport->receiveOp();
@@ -127,10 +409,12 @@ TEST_F(TransportTest, releaseOp)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, false);
     op->retained.store(true);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     transport->releaseOp(op);
 
     EXPECT_FALSE(op->retained.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
 }
 
 TEST_F(TransportTest, sendRequest_ServerOp)
@@ -250,6 +534,7 @@ TEST_F(TransportTest, processInboundMessages_newRequest)
     message.id = id;
 
     EXPECT_EQ(0U, transport->opPool.outstandingObjects);
+    EXPECT_TRUE(transport->activeOps.empty());
 
     EXPECT_CALL(mockReceiver, receiveMessage)
         .WillOnce(Return(&message))
@@ -259,6 +544,7 @@ TEST_F(TransportTest, processInboundMessages_newRequest)
     transport->processInboundMessages();
 
     EXPECT_EQ(1U, transport->opPool.outstandingObjects);
+    EXPECT_FALSE(transport->activeOps.empty());
 }
 
 TEST_F(TransportTest, processInboundMessages_dropResponse)
@@ -275,34 +561,56 @@ TEST_F(TransportTest, processInboundMessages_dropResponse)
     transport->processInboundMessages();
 }
 
-TEST_F(TransportTest, processReceivedMessage_ServerOp)
+TEST_F(TransportTest, checkForUpdates)
 {
-    Transport::Op* serverOp =
-        transport->opPool.construct(transport, &mockDriver, true);
-    InboundMessage message;
-    message.fullMessageReceived = true;
-    serverOp->inMessage = &message;
+    Transport::Op* staleOp =
+        transport->opPool.construct(transport, &mockDriver, false);
+    staleOp->hintUpdate();
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, false);
+    op->hintUpdate();
+    transport->activeOps.insert(op);
 
-    EXPECT_TRUE(transport->serverOpQueue.empty());
+    EXPECT_FALSE(staleOp->destroy);
+    EXPECT_FALSE(op->destroy);
+    EXPECT_EQ(2U, transport->updateHints.ops.size());
+    EXPECT_EQ(2U, transport->updateHints.order.size());
+    EXPECT_EQ(1U, transport->activeOps.size());
 
-    transport->processReceivedMessage(serverOp);
+    transport->checkForUpdates();
 
-    EXPECT_EQ(serverOp, transport->serverOpQueue.front());
+    EXPECT_FALSE(staleOp->destroy);
+    EXPECT_TRUE(op->destroy);
+    EXPECT_EQ(0U, transport->updateHints.ops.size());
+    EXPECT_EQ(0U, transport->updateHints.order.size());
+    EXPECT_EQ(1U, transport->activeOps.size());
+    EXPECT_EQ(op, transport->unusedOps.queue.front());
 }
 
-TEST_F(TransportTest, processReceivedMessage_RemoteOp)
+TEST_F(TransportTest, cleanupOps)
 {
-    Transport::Op* remoteOp =
-        transport->opPool.construct(transport, &mockDriver, false);
-    InboundMessage message;
-    message.fullMessageReceived = true;
-    remoteOp->inMessage = &message;
+    Transport::Op* staleOp =
+        transport->opPool.construct(transport, &mockDriver);
+    {
+        SpinLock::Lock lock(staleOp->mutex);
+        staleOp->drop(lock);
+    }
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->drop(lock);
+    }
+    transport->activeOps.insert(op);
 
-    EXPECT_EQ(OpContext::State::NOT_STARTED, remoteOp->state.load());
+    EXPECT_EQ(2U, transport->unusedOps.queue.size());
+    EXPECT_EQ(0U, transport->activeOps.count(staleOp));
+    EXPECT_EQ(1U, transport->activeOps.count(op));
 
-    transport->processReceivedMessage(remoteOp);
+    transport->cleanupOps();
 
-    EXPECT_EQ(OpContext::State::COMPLETED, remoteOp->state.load());
+    EXPECT_EQ(0U, transport->unusedOps.queue.size());
+    EXPECT_EQ(0U, transport->activeOps.count(staleOp));
+    EXPECT_EQ(0U, transport->activeOps.count(op));
 }
 
 }  // namespace

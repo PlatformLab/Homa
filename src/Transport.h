@@ -19,6 +19,7 @@
 #include <atomic>
 #include <bitset>
 #include <deque>
+#include <unordered_set>
 #include <vector>
 
 #include "InboundMessage.h"
@@ -63,16 +64,21 @@ class Transport {
             , retained(false)
             , isServerOp(isServerOp)
             , outMessage(driver)
+            , destroy()
         {}
 
-        /// @copydoc OpContext::getOutMessage()
+        /**
+         * @copydoc OpContext::getOutMessage()
+         */
         virtual Message* getOutMessage()
         {
             SpinLock::Lock lock(mutex);
             return outMessage.get();
         }
 
-        /// @copydoc OpContext::getInMessage()
+        /**
+         * @copydoc OpContext::getInMessage()
+         */
         virtual const Message* getInMessage()
         {
             SpinLock::Lock lock(mutex);
@@ -82,14 +88,45 @@ class Transport {
             return nullptr;
         }
 
-        /// Mutex for controlling internal access to OpContext members.
+        /**
+         * Signal that this Op's state may have been updated.
+         */
+        inline void hintUpdate()
+        {
+            SpinLock::Lock lock(transport->updateHints.mutex);
+            auto ret = transport->updateHints.ops.insert(this);
+            if (ret.second) {
+                transport->updateHints.order.push_back(this);
+            }
+        }
+
+        /**
+         * Singal that this Op should be garbage collected.
+         *
+         * @param lock
+         *      Used to remind the caller to hold the Op's mutex while calling
+         *      this method.
+         */
+        inline void drop(const SpinLock::Lock& lock)
+        {
+            (void)lock;
+            if (!destroy) {
+                destroy = true;
+                SpinLock::Lock lock(transport->unusedOps.mutex);
+                transport->unusedOps.queue.push_back(this);
+            }
+        }
+
+        void processUpdates(const SpinLock::Lock& lock);
+
+        /// Mutex for controlling internal access to Op members.
         SpinLock mutex;
 
-        /// True if this context is being held by the application in a RemoteOp
-        /// or a ServerOp; otherwise, false.
+        /// True if this Op is being held by the application in a RemoteOp or a
+        /// ServerOp; otherwise, false.
         std::atomic<bool> retained;
 
-        /// True if this context is for a ServerOp; false it is for a RemoteOp.
+        /// True if this Op is for a ServerOp; false it is for a RemoteOp.
         const bool isServerOp;
 
         /// Message to be sent out as part of this Op.  Processed by the Sender.
@@ -98,6 +135,9 @@ class Transport {
         /// Message to be received as part of this Op.  Processed by the
         /// Receiver.
         InboundMessage* inMessage;
+
+        /// True if this Op will be destroyed soon; false otherwise.
+        bool destroy;
     };
 
     explicit Transport(Driver* driver, uint64_t transportId);
@@ -116,7 +156,8 @@ class Transport {
   private:
     void processPackets();
     void processInboundMessages();
-    void processReceivedMessage(Op* context);
+    void checkForUpdates();
+    void cleanupOps();
 
     /// Unique identifier for this transport.
     const std::atomic<uint64_t> transportId;
@@ -139,9 +180,37 @@ class Transport {
     /// Pool from which this transport will allocate Op objects.
     ObjectPool<Op> opPool;
 
+    /// Set of Op objects are currently being managed by this Transport.
+    std::unordered_set<Op*> activeOps;
+
+    /// Collection of Op objects that may have been recently updated.
+    struct {
+        /// Protects updateHints.
+        SpinLock mutex;
+        /// Set of Op objects that might have been updated.
+        std::unordered_set<Op*> ops;
+        /// The order in which Op objects were (possibly) updated.  Used to
+        /// ensure Op object processing is not starved.
+        std::deque<Op*> order;
+    } updateHints;
+
+    /// Colletion of Op objects that are waiting to be destructed.  Allow the
+    /// Op the asynchronously request its own destruction.
+    struct {
+        /// Protects unusedOps.
+        SpinLock mutex;
+        /// Holds the Op objects that should be eventually freed.
+        std::deque<Op*> queue;
+    } unusedOps;
+
     /// Collection of ServerOp contexts that are ready but have not yet been
     /// delivered to the application.
-    std::deque<Op*> serverOpQueue;
+    struct {
+        /// Protects pendingServerOps.
+        SpinLock mutex;
+        /// Holds the Op objects for the pending ServerOps.
+        std::deque<Op*> queue;
+    } pendingServerOps;
 };
 
 }  // namespace Core

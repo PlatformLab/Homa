@@ -27,7 +27,7 @@ namespace Mock {
  * MockReceiver is a gmock supported mock implementation of Homa::Core::Receiver
  * that is used in unit testing.
  *
- * @sa Sender
+ * @sa Receiver
  */
 class MockReceiver : public Core::Receiver {
   public:
@@ -36,7 +36,7 @@ class MockReceiver : public Core::Receiver {
     {}
 
     MOCK_METHOD2(handleDataPacket,
-                 Core::Transport::Op*(Driver::Packet* packet, Driver* driver));
+                 void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD0(receiveMessage, Core::InboundMessage*());
     MOCK_METHOD1(dropMessage, void(Core::InboundMessage* message));
     MOCK_METHOD2(registerOp,

@@ -95,9 +95,9 @@ ServerOp::ServerOp(ServerOp&& other)
 
 ServerOp::~ServerOp()
 {
-    // if (op != nullptr) {
-    //     op->transport->releaseOp(op);
-    // }
+    if (op != nullptr) {
+        op->transport->releaseOp(op);
+    }
 }
 
 ServerOp&

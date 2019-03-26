@@ -17,10 +17,10 @@
 
 #include "Sender.h"
 
-#include "Mock/MockDriver.h"
-#include "ObjectPool.h"
-
 #include <Homa/Debug.h>
+
+#include "Mock/MockDriver.h"
+#include "Transport.h"
 
 namespace Homa {
 namespace Core {
@@ -36,7 +36,7 @@ class SenderTest : public ::testing::Test {
     SenderTest()
         : mockDriver()
         , mockPacket(&payload)
-        , opPool()
+        , transport()
         , sender()
         , savedLogPolicy(Debug::getLogPolicy())
     {
@@ -44,19 +44,19 @@ class SenderTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        opPool = new ObjectPool<Transport::Op>();
+        transport = new Transport(&mockDriver, 1);
     }
 
     ~SenderTest()
     {
-        delete opPool;
+        delete transport;
         Debug::setLogPolicy(savedLogPolicy);
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     char payload[1028];
-    ObjectPool<Transport::Op>* opPool;
+    Transport* transport;
     Sender sender;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 
@@ -77,7 +77,7 @@ class SenderTest : public ::testing::Test {
 TEST_F(SenderTest, handleGrantPacket_basic)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.message.messageLength = 9000;
     OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 4999);
     EXPECT_EQ(4, message->grantIndex);
@@ -99,7 +99,7 @@ TEST_F(SenderTest, handleGrantPacket_basic)
 TEST_F(SenderTest, handleGrantPacket_staleGrant)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.message.messageLength = 9000;
     OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 4999);
     EXPECT_EQ(4, message->grantIndex);
@@ -121,7 +121,7 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
 TEST_F(SenderTest, handleGrantPacket_excessGrant)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.message.messageLength = 9000;
     OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 4999);
     EXPECT_EQ(4, message->grantIndex);
@@ -157,7 +157,7 @@ TEST_F(SenderTest, handleGrantPacket_dropGrant)
 TEST_F(SenderTest, sendMessage_basic)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
 
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 420;
@@ -191,7 +191,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
     NiceMock<Homa::Mock::MockDriver::MockPacket> packet0(payload0);
     NiceMock<Homa::Mock::MockDriver::MockPacket> packet1(payload1);
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
 
     op->outMessage.message.setPacket(0, &packet0);
     op->outMessage.message.setPacket(1, &packet1);
@@ -240,7 +240,7 @@ TEST_F(SenderTest, sendMessage_missingPacket)
     // Debug::setLogHandler(std::ref(handler));
 
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.message.setPacket(1, &mockPacket);
 
     EXPECT_DEATH(sender.sendMessage(msgId, nullptr, op),
@@ -254,7 +254,7 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
     Debug::setLogHandler(std::ref(handler));
 
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 420;
     mockPacket.length = op->outMessage.message.messageLength +
@@ -285,7 +285,7 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
 TEST_F(SenderTest, sendMessage_unsheduledLimit)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     for (int i = 0; i < 9; ++i) {
         op->outMessage.message.setPacket(i, &mockPacket);
     }
@@ -311,7 +311,7 @@ TEST_F(SenderTest, sendMessage_unsheduledLimit)
 TEST_F(SenderTest, dropMessage)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.message.messageLength = 9000;
     OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 4999);
 
@@ -332,7 +332,7 @@ TEST_F(SenderTest, trySend_basic)
     Transport::Op* op[4];
     OutboundMessage* message[4];
     for (uint64_t i = 0; i < 4; ++i) {
-        op[i] = opPool->construct(nullptr, &mockDriver);
+        op[i] = transport->opPool.construct(transport, &mockDriver);
         Protocol::MessageId msgId = {42, 10 + i, 1};
         message[i] = SenderTest::addMessage(&sender, msgId, op[i], 4999);
     }
@@ -376,10 +376,13 @@ TEST_F(SenderTest, trySend_basic)
 
     EXPECT_EQ(4U, message[0]->sentIndex);
     EXPECT_TRUE(message[0]->sent);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[0]));
     EXPECT_EQ(4U, message[1]->sentIndex);
     EXPECT_FALSE(message[1]->sent);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[1]));
     EXPECT_EQ(4U, message[2]->sentIndex);
     EXPECT_FALSE(message[2]->sent);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
 
     EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(5);
 
@@ -387,12 +390,13 @@ TEST_F(SenderTest, trySend_basic)
 
     EXPECT_EQ(4U, message[3]->sentIndex);
     EXPECT_TRUE(message[3]->sent);
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op[3]));
 }
 
 TEST_F(SenderTest, trySend_alreadyRunning)
 {
     Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = opPool->construct(nullptr, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 1000;
     EXPECT_EQ(1U, op->outMessage.message.getNumPackets());

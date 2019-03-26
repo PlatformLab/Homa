@@ -176,6 +176,8 @@ TEST_F(HomaTest, ServerOp_constructor_move)
     EXPECT_EQ((const Message*)41, destOp.request);
     EXPECT_EQ((Message*)42, destOp.response);
     EXPECT_EQ((Core::OpContext*)43, destOp.op);
+
+    destOp.op = nullptr;
 }
 
 TEST_F(HomaTest, ServerOp_destructor)
@@ -201,6 +203,8 @@ TEST_F(HomaTest, ServerOp_assignment_move)
     EXPECT_EQ((const Message*)41, destOp.request);
     EXPECT_EQ((Message*)42, destOp.response);
     EXPECT_EQ((Core::OpContext*)43, destOp.op);
+
+    destOp.op = nullptr;
 }
 
 TEST_F(HomaTest, Transport_receiveServerOp)
@@ -214,7 +218,7 @@ TEST_F(HomaTest, Transport_receiveServerOp)
     inMessage.message.construct(&mockDriver,
                                 sizeof(Protocol::Packet::DataHeader), 0);
     op->inMessage = &inMessage;
-    transport->internal->serverOpQueue.push_back(op);
+    transport->internal->pendingServerOps.queue.push_back(op);
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
 
