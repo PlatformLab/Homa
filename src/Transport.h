@@ -101,7 +101,7 @@ class Transport {
         }
 
         /**
-         * Singal that this Op should be garbage collected.
+         * Signal that this Op should be garbage collected.
          *
          * @param lock
          *      Used to remind the caller to hold the Op's mutex while calling
