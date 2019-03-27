@@ -502,8 +502,8 @@ TEST_F(TransportTest, poll)
 
 TEST_F(TransportTest, processPackets)
 {
-    char payload[2][1024];
-    Homa::Driver::Packet* packets[2];
+    char payload[3][1024];
+    Homa::Driver::Packet* packets[3];
 
     // Set DATA packet
     Homa::Mock::MockDriver::MockPacket dataPacket(payload[0], 1024);
@@ -521,8 +521,15 @@ TEST_F(TransportTest, processPackets)
     EXPECT_CALL(mockSender,
                 handleGrantPacket(Eq(&grantPacket), Eq(&mockDriver)));
 
+    // Set DONE packet
+    Homa::Mock::MockDriver::MockPacket donePacket(payload[2], 1024);
+    static_cast<Protocol::Packet::DoneHeader*>(donePacket.payload)
+        ->common.opcode = Protocol::Packet::DONE;
+    packets[2] = &donePacket;
+    EXPECT_CALL(mockSender, handleDonePacket(Eq(&donePacket), Eq(&mockDriver)));
+
     EXPECT_CALL(mockDriver, receivePackets)
-        .WillOnce(DoAll(SetArrayArgument<1>(packets, packets + 2), Return(2)));
+        .WillOnce(DoAll(SetArrayArgument<1>(packets, packets + 3), Return(3)));
 
     transport->processPackets();
 }

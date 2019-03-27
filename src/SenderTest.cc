@@ -74,6 +74,30 @@ class SenderTest : public ::testing::Test {
     }
 };
 
+TEST_F(SenderTest, handleDonePacket)
+{
+    Protocol::MessageId id = {42, 1, 32};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    op->outMessage.acknowledged = false;
+
+    Protocol::Packet::GrantHeader* header =
+        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(2);
+
+    sender.handleDonePacket(&mockPacket, &mockDriver);
+
+    EXPECT_FALSE(op->outMessage.acknowledged);
+
+    sender.outboundMessages.insert({id, op});
+
+    sender.handleDonePacket(&mockPacket, &mockDriver);
+
+    EXPECT_TRUE(op->outMessage.acknowledged);
+}
+
 TEST_F(SenderTest, handleGrantPacket_basic)
 {
     Protocol::MessageId msgId = {42, 1, 1};

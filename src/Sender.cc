@@ -41,6 +41,44 @@ Sender::Sender()
 Sender::~Sender() {}
 
 /**
+ * Process an incoming DONE packet.
+ *
+ * @param packet
+ *      Incoming DONE packet to be processed.
+ * @param driver
+ *      Driver from which the packet was received and to which it should be
+ *      returned after the packet has been processed.
+ */
+void
+Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
+{
+    SpinLock::UniqueLock lock(mutex);
+
+    Protocol::Packet::DoneHeader* header =
+        static_cast<Protocol::Packet::DoneHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->common.messageId;
+    Transport::Op* op = nullptr;
+
+    auto it = outboundMessages.find(msgId);
+    if (it != outboundMessages.end()) {
+        op = it->second;
+    } else {
+        // No message for this grant; grant must be old; just drop it.
+        driver->releasePackets(&packet, 1);
+        return;
+    }
+
+    // Lock handoff
+    SpinLock::Lock lock_op(op->mutex);
+    lock.unlock();
+
+    OutboundMessage* message = &op->outMessage;
+    message->acknowledged = true;
+    op->hintUpdate();
+    driver->releasePackets(&packet, 1);
+}
+
+/**
  * Process an incoming GRANT packet.
  *
  * @param packet

@@ -270,6 +270,9 @@ Transport::processPackets()
             case Protocol::Packet::GRANT:
                 sender->handleGrantPacket(packet, driver);
                 break;
+            case Protocol::Packet::DONE:
+                sender->handleDonePacket(packet, driver);
+                break;
         }
     }
 }

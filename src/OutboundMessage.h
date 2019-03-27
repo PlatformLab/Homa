@@ -44,6 +44,7 @@ class OutboundMessage {
         , grantIndex(-1)
         , sentIndex(-1)
         , sent(false)
+        , acknowledged(true)
     {}
 
     /**
@@ -58,11 +59,11 @@ class OutboundMessage {
     }
 
     /**
-     * True if the sending of this Message is complete; false, otherwise.
+     * True if this Message has finished processing; false, otherwise.
      */
     bool isDone()
     {
-        return sent;
+        return sent && acknowledged;
     }
 
   private:
@@ -78,8 +79,11 @@ class OutboundMessage {
     int grantIndex;
     /// The packet index up to which all packets have been sent.
     int sentIndex;
-    /// True if this message has been fully sent; false otherwise.
+    /// True if this message has been fully sent; false, otherwise.
     bool sent;
+    /// True if this message is no longer waiting for a DONE acknowledgement;
+    /// false, otherwise.
+    bool acknowledged;
 
     friend class Sender;
 };
