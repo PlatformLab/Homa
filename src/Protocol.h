@@ -154,6 +154,7 @@ namespace Packet {
 enum Opcode {
     DATA = 21,
     GRANT = 22,
+    DONE = 23,
 };
 
 /**
@@ -232,6 +233,19 @@ struct DataHeader {
         : common(Opcode::DATA, messageId)
         , totalLength(totalLength)
         , index(index)
+    {}
+} __attribute__((packed));
+
+/**
+ * Describes the wire format for a DONE packet.  The DONE packet signals that a
+ * particular Message has been processed by the receiving server.
+ */
+struct DoneHeader {
+    CommonHeader common;  ///< Common header fields.
+
+    /// DoneHeader constructor.
+    DoneHeader(MessageId messageId)
+        : common(Opcode::DONE, messageId)
     {}
 } __attribute__((packed));
 
