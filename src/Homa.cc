@@ -124,15 +124,23 @@ ServerOp::operator bool() const
 void
 ServerOp::reply()
 {
-    response = nullptr;
-    op->transport->sendReply(op);
+    if (op != nullptr) {
+        response = nullptr;
+        op->transport->sendReply(op);
+    } else {
+        WARNING("Calling reply() on empty ServerOp; nothing will be sent.");
+    }
 }
 
 void
 ServerOp::delegate(Driver::Address* destination)
 {
-    response = nullptr;
-    op->transport->sendRequest(op, destination);
+    if (op != nullptr) {
+        response = nullptr;
+        op->transport->sendRequest(op, destination);
+    } else {
+        WARNING("Calling delegate() on empty ServerOp; nothing will be sent.");
+    }
 }
 
 Transport::Transport(Driver* driver, uint64_t transportId)
