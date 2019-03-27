@@ -53,6 +53,10 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
         } else if (copyOfState == State::IN_PROGRESS) {
             if (outMessage.isDone()) {
                 state.store(State::COMPLETED);
+                if (inMessage->getId().tag !=
+                    Protocol::MessageId::INITIAL_REQUEST_TAG) {
+                    Receiver::sendDonePacket(this, transport->driver, lock);
+                }
                 hintUpdate();
             }
         } else if (copyOfState == State::COMPLETED) {

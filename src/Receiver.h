@@ -50,6 +50,29 @@ class Receiver {
     virtual void dropOp(Transport::Op* op);
     virtual void poll();
 
+    /**
+     * Send a DONE packet to the Sender of an Op's incomming request.
+     *
+     * @param op
+     *      Op whose incomming request should be acknowledged.
+     * @param driver
+     *      Driver with which the DONE packet should be sent.
+     * @param lock_op
+     *      Used to remind the caller to hold the op's mutex while calling
+     *      this method.
+     */
+    static inline void sendDonePacket(Transport::Op* op, Driver* driver,
+                                      const SpinLock::Lock& lock_op)
+    {
+        (void)lock_op;
+        Driver::Packet* packet = driver->allocPacket();
+        new (packet->payload)
+            Protocol::Packet::DoneHeader(op->inMessage->getId());
+        packet->length = sizeof(Protocol::Packet::DoneHeader);
+        driver->sendPackets(&packet, 1);
+        driver->releasePackets(&packet, 1);
+    }
+
   private:
     /// Mutext for monitor-style locking of Receiver state.
     SpinLock mutex;

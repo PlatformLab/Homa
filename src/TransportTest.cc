@@ -162,7 +162,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
     EXPECT_FALSE(op->destroy);
 }
 
-TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS)
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone)
 {
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, true);
@@ -178,9 +178,48 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS)
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
     EXPECT_FALSE(op->destroy);
+}
 
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_noSendDone)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, true);
+    op->state.store(OpContext::State::IN_PROGRESS);
     op->outMessage.sent = true;
+    InboundMessage inMessage;
+    op->inMessage = &inMessage;
+    inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG;
+    EXPECT_TRUE(op->outMessage.isDone());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_FALSE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_sendDone)
+{
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, true);
+    op->state.store(OpContext::State::IN_PROGRESS);
+    op->outMessage.sent = true;
+    InboundMessage inMessage;
+    op->inMessage = &inMessage;
+    inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG + 1;
+    EXPECT_TRUE(op->outMessage.isDone());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+
+    char payload[1028];
+    NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket(payload);
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
     {
         SpinLock::Lock lock(op->mutex);
         op->processUpdates(lock);

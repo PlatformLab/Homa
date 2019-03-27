@@ -360,6 +360,28 @@ TEST_F(ReceiverTest, poll)
     receiver->poll();
 }
 
+TEST_F(ReceiverTest, sendDonePacket)
+{
+    Protocol::MessageId id = {42, 32, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    InboundMessage* message = receiver->messagePool.construct();
+    message->id = id;
+    op->inMessage = message;
+
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+    {
+        SpinLock::Lock lock(op->mutex);
+        Receiver::sendDonePacket(op, &mockDriver, lock);
+    }
+    Protocol::Packet::CommonHeader* header =
+        static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
+    EXPECT_EQ(Protocol::Packet::DONE, header->opcode);
+    EXPECT_EQ(id, header->messageId);
+}
+
 }  // namespace
 }  // namespace Core
 }  // namespace Homa
