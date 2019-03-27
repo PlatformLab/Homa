@@ -128,12 +128,16 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
  *      Destination address for this message.
  * @param op
  *      Transport::Op containing the OutboundMessage to be sent.
+ * @param expectAcknowledgement
+ *      True means the Sender should wait for a DONE packet before declaring
+ *      this message "done"; false means the message is "done" after the last
+ *      byte of the message is sent.
  *
  * @sa dropMessage()
  */
 void
 Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
-                    Transport::Op* op)
+                    Transport::Op* op, bool expectAcknowledgement)
 {
     SpinLock::UniqueLock lock(mutex);
     SpinLock::Lock lock_op(op->mutex);
@@ -154,6 +158,7 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
     OutboundMessage* message = &op->outMessage;
     message->id = id;
     message->destination = destination;
+    message->acknowledged = !expectAcknowledgement;
     uint32_t unscheduledBytes =
         RTT_TIME_US * (message->message.driver->getBandwidth() / 8);
 

@@ -35,9 +35,9 @@ class MockSender : public Core::Sender {
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD2(handleGrantPacket,
                  void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD3(sendMessage,
+    MOCK_METHOD4(sendMessage,
                  void(Protocol::MessageId id, Driver::Address* destination,
-                      Core::Transport::Op* op));
+                      Core::Transport::Op* op, bool expectAcknowledgement));
     MOCK_METHOD1(dropMessage, void(Core::Transport::Op* op));
     MOCK_METHOD0(poll, void());
 };

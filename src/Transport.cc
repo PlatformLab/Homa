@@ -194,7 +194,7 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
         Protocol::MessageId delegationId(Protocol::OpId(requestId),
                                          requestId.tag + 1);
         lock_op.unlock();  // Allow Sender to take the lock.
-        sender->sendMessage(delegationId, destination, op);
+        sender->sendMessage(delegationId, destination, op, true);
     } else {
         Protocol::OpId opId(transportId, nextOpSequenceNumber++);
         op->state.store(OpContext::State::IN_PROGRESS);

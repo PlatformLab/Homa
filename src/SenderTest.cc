@@ -200,12 +200,30 @@ TEST_F(SenderTest, sendMessage_basic)
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     EXPECT_EQ(op->outMessage.id, header->common.messageId);
     EXPECT_EQ(destination, op->outMessage.destination);
+    EXPECT_TRUE(op->outMessage.acknowledged);
     EXPECT_EQ(op->outMessage.message.messageLength, header->totalLength);
     EXPECT_TRUE(sender.outboundMessages.find(msgId) !=
                 sender.outboundMessages.end());
     EXPECT_EQ(op, sender.outboundMessages.find(msgId)->second);
     EXPECT_EQ(419U, op->outMessage.grantOffset);
     EXPECT_EQ(0U, op->outMessage.grantIndex);
+}
+
+TEST_F(SenderTest, sendMessage_expectAcknowledgement)
+{
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    op->outMessage.message.messageLength = 0;
+    Driver::Address* destination = (Driver::Address*)22;
+
+    sender.sendMessage(id, destination, op, true);
+    EXPECT_FALSE(op->outMessage.acknowledged);
+
+    // Remove the op so we can test adding it again.
+    sender.outboundMessages.erase(id);
+
+    sender.sendMessage(id, destination, op);
+    EXPECT_TRUE(op->outMessage.acknowledged);
 }
 
 TEST_F(SenderTest, sendMessage_multipacket)

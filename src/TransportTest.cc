@@ -429,7 +429,7 @@ TEST_F(TransportTest, sendRequest_ServerOp)
     Driver::Address* destination = (Driver::Address*)22;
 
     EXPECT_CALL(mockSender,
-                sendMessage(Eq(expectedId), Eq(destination), Eq(op)));
+                sendMessage(Eq(expectedId), Eq(destination), Eq(op), Eq(true)));
 
     transport->sendRequest(op, destination);
 }
@@ -452,7 +452,7 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::INITIAL_REQUEST_TAG)),
-                            Eq(destination), Eq(op)));
+                            Eq(destination), Eq(op), Eq(false)));
 
     transport->sendRequest(op, destination);
 
@@ -483,7 +483,7 @@ TEST_F(TransportTest, sendReply)
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
-                            Eq(replyAddress), Eq(op)));
+                            Eq(replyAddress), Eq(op), Eq(false)));
 
     transport->sendReply(op);
 
