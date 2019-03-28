@@ -46,6 +46,8 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
     if (isServerOp) {
         if (copyOfState == State::NOT_STARTED) {
             if (inMessage->isReady()) {
+                // Strip-off the Message::Header.
+                inMessage->get()->defineHeader<Protocol::Message::Header>();
                 SpinLock::Lock lock_queue(transport->pendingServerOps.mutex);
                 transport->pendingServerOps.queue.push_back(this);
                 state.store(State::IN_PROGRESS);
@@ -78,6 +80,8 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
             // Nothing to do.
         } else if (copyOfState == State::IN_PROGRESS) {
             if (inMessage->isReady()) {
+                // Strip-off the Message::Header.
+                inMessage->get()->defineHeader<Protocol::Message::Header>();
                 state.store(State::COMPLETED);
                 hintUpdate();
             }

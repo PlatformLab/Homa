@@ -135,9 +135,11 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, true);
     InboundMessage inMessage;
+    inMessage.message.construct(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
     EXPECT_EQ(OpContext::State::NOT_STARTED, op->state.load());
     EXPECT_FALSE(op->inMessage->isReady());
+    EXPECT_EQ(0U, op->inMessage->get()->MESSAGE_HEADER_LENGTH);
     EXPECT_TRUE(transport->pendingServerOps.queue.empty());
 
     {
@@ -146,17 +148,23 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
     }
 
     EXPECT_EQ(OpContext::State::NOT_STARTED, op->state.load());
+    EXPECT_EQ(0U, op->inMessage->get()->MESSAGE_HEADER_LENGTH);
     EXPECT_TRUE(transport->pendingServerOps.queue.empty());
     EXPECT_FALSE(op->destroy);
 
     inMessage.fullMessageReceived = true;
 
+    char payload[1028];
+    NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket(payload);
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
     {
         SpinLock::Lock lock(op->mutex);
         op->processUpdates(lock);
     }
 
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
+    EXPECT_EQ(sizeof(Protocol::Message::Header),
+              op->inMessage->get()->MESSAGE_HEADER_LENGTH);
     EXPECT_EQ(1U, transport->pendingServerOps.queue.size());
     EXPECT_EQ(op, transport->pendingServerOps.queue.front());
     EXPECT_FALSE(op->destroy);
@@ -329,10 +337,12 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, false);
     InboundMessage inMessage;
+    inMessage.message.construct(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
     op->state.store(OpContext::State::IN_PROGRESS);
     op->retained = true;
     EXPECT_FALSE(op->inMessage->isReady());
+    EXPECT_EQ(0U, op->inMessage->get()->MESSAGE_HEADER_LENGTH);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     {
@@ -341,17 +351,23 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
     }
 
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
+    EXPECT_EQ(0U, op->inMessage->get()->MESSAGE_HEADER_LENGTH);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
     EXPECT_FALSE(op->destroy);
 
     inMessage.fullMessageReceived = true;
 
+    char payload[1028];
+    NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket(payload);
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
     {
         SpinLock::Lock lock(op->mutex);
         op->processUpdates(lock);
     }
 
     EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_EQ(sizeof(Protocol::Message::Header),
+              op->inMessage->get()->MESSAGE_HEADER_LENGTH);
     EXPECT_EQ(1U, transport->updateHints.ops.count(op));
     EXPECT_FALSE(op->destroy);
 }
