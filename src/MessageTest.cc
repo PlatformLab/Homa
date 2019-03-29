@@ -305,9 +305,31 @@ TEST_F(MessageTest, getOrAllocPacket)
 
 TEST_F(MessageTest, getHeader)
 {
+    msg->setPacket(0, &packet0);
+    packet0.length = 42;
+    msg->MESSAGE_HEADER_LENGTH = 10;
+
+    EXPECT_TRUE(static_cast<char*>(packet0.payload) +
+                    msg->PACKET_HEADER_LENGTH ==
+                msg->getHeader());
+
+    EXPECT_EQ(28U, msg->PACKET_HEADER_LENGTH);
+    EXPECT_EQ(10U, msg->MESSAGE_HEADER_LENGTH);
+    EXPECT_EQ(42U, packet0.length);
+}
+
+TEST_F(MessageTest, getHeader_newPacket)
+{
+    msg->MESSAGE_HEADER_LENGTH = 10;
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
 
-    EXPECT_TRUE(packet0.payload == msg->getHeader());
+    EXPECT_TRUE(static_cast<char*>(packet0.payload) +
+                    msg->PACKET_HEADER_LENGTH ==
+                msg->getHeader());
+
+    EXPECT_EQ(28U, msg->PACKET_HEADER_LENGTH);
+    EXPECT_EQ(10U, msg->MESSAGE_HEADER_LENGTH);
+    EXPECT_EQ(38U, packet0.length);
 }
 
 }  // namespace

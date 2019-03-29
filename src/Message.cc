@@ -243,7 +243,12 @@ void*
 Message::getHeader()
 {
     Driver::Packet* packet = getOrAllocPacket(0);
-    return packet->payload;
+    // TODO(cstlee): A Message probably shouldn't be in charge of setting
+    //               the packet length.
+    packet->length = std::max(
+        packet->length,
+        Util::downCast<uint16_t>(PACKET_HEADER_LENGTH + MESSAGE_HEADER_LENGTH));
+    return static_cast<char*>(packet->payload) + PACKET_HEADER_LENGTH;
 }
 
 }  // namespace Core
