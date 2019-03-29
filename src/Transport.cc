@@ -138,7 +138,9 @@ Transport::allocOp()
     SpinLock::Lock lock_op(op->mutex);
     lock.unlock();
 
-    op->outMessage.get()->defineHeader<Protocol::Message::Header>();
+    Protocol::Message::Header* header =
+        op->outMessage.get()->defineHeader<Protocol::Message::Header>();
+    driver->getLocalAddress()->toRaw(&header->replyAddress);
     op->retained.store(true);
     return op;
 }
@@ -158,7 +160,13 @@ Transport::receiveOp()
         lock_queue.unlock();
 
         SpinLock::Lock lock_op(op->mutex);
-        op->outMessage.get()->defineHeader<Protocol::Message::Header>();
+        Protocol::Message::Header* header =
+            op->outMessage.get()->defineHeader<Protocol::Message::Header>();
+        assert(op->inMessage != nullptr);
+        assert(op->inMessage->get() != nullptr);
+        header->replyAddress = op->inMessage->get()
+                                   ->getHeader<Protocol::Message::Header>()
+                                   ->replyAddress;
         op->retained.store(true);
     }
     return op;

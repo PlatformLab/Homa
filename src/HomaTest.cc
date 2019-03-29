@@ -33,6 +33,7 @@ class HomaTest : public ::testing::Test {
   public:
     HomaTest()
         : mockDriver()
+        , mockAddress()
         , mockSender()
         , mockReceiver()
         , transport(new Transport(&mockDriver, 22))
@@ -59,6 +60,7 @@ class HomaTest : public ::testing::Test {
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
+    Homa::Mock::MockDriver::MockAddress mockAddress;
     Homa::Mock::MockSender mockSender;
     Homa::Mock::MockReceiver mockReceiver;
     Transport* transport;
@@ -70,7 +72,10 @@ class HomaTest : public ::testing::Test {
 
 TEST_F(HomaTest, RemoteOp_constructor)
 {
+    Homa::Mock::MockDriver::MockAddress mockAddress;
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(&mockAddress));
+    EXPECT_CALL(mockAddress, toRaw).Times(1);
     RemoteOp op(transport);
 
     EXPECT_EQ(op.op->getOutMessage(), op.request);
@@ -94,6 +99,8 @@ TEST_F(HomaTest, RemoteOp_send)
 TEST_F(HomaTest, RemoteOp_isReady_NOT_STARTED)
 {
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(&mockAddress));
+    EXPECT_CALL(mockAddress, toRaw).Times(1);
     RemoteOp op(transport);
     op.request = nullptr;
     op.response = nullptr;
@@ -107,6 +114,8 @@ TEST_F(HomaTest, RemoteOp_isReady_NOT_STARTED)
 TEST_F(HomaTest, RemoteOp_isReady_IN_PROGRESS)
 {
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(&mockAddress));
+    EXPECT_CALL(mockAddress, toRaw).Times(1);
     RemoteOp op(transport);
     op.request = nullptr;
     op.response = nullptr;
@@ -120,6 +129,8 @@ TEST_F(HomaTest, RemoteOp_isReady_IN_PROGRESS)
 TEST_F(HomaTest, RemoteOp_isReady_FAILED)
 {
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(&mockAddress));
+    EXPECT_CALL(mockAddress, toRaw).Times(1);
     RemoteOp op(transport);
     op.request = nullptr;
     op.response = nullptr;
@@ -133,6 +144,8 @@ TEST_F(HomaTest, RemoteOp_isReady_FAILED)
 TEST_F(HomaTest, RemoteOp_isReady_COMPLETED)
 {
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(&mockAddress));
+    EXPECT_CALL(mockAddress, toRaw).Times(1);
     RemoteOp op(transport);
     op.request = nullptr;
     op.response = nullptr;
@@ -220,7 +233,9 @@ TEST_F(HomaTest, Transport_receiveServerOp)
     op->inMessage = &inMessage;
     transport->internal->pendingServerOps.queue.push_back(op);
 
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
+    EXPECT_CALL(mockDriver, allocPacket)
+        .WillOnce(Return(&packet))
+        .WillOnce(Return(&packet0));
 
     ServerOp serverOp = transport->receiveServerOp();
 

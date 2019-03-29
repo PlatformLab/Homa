@@ -408,11 +408,14 @@ TEST_F(TransportTest, allocOp)
 {
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
+    Homa::Mock::MockDriver::MockAddress mockAddress;
 
     EXPECT_EQ(0U, transport->opPool.outstandingObjects);
     EXPECT_TRUE(transport->activeOps.empty());
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
+    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(&mockAddress));
+    EXPECT_CALL(mockAddress, toRaw).Times(1);
 
     OpContext* context = transport->allocOp();
 
@@ -426,16 +429,30 @@ TEST_F(TransportTest, allocOp)
 
 TEST_F(TransportTest, receiveOp)
 {
-    char payload[1024];
-    Homa::Mock::MockDriver::MockPacket packet(payload);
+    char payload0[1024];
+    char payload1[1024];
+    Homa::Mock::MockDriver::MockPacket packet0(payload0);
+    Homa::Mock::MockDriver::MockPacket packet1(payload1);
+    Driver::Address::Raw rawAddress;
+    rawAddress.bytes[0] = 22;
 
     Transport::Op* serverOp =
         transport->opPool.construct(transport, &mockDriver, true);
+
+    InboundMessage inMessage;
+    inMessage.message.construct(transport->driver,
+                                sizeof(Protocol::Packet::DataHeader), 0);
+    inMessage.message->setPacket(0, &packet0);
+    Protocol::Message::Header* header =
+        inMessage.message->defineHeader<Protocol::Message::Header>();
+    header->replyAddress = rawAddress;
+    serverOp->inMessage = &inMessage;
+
     transport->pendingServerOps.queue.push_back(serverOp);
     EXPECT_EQ(OpContext::State::NOT_STARTED, serverOp->state.load());
     EXPECT_EQ(1U, transport->pendingServerOps.queue.size());
 
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
+    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet1));
 
     OpContext* context = transport->receiveOp();
 
@@ -444,6 +461,9 @@ TEST_F(TransportTest, receiveOp)
     EXPECT_EQ(sizeof(Protocol::Message::Header),
               op->outMessage.message.rawLength());
     EXPECT_TRUE(transport->pendingServerOps.queue.empty());
+    EXPECT_EQ(rawAddress.bytes[0], op->outMessage.get()
+                                       ->getHeader<Protocol::Message::Header>()
+                                       ->replyAddress.bytes[0]);
     EXPECT_TRUE(op->retained.load());
     EXPECT_EQ(0U, transport->pendingServerOps.queue.size());
 }
