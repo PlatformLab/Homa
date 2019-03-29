@@ -688,6 +688,9 @@ TEST_F(TransportTest, cleanupOps)
     EXPECT_EQ(0U, transport->activeOps.count(staleOp));
     EXPECT_EQ(1U, transport->activeOps.count(op));
 
+    EXPECT_CALL(mockSender, dropMessage(Eq(op))).Times(1);
+    EXPECT_CALL(mockReceiver, dropOp(Eq(op))).Times(1);
+
     transport->cleanupOps();
 
     EXPECT_EQ(0U, transport->unusedOps.queue.size());

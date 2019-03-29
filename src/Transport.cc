@@ -391,8 +391,13 @@ Transport::cleanupOps()
         if (activeOps.count(op) == 0) {
             continue;
         }
-        op->mutex.lock();
+
         assert(op->destroy);
+
+        sender->dropMessage(op);
+        receiver->dropOp(op);
+
+        op->mutex.lock();
         activeOps.erase(op);
         opPool.destroy(op);
     }
