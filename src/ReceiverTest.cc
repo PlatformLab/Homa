@@ -363,8 +363,10 @@ TEST_F(ReceiverTest, poll)
 TEST_F(ReceiverTest, sendDonePacket)
 {
     Protocol::MessageId id = {42, 32, 1};
+    Homa::Mock::MockDriver::MockAddress mockAddress;
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     InboundMessage* message = receiver->messagePool.construct();
+    message->source = &mockAddress;
     message->id = id;
     op->inMessage = message;
 
@@ -380,6 +382,8 @@ TEST_F(ReceiverTest, sendDonePacket)
         static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
     EXPECT_EQ(Protocol::Packet::DONE, header->opcode);
     EXPECT_EQ(id, header->messageId);
+    EXPECT_EQ(sizeof(Protocol::Packet::DoneHeader), mockPacket.length);
+    EXPECT_EQ(&mockAddress, mockPacket.address);
 }
 
 }  // namespace

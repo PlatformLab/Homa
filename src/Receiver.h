@@ -69,12 +69,13 @@ class Receiver {
         new (packet->payload)
             Protocol::Packet::DoneHeader(op->inMessage->getId());
         packet->length = sizeof(Protocol::Packet::DoneHeader);
+        packet->address = op->inMessage->source;
         driver->sendPackets(&packet, 1);
         driver->releasePackets(&packet, 1);
     }
 
   private:
-    /// Mutext for monitor-style locking of Receiver state.
+    /// Mutex for monitor-style locking of Receiver state.
     SpinLock mutex;
 
     /// Scheduler that should be informed when message packets are received.
