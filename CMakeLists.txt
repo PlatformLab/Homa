@@ -81,7 +81,6 @@ add_library(Homa::FakeDriver ALIAS FakeDriver)
 target_include_directories(FakeDriver
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-        # INSTALL_INTERFACE removed; FakeDriver should never be installed.
 )
 target_link_libraries(FakeDriver
     PUBLIC
