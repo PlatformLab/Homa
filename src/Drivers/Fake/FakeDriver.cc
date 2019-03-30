@@ -164,6 +164,7 @@ FakeDriver::sendPackets(Packet* packets[], uint16_t numPackets)
 {
     for (uint16_t i = 0; i < numPackets; ++i) {
         FakePacket* srcPacket = static_cast<FakePacket*>(packets[i]);
+        FakeAddress* srcAddress = static_cast<FakeAddress*>(getLocalAddress());
         FakeAddress* dstAddress = static_cast<FakeAddress*>(srcPacket->address);
         FakeNIC* nic = nullptr;
         {
@@ -179,7 +180,7 @@ FakeDriver::sendPackets(Packet* packets[], uint16_t numPackets)
         assert(nic != nullptr);
         std::lock_guard<std::mutex> lock_nic(nic->mutex, std::adopt_lock);
         FakePacket* dstPacket = new FakePacket(*srcPacket);
-        dstPacket->address = getLocalAddress();
+        dstPacket->address = srcAddress;
         assert(dstPacket->priority < NUM_PRIORITIES);
         assert(dstPacket->priority >= 0);
         nic->priorityQueue.at(dstPacket->priority).push_back(dstPacket);
