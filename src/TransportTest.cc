@@ -42,13 +42,13 @@ class TransportTest : public ::testing::Test {
   public:
     TransportTest()
         : mockDriver()
-        , mockSender()
-        , mockReceiver()
+        , mockSender(new NiceMock<Homa::Mock::MockSender>())
+        , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>())
         , transport(new Transport(&mockDriver, 22))
         , savedLogPolicy(Debug::getLogPolicy())
     {
-        transport->sender.reset(&mockSender);
-        transport->receiver.reset(&mockReceiver);
+        transport->sender.reset(mockSender);
+        transport->receiver.reset(mockReceiver);
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
         Debug::setLogPolicy(
@@ -57,16 +57,13 @@ class TransportTest : public ::testing::Test {
 
     ~TransportTest()
     {
-        // Release the Mock object so delete won't be called on them
-        transport->receiver.release();
-        transport->sender.release();
         delete transport;
         Debug::setLogPolicy(savedLogPolicy);
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
-    Homa::Mock::MockSender mockSender;
-    Homa::Mock::MockReceiver mockReceiver;
+    NiceMock<Homa::Mock::MockSender>* mockSender;
+    NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
     Transport* transport;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
@@ -503,7 +500,7 @@ TEST_F(TransportTest, sendRequest_ServerOp)
     op->inMessage->id.tag--;
     Driver::Address* destination = (Driver::Address*)22;
 
-    EXPECT_CALL(mockSender,
+    EXPECT_CALL(*mockSender,
                 sendMessage(Eq(expectedId), Eq(destination), Eq(op), Eq(true)));
 
     transport->sendRequest(op, destination);
@@ -518,12 +515,12 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
                                    transport->nextOpSequenceNumber};
     Driver::Address* destination = (Driver::Address*)22;
 
-    EXPECT_CALL(mockReceiver,
+    EXPECT_CALL(*mockReceiver,
                 registerOp(Eq(Protocol::MessageId(
                                expectedOpId,
                                Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
                            Eq(op)));
-    EXPECT_CALL(mockSender,
+    EXPECT_CALL(*mockSender,
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::INITIAL_REQUEST_TAG)),
@@ -554,7 +551,7 @@ TEST_F(TransportTest, sendReply)
     EXPECT_CALL(mockDriver, getAddress(Matcher<Driver::Address::Raw const*>(
                                 Eq(&header->replyAddress))))
         .WillOnce(Return(replyAddress));
-    EXPECT_CALL(mockSender,
+    EXPECT_CALL(*mockSender,
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
@@ -568,9 +565,9 @@ TEST_F(TransportTest, sendReply)
 TEST_F(TransportTest, poll)
 {
     EXPECT_CALL(mockDriver, receivePackets).WillOnce(Return(0));
-    EXPECT_CALL(mockSender, poll);
-    EXPECT_CALL(mockReceiver, poll);
-    EXPECT_CALL(mockReceiver, receiveMessage).WillOnce(Return(nullptr));
+    EXPECT_CALL(*mockSender, poll);
+    EXPECT_CALL(*mockReceiver, poll);
+    EXPECT_CALL(*mockReceiver, receiveMessage).WillOnce(Return(nullptr));
 
     transport->poll();
 }
@@ -585,7 +582,7 @@ TEST_F(TransportTest, processPackets)
     static_cast<Protocol::Packet::DataHeader*>(dataPacket.payload)
         ->common.opcode = Protocol::Packet::DATA;
     packets[0] = &dataPacket;
-    EXPECT_CALL(mockReceiver,
+    EXPECT_CALL(*mockReceiver,
                 handleDataPacket(Eq(&dataPacket), Eq(&mockDriver)));
 
     // Set GRANT packet
@@ -593,7 +590,7 @@ TEST_F(TransportTest, processPackets)
     static_cast<Protocol::Packet::GrantHeader*>(grantPacket.payload)
         ->common.opcode = Protocol::Packet::GRANT;
     packets[1] = &grantPacket;
-    EXPECT_CALL(mockSender,
+    EXPECT_CALL(*mockSender,
                 handleGrantPacket(Eq(&grantPacket), Eq(&mockDriver)));
 
     // Set DONE packet
@@ -601,7 +598,8 @@ TEST_F(TransportTest, processPackets)
     static_cast<Protocol::Packet::DoneHeader*>(donePacket.payload)
         ->common.opcode = Protocol::Packet::DONE;
     packets[2] = &donePacket;
-    EXPECT_CALL(mockSender, handleDonePacket(Eq(&donePacket), Eq(&mockDriver)));
+    EXPECT_CALL(*mockSender,
+                handleDonePacket(Eq(&donePacket), Eq(&mockDriver)));
 
     EXPECT_CALL(mockDriver, receivePackets)
         .WillOnce(DoAll(SetArrayArgument<1>(packets, packets + 3), Return(3)));
@@ -618,10 +616,10 @@ TEST_F(TransportTest, processInboundMessages_newRequest)
     EXPECT_EQ(0U, transport->opPool.outstandingObjects);
     EXPECT_TRUE(transport->activeOps.empty());
 
-    EXPECT_CALL(mockReceiver, receiveMessage)
+    EXPECT_CALL(*mockReceiver, receiveMessage)
         .WillOnce(Return(&message))
         .WillOnce(Return(nullptr));
-    EXPECT_CALL(mockReceiver, registerOp(Eq(id), _));
+    EXPECT_CALL(*mockReceiver, registerOp(Eq(id), _));
 
     transport->processInboundMessages();
 
@@ -635,10 +633,10 @@ TEST_F(TransportTest, processInboundMessages_dropResponse)
     InboundMessage message;
     message.id = id;
 
-    EXPECT_CALL(mockReceiver, receiveMessage)
+    EXPECT_CALL(*mockReceiver, receiveMessage)
         .WillOnce(Return(&message))
         .WillOnce(Return(nullptr));
-    EXPECT_CALL(mockReceiver, dropMessage(Eq(&message)));
+    EXPECT_CALL(*mockReceiver, dropMessage(Eq(&message)));
 
     transport->processInboundMessages();
 }
@@ -688,8 +686,8 @@ TEST_F(TransportTest, cleanupOps)
     EXPECT_EQ(0U, transport->activeOps.count(staleOp));
     EXPECT_EQ(1U, transport->activeOps.count(op));
 
-    EXPECT_CALL(mockSender, dropMessage(Eq(op))).Times(1);
-    EXPECT_CALL(mockReceiver, dropOp(Eq(op))).Times(1);
+    EXPECT_CALL(*mockSender, dropMessage(Eq(op))).Times(1);
+    EXPECT_CALL(*mockReceiver, dropOp(Eq(op))).Times(1);
 
     transport->cleanupOps();
 

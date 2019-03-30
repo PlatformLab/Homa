@@ -34,16 +34,16 @@ class HomaTest : public ::testing::Test {
     HomaTest()
         : mockDriver()
         , mockAddress()
-        , mockSender()
-        , mockReceiver()
+        , mockSender(new NiceMock<Homa::Mock::MockSender>())
+        , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>())
         , transport(new Transport(&mockDriver, 22))
         , buf()
         , packet0(buf + 0)
         , packet1(buf + 2048)
         , savedLogPolicy(Debug::getLogPolicy())
     {
-        transport->internal->sender.reset(&mockSender);
-        transport->internal->receiver.reset(&mockReceiver);
+        transport->internal->sender.reset(mockSender);
+        transport->internal->receiver.reset(mockReceiver);
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
         Debug::setLogPolicy(
@@ -52,17 +52,14 @@ class HomaTest : public ::testing::Test {
 
     ~HomaTest()
     {
-        // Release the Mock object so delete won't be called on them
-        transport->internal->receiver.release();
-        transport->internal->sender.release();
         delete transport;
         Debug::setLogPolicy(savedLogPolicy);
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
     Homa::Mock::MockDriver::MockAddress mockAddress;
-    Homa::Mock::MockSender mockSender;
-    Homa::Mock::MockReceiver mockReceiver;
+    NiceMock<Homa::Mock::MockSender>* mockSender;
+    NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
     Transport* transport;
     char buf[4096];
     Homa::Mock::MockDriver::MockPacket packet0;

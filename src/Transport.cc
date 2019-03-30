@@ -122,7 +122,17 @@ Transport::Transport(Driver* driver, uint64_t transportId)
 /**
  * Transport Destructor.
  */
-Transport::~Transport() = default;
+Transport::~Transport()
+{
+    mutex.lock();
+    for (auto it = activeOps.begin(); it != activeOps.end(); ++it) {
+        Op* op = *it;
+        sender->dropMessage(op);
+        receiver->dropOp(op);
+        op->mutex.lock();
+        opPool.destroy(op);
+    }
+};
 
 /**
  * Return a new OpContext which can be used to hold a client's RemoteOp.

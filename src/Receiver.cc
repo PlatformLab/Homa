@@ -37,7 +37,15 @@ Receiver::Receiver(Scheduler* scheduler)
 /**
  * Receiver distructor.
  */
-Receiver::~Receiver() {}
+Receiver::~Receiver()
+{
+    mutex.lock();
+    for (auto it = unregisteredMessages.begin();
+         it != unregisteredMessages.end(); ++it) {
+        InboundMessage* message = it->second;
+        messagePool.destroy(message);
+    }
+}
 
 /**
  * Process an incoming DATA packet.
