@@ -19,19 +19,23 @@
 namespace Homa {
 namespace Core {
 
+namespace {
+const uint32_t RTT_TIME_US = 5;
+}
+
 /**
  * Receiver constructor.
  *
  * @param scheduler
  *      Scheduler that should be informed when message packets are received.
  */
-Receiver::Receiver(Scheduler* scheduler)
+Receiver::Receiver()
     : mutex()
-    , scheduler(scheduler)
     , registeredOps()
     , unregisteredMessages()
     , receivedMessages()
     , messagePool()
+    , scheduling()
 {}
 
 /**
@@ -128,11 +132,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         // more packets anyway.
         uint32_t totalReceivedBytes = message->message->PACKET_DATA_LENGTH *
                                       message->message->getNumPackets();
-
-        // Let the Scheduler know that we received a packet.
-        scheduler->packetReceived(id, message->source,
-                                  message->message->rawLength(),
-                                  totalReceivedBytes);
+        message->newPacket = true;
         if (totalReceivedBytes >= message->message->rawLength()) {
             message->fullMessageReceived = true;
             if (op != nullptr) {
@@ -248,7 +248,104 @@ Receiver::dropOp(Transport::Op* op)
  */
 void
 Receiver::poll()
-{}
+{
+    schedule();
+}
+
+/**
+ * Send a GRANT packet to the Sender of an incomming Message.
+ *
+ * @param message
+ *      InboundMessage for which to send a GRANT.
+ * @param driver
+ *      Driver with which the GRANT packet should be sent.
+ * @param lock_message
+ *      Used to remind the caller to hold the message's mutex while calling
+ *      this method.
+ */
+void
+Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
+                          const SpinLock::Lock& lock_message)
+{
+    (void)lock_message;
+    // TODO(cstlee): Implement Homa's grant policy.
+    // Implements a very simple grant policy which tries to maintain RTT bytes
+    // granted for every Message.
+    // TODO(cstlee): Add safe guards to prevent RTT_BYTES from being less than
+    //               a single packet length. The sender might get stuck if the
+    //               grants are smaller than a single packet.
+    uint32_t RTT_BYTES = RTT_TIME_US * (driver->getBandwidth() / 8);
+    uint32_t totalBytesReceived = message->message->PACKET_DATA_LENGTH *
+                                  message->message->getNumPackets();
+    uint32_t offset = totalBytesReceived + RTT_BYTES;
+
+    Driver::Packet* packet = driver->allocPacket();
+    new (packet->payload) Protocol::Packet::GrantHeader(message->id, offset);
+    packet->length = sizeof(Protocol::Packet::GrantHeader);
+    packet->address = message->source;
+    driver->sendPackets(&packet, 1);
+    driver->releasePackets(&packet, 1);
+}
+
+/**
+ * Schedule incomming messages by sending GRANTs.
+ */
+void
+Receiver::schedule()
+{
+    // Skip scheduling if another poller is already working on it.
+    if (scheduling.test_and_set()) {
+        return;
+    }
+
+    SpinLock::UniqueLock lock(mutex);
+    Tub<SpinLock::Lock> lock_op;
+    Tub<SpinLock::Lock> lock_message;
+
+    Transport::Op* op = nullptr;
+    InboundMessage* message = nullptr;
+
+    // First look in registered ops
+    auto it = registeredOps.begin();
+    while (it != registeredOps.end()) {
+        op = it->second;
+        lock_op.construct(op->mutex);
+        message = op->inMessage;
+        lock_message.construct(message->mutex);
+        if (message->newPacket) {
+            // found a message to send.
+            break;
+        }
+        lock_message.destroy();
+        message = nullptr;
+        lock_op.destroy();
+        op = nullptr;
+        it++;
+    }
+
+    // Look in unregisteredMessages if we still don't have one.
+    if (message == nullptr) {
+        auto it = unregisteredMessages.begin();
+        while (it != unregisteredMessages.end()) {
+            message = it->second;
+            lock_message.construct(message->mutex);
+            if (message->newPacket) {
+                // found a message to send.
+                break;
+            }
+            lock_message.destroy();
+            message = nullptr;
+            it++;
+        }
+    }
+
+    if (message != nullptr) {
+        sendGrantPacket(message, message->message->driver, *lock_message);
+        message->newPacket = false;
+    }
+
+    scheduling.clear();
+}
 
 }  // namespace Core
 }  // namespace Homa

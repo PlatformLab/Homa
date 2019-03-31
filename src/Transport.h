@@ -26,7 +26,6 @@
 #include "ObjectPool.h"
 #include "OpContext.h"
 #include "OutboundMessage.h"
-#include "Scheduler.h"
 #include "SpinLock.h"
 
 /**
@@ -167,9 +166,6 @@ class Transport {
 
     /// Module which controls the sending of message.
     std::unique_ptr<Core::Sender> sender;
-
-    /// Module which schedules incoming packets.
-    std::unique_ptr<Core::Scheduler> scheduler;
 
     /// Module which receives packets and forms them into messages.
     std::unique_ptr<Core::Receiver> receiver;

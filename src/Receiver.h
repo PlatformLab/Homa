@@ -18,13 +18,13 @@
 
 #include "Homa/Driver.h"
 
+#include <atomic>
 #include <deque>
 #include <unordered_map>
 
 #include "InboundMessage.h"
 #include "ObjectPool.h"
 #include "Protocol.h"
-#include "Scheduler.h"
 #include "SpinLock.h"
 #include "Transport.h"
 
@@ -41,7 +41,7 @@ namespace Core {
  */
 class Receiver {
   public:
-    explicit Receiver(Scheduler* scheduler);
+    explicit Receiver();
     virtual ~Receiver();
     virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
     virtual InboundMessage* receiveMessage();
@@ -75,11 +75,12 @@ class Receiver {
     }
 
   private:
+    void schedule();
+    void sendGrantPacket(InboundMessage* message, Driver* driver,
+                         const SpinLock::Lock& lock_message);
+
     /// Mutex for monitor-style locking of Receiver state.
     SpinLock mutex;
-
-    /// Scheduler that should be informed when message packets are received.
-    Scheduler* const scheduler;
 
     /// Tracks the set of Transport::Op objects with expected InboundMessages.
     std::unordered_map<Protocol::MessageId, Transport::Op*,
@@ -98,6 +99,10 @@ class Receiver {
     /// Used to allocate additional Transport::Op objects when receiving a new
     /// unregistered Message.
     ObjectPool<InboundMessage> messagePool;
+
+    /// True if the Receiver is executing schedule(); false, otherwise. Use to
+    /// prevent concurrent calls to trySend() from blocking on eachother.
+    std::atomic_flag scheduling = ATOMIC_FLAG_INIT;
 };
 
 }  // namespace Core

@@ -40,6 +40,7 @@ class InboundMessage {
         , id(0, 0, 0)
         , source(nullptr)
         , message()
+        , newPacket(false)
         , fullMessageReceived(false)
     {}
 
@@ -80,6 +81,8 @@ class InboundMessage {
     Driver::Address* source;
     /// Collection of packets being received.
     Tub<Message> message;
+    /// Marked true when a new data packet arrives; cleared by the scheduler.
+    bool newPacket;
     /// True if all packets of the message have been received.
     bool fullMessageReceived;
 

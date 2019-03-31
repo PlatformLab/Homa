@@ -38,7 +38,6 @@ add_library(Homa
     src/Homa.cc
     src/Message.cc
     src/Receiver.cc
-    src/Scheduler.cc
     src/Sender.cc
     src/StringUtil.cc
     src/ThreadId.cc
@@ -226,7 +225,6 @@ add_executable(unit_test
     src/MessageTest.cc
     src/ObjectPoolTest.cc
     src/ReceiverTest.cc
-    src/SchedulerTest.cc
     src/SenderTest.cc
     src/SpinLockTest.cc
     src/STLUtilTest.cc

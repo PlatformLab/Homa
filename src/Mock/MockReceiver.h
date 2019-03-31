@@ -32,7 +32,7 @@ namespace Mock {
 class MockReceiver : public Core::Receiver {
   public:
     MockReceiver()
-        : Receiver(nullptr)
+        : Receiver()
     {}
 
     MOCK_METHOD2(handleDataPacket,
