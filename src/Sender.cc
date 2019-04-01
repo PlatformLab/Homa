@@ -17,6 +17,7 @@
 
 #include <algorithm>
 
+#include "ControlPacket.h"
 #include "Debug.h"
 
 namespace Homa {
@@ -75,6 +76,68 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     OutboundMessage* message = &op->outMessage;
     message->acknowledged = true;
     op->hintUpdate();
+    driver->releasePackets(&packet, 1);
+}
+
+/**
+ * Process an incoming RESEND packet.
+ *
+ * @param packet
+ *      Incoming RESEND packet to be processed.
+ * @param driver
+ *      Driver from which the packet was received and to which it should be
+ *      returned after the packet has been processed.
+ */
+void
+Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
+{
+    SpinLock::UniqueLock lock(mutex);
+
+    Protocol::Packet::ResendHeader* header =
+        static_cast<Protocol::Packet::ResendHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->common.messageId;
+    Transport::Op* op = nullptr;
+
+    auto it = outboundMessages.find(msgId);
+    if (it != outboundMessages.end()) {
+        op = it->second;
+    } else {
+        // No message for this RESEND; RESEND must be old. Just ignore it; this
+        // case should be pretty rare and the Receiver will timeout eventually.
+        driver->releasePackets(&packet, 1);
+        return;
+    }
+
+    // Lock handoff
+    SpinLock::Lock lock_op(op->mutex);
+    lock.unlock();
+
+    OutboundMessage* message = &op->outMessage;
+
+    uint16_t index = header->index;
+    uint16_t resendEnd = index + header->num;
+
+    // In case a GRANT may have been lost, consider the RESEND a GRANT.
+    assert(resendEnd <= message->message.getNumPackets());
+    message->grantIndex = std::max(message->grantIndex, resendEnd);
+
+    if (index >= message->sentIndex) {
+        // If this RESEND is only requesting unsent packets, it must be that
+        // this Sender has been busy and the Receiver is trying to ensure there
+        // are no lost packets.  Reply BUSY and allow this Sender to send DATA
+        // when it's ready.
+        ControlPacket::send<Protocol::Packet::BusyHeader>(
+            driver, message->destination, message->id);
+    } else {
+        // There are some packets to resend but only resend packets that have
+        // already been sent.
+        resendEnd = std::min(resendEnd, message->sentIndex);
+        for (uint16_t i = index; i < resendEnd; ++i) {
+            Driver::Packet* packet = message->message.getPacket(index++);
+            message->message.driver->sendPackets(&packet, 1);
+        }
+    }
+
     driver->releasePackets(&packet, 1);
 }
 

@@ -298,6 +298,9 @@ Transport::processPackets()
             case Protocol::Packet::DONE:
                 sender->handleDonePacket(packet, driver);
                 break;
+            case Protocol::Packet::RESEND:
+                sender->handleResendPacket(packet, driver);
+                break;
         }
     }
 }

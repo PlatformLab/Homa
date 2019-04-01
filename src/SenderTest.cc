@@ -96,6 +96,99 @@ TEST_F(SenderTest, handleDonePacket)
     EXPECT_TRUE(op->outMessage.acknowledged);
 }
 
+TEST_F(SenderTest, handleResendPacket_basic)
+{
+    Protocol::MessageId msgId = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
+    for (int i = 0; i < 10; ++i) {
+        packets.push_back(new Homa::Mock::MockDriver::MockPacket(payload));
+        message->message.setPacket(i, packets[i]);
+    }
+    message->sentIndex = 5;
+    message->grantIndex = 5;
+    EXPECT_EQ(10U, message->message.getNumPackets());
+
+    Protocol::Packet::ResendHeader* resendHdr =
+        static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
+    resendHdr->common.messageId = msgId;
+    resendHdr->index = 3;
+    resendHdr->num = 5;
+
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(packets[3]), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(packets[4]), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender.handleResendPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(5U, message->sentIndex);
+    EXPECT_EQ(8U, message->grantIndex);
+
+    for (int i = 0; i < 10; ++i) {
+        delete packets[i];
+    }
+}
+
+TEST_F(SenderTest, handleResendPacket_staleResend)
+{
+    Protocol::MessageId msgId = {42, 1, 1};
+    Protocol::Packet::ResendHeader* resendHdr =
+        static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
+    resendHdr->common.messageId = msgId;
+    resendHdr->index = 3;
+    resendHdr->num = 5;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender.handleResendPacket(&mockPacket, &mockDriver);
+}
+
+TEST_F(SenderTest, handleResendPacket_eagerResend)
+{
+    Protocol::MessageId msgId = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    char data[1028];
+    Homa::Mock::MockDriver::MockPacket dataPacket(data);
+    for (int i = 0; i < 10; ++i) {
+        message->message.setPacket(i, &dataPacket);
+    }
+    message->sentIndex = 5;
+    message->grantIndex = 5;
+    EXPECT_EQ(10U, message->message.getNumPackets());
+
+    Protocol::Packet::ResendHeader* resendHdr =
+        static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
+    resendHdr->common.messageId = msgId;
+    resendHdr->index = 5;
+    resendHdr->num = 3;
+
+    // Expect the BUSY control packet.
+    char busy[1028];
+    Homa::Mock::MockDriver::MockPacket busyPacket(busy);
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&busyPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&busyPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&busyPacket), Eq(1)))
+        .Times(1);
+
+    // Expect no data to be sent but the RESEND packet to be release.
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&dataPacket), Eq(1))).Times(0);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender.handleResendPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(5U, message->sentIndex);
+    EXPECT_EQ(8U, message->grantIndex);
+
+    Protocol::Packet::BusyHeader* busyHdr =
+        static_cast<Protocol::Packet::BusyHeader*>(mockPacket.payload);
+    EXPECT_EQ(msgId, busyHdr->common.messageId);
+}
+
 TEST_F(SenderTest, handleGrantPacket_basic)
 {
     Protocol::MessageId msgId = {42, 1, 1};
