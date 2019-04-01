@@ -148,13 +148,17 @@ struct MessageId : public OpId {
 namespace Packet {
 
 /**
- * This enum defines the opcode field values for packets. See the * xxxHeader
+ * This enum defines the opcode field values for packets. See the xxxHeader
  * class definitions below for more information about each kind of packet
  */
 enum Opcode {
     DATA = 21,
     GRANT = 22,
     DONE = 23,
+    RESEND = 24,
+    BUSY = 25,
+    PING = 26,
+    UNKNOWN = 27,
 };
 
 /**
@@ -242,6 +246,67 @@ struct DoneHeader {
     /// DoneHeader constructor.
     DoneHeader(MessageId messageId)
         : common(Opcode::DONE, messageId)
+    {}
+} __attribute__((packed));
+
+/**
+ * Describes the wire format for a RESEND packet.  The RESEND packet is used by
+ * the receiver to request that a particular range of packets within a Message
+ * be resent.
+ */
+struct ResendHeader {
+    CommonHeader common;  ///< Common header fields.
+    uint16_t index;  ///< Index of the first packet that should be resent among
+                     ///< the array of packets that form the message.
+    uint16_t num;  ///< Number of packet in the range of packets that should be
+                   ///< resent starting with the packet at _index_.
+
+    /// DoneHeader constructor.
+    ResendHeader(MessageId messageId, uint16_t index, uint16_t num)
+        : common(Opcode::RESEND, messageId)
+        , index(index)
+        , num(num)
+    {}
+} __attribute__((packed));
+
+/**
+ * Describes the wire format for a BUSY packet.  The BUSY packet is used by the
+ * sender to indicate to the receiver that it is currently busy and is not
+ * sending DATA for this particular message.  Responds to a RESEND.
+ */
+struct BusyHeader {
+    CommonHeader common;  ///< Common header fields.
+
+    /// BusyHeader constructor.
+    BusyHeader(MessageId messageId)
+        : common(Opcode::BUSY, messageId)
+    {}
+} __attribute__((packed));
+
+/**
+ * Describes the wire format for a PING packet.  The PING packet used to ensure
+ * that the Op associated with a particular Message is still actively being
+ * processed and will not be timedout.
+ */
+struct PingHeader {
+    CommonHeader common;  ///< Common header fields.
+
+    /// PingHeader constructor.
+    PingHeader(MessageId messageId)
+        : common(Opcode::PING, messageId)
+    {}
+} __attribute__((packed));
+
+/**
+ * Describes the wire format for a UNKNOWN packet.  The UNKNOWN packet is used
+ * to indicate that the receiver has no knowledge a particular Message.
+ */
+struct UnknownHeader {
+    CommonHeader common;  ///< Common header fields.
+
+    /// UnknownHeader constructor.
+    UnknownHeader(MessageId messageId)
+        : common(Opcode::UNKNOWN, messageId)
     {}
 } __attribute__((packed));
 
