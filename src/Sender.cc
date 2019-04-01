@@ -174,6 +174,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     lock.unlock();
 
     OutboundMessage* message = &op->outMessage;
+    assert(header->indexLimit <= message->message.getNumPackets());
     message->grantIndex = std::max(message->grantIndex, header->indexLimit);
 
     driver->releasePackets(&packet, 1);
@@ -249,6 +250,8 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
 
     message->grantIndex =
         unscheduledBytes / message->message.PACKET_DATA_LENGTH;
+    message->grantIndex =
+        std::min(message->grantIndex, message->message.getNumPackets());
     // TODO(cstlee): handle case when unscheduledBytes is less than 1 packet.
     assert(message->grantIndex != 0);
 }

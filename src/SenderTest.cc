@@ -194,6 +194,7 @@ TEST_F(SenderTest, handleGrantPacket_basic)
     Protocol::MessageId msgId = {42, 1, 1};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    message->message.numPackets = 10;
     EXPECT_EQ(5, message->grantIndex);
 
     Protocol::Packet::GrantHeader* header =
@@ -214,6 +215,7 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
     Protocol::MessageId msgId = {42, 1, 1};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    message->message.numPackets = 10;
     EXPECT_EQ(5, message->grantIndex);
 
     Protocol::Packet::GrantHeader* header =
@@ -270,14 +272,17 @@ TEST_F(SenderTest, sendMessage_basic)
     EXPECT_TRUE(sender.outboundMessages.find(msgId) !=
                 sender.outboundMessages.end());
     EXPECT_EQ(op, sender.outboundMessages.find(msgId)->second);
-    EXPECT_EQ(5U, op->outMessage.grantIndex);
+    EXPECT_EQ(1U, op->outMessage.grantIndex);
 }
 
 TEST_F(SenderTest, sendMessage_expectAcknowledgement)
 {
     Protocol::MessageId id = {42, 1, 1};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    op->outMessage.message.messageLength = 0;
+    op->outMessage.message.setPacket(0, &mockPacket);
+    op->outMessage.message.messageLength = 420;
+    mockPacket.length = op->outMessage.message.messageLength +
+                        op->outMessage.message.PACKET_HEADER_LENGTH;
     Driver::Address* destination = (Driver::Address*)22;
 
     sender.sendMessage(id, destination, op, true);
