@@ -111,11 +111,8 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     lock.unlock();
 
     OutboundMessage* message = &op->outMessage;
-    message->grantOffset = std::max(message->grantOffset, header->offset);
-    message->grantOffset =
-        std::min(message->grantOffset, message->message.rawLength() - 1);
-    message->grantIndex =
-        message->grantOffset / message->message.PACKET_DATA_LENGTH;
+    message->grantIndex = std::max(message->grantIndex, header->indexLimit);
+
     driver->releasePackets(&packet, 1);
 }
 
@@ -187,10 +184,10 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
     assert(message->message.PACKET_HEADER_LENGTH ==
            sizeof(Protocol::Packet::DataHeader));
 
-    message->grantOffset =
-        std::min(unscheduledBytes - 1, message->message.rawLength() - 1);
     message->grantIndex =
-        message->grantOffset / message->message.PACKET_DATA_LENGTH;
+        unscheduledBytes / message->message.PACKET_DATA_LENGTH;
+    // TODO(cstlee): handle case when unscheduledBytes is less than 1 packet.
+    assert(message->grantIndex != 0);
 }
 
 /**
@@ -241,8 +238,8 @@ Sender::trySend()
         op = it->second;
         op->mutex.lock();
         OutboundMessage* message = &op->outMessage;
-        if (message->sentIndex + 1 < message->message.getNumPackets() &&
-            message->grantIndex > message->sentIndex) {
+        if (message->sentIndex < message->message.getNumPackets() &&
+            message->sentIndex < message->grantIndex) {
             // found a message to send.
             break;
         }
@@ -255,15 +252,16 @@ Sender::trySend()
     if (op != nullptr) {
         SpinLock::Lock lock_op(op->mutex, std::adopt_lock);
         OutboundMessage* message = &op->outMessage;
-        assert(message->grantIndex < message->message.getNumPackets());
+        assert(message->grantIndex <= message->message.getNumPackets());
         int numPkts = message->grantIndex - message->sentIndex;
-        for (int i = 1; i <= numPkts; ++i) {
+        for (int i = 0; i < numPkts; ++i) {
             Driver::Packet* packet =
-                message->message.getPacket(message->sentIndex + i);
+                message->message.getPacket(message->sentIndex);
+            assert(packet != nullptr);
             message->message.driver->sendPackets(&packet, 1);
         }
-        message->sentIndex = message->grantIndex;
-        if (message->sentIndex + 1 >= message->message.getNumPackets()) {
+        message->sentIndex += message->grantIndex;
+        if (message->sentIndex >= message->message.getNumPackets()) {
             // We have finished sending the message.
             message->sent = true;
             op->hintUpdate();

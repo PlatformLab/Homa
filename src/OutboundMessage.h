@@ -40,9 +40,8 @@ class OutboundMessage {
         : id(0, 0, 0)
         , destination(nullptr)
         , message(driver, sizeof(Protocol::Packet::DataHeader), 0)
-        , grantOffset(0)
-        , grantIndex(-1)
-        , sentIndex(-1)
+        , grantIndex(0)
+        , sentIndex(0)
         , sent(false)
         , acknowledged(true)
     {}
@@ -73,12 +72,10 @@ class OutboundMessage {
     Driver::Address* destination;
     /// Collection of packets to be sent.
     Message message;
-    /// The offset up-to which we can send for this message.
-    uint32_t grantOffset;
-    /// The packet index that contains the grantOffset.
-    int grantIndex;
-    /// The packet index up to which all packets have been sent.
-    int sentIndex;
+    /// Packets up to (but excluding) this index can be sent.
+    uint16_t grantIndex;
+    /// Packets up to (but excluding) this index have been sent.
+    uint16_t sentIndex;
     /// True if this message has been fully sent; false, otherwise.
     bool sent;
     /// True if this message is no longer waiting for a DONE acknowledgement;

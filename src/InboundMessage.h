@@ -39,6 +39,7 @@ class InboundMessage {
         : mutex()
         , id(0, 0, 0)
         , source(nullptr)
+        , numExpectedPackets(0)
         , message()
         , newPacket(false)
         , fullMessageReceived(false)
@@ -79,6 +80,8 @@ class InboundMessage {
     Protocol::MessageId id;
     /// Contains source address this message.
     Driver::Address* source;
+    /// Number of packets the message is expected to contain.
+    uint16_t numExpectedPackets;
     /// Collection of packets being received.
     Tub<Message> message;
     /// Marked true when a new data packet arrives; cleared by the scheduler.

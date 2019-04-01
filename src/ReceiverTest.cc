@@ -108,6 +108,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_TRUE(receiver->receivedMessages.empty());
     EXPECT_TRUE(op->inMessage->message);
     EXPECT_EQ(&mockAddress, op->inMessage->source);
+    EXPECT_EQ(2U, message->numExpectedPackets);
     EXPECT_EQ(1420U, op->inMessage->message->messageLength);
     EXPECT_TRUE(op->inMessage->message->occupied.test(1));
     EXPECT_EQ(1U, op->inMessage->message->getNumPackets());
@@ -258,6 +259,55 @@ TEST_F(ReceiverTest, handleDataPacket_newUnregistered)
     EXPECT_EQ(id, receiver->receivedMessages.front()->getId());
 }
 
+TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
+{
+    // Register op
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id(42, 32, 22);
+    InboundMessage* message = receiver->messagePool.construct();
+    message->id = id;
+    op->inMessage = message;
+    receiver->registeredOps.insert({id, op});
+
+    Protocol::Packet::DataHeader* header =
+        static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+    header->index = 0;
+    std::string addressStr("remote-location");
+    NiceMock<Homa::Mock::MockDriver::MockAddress> mockAddress;
+    mockPacket.address = &mockAddress;
+
+    ON_CALL(mockAddress, toString).WillByDefault(Return(addressStr));
+    ON_CALL(mockDriver,
+            getAddress(Matcher<std::string const*>(Pointee(addressStr))))
+        .WillByDefault(Return(&mockAddress));
+
+    // 1 partial packet
+    header->totalLength = 450;
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    EXPECT_EQ(1U, message->numExpectedPackets);
+    EXPECT_EQ(450, op->inMessage->message->messageLength);
+    EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
+
+    op->inMessage->message.destroy();
+
+    // 1 full packet
+    header->totalLength = 1000;
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    EXPECT_EQ(1U, message->numExpectedPackets);
+    EXPECT_EQ(1000U, op->inMessage->message->messageLength);
+    EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
+
+    op->inMessage->message.destroy();
+
+    // 1 full packet + 1 partial packet
+    header->totalLength = 1450;
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    EXPECT_EQ(2U, message->numExpectedPackets);
+    EXPECT_EQ(1450U, op->inMessage->message->messageLength);
+    EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
+}
+
 TEST_F(ReceiverTest, receiveMessage)
 {
     InboundMessage* msg0 = receiver->messagePool.construct();
@@ -390,29 +440,56 @@ TEST_F(ReceiverTest, sendGrantPacket)
     message.id = msgId;
     message.source = sourceAddr;
     message.message.construct(&mockDriver, 28, TOTAL_MESSAGE_LEN);
-    message.message->numPackets = 1;
+    message.numExpectedPackets = 9;
     EXPECT_EQ(1000U, message.message->PACKET_DATA_LENGTH);
-    EXPECT_EQ(1U, message.message->getNumPackets());
 
     InSequence _seq;
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
-    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-        .Times(1);
 
     {
+        // GRANT 5 more packets (up to index 6)
+        message.message->numPackets = 1;
+
+        EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
+        EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1)))
+            .Times(1);
+        EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+            .Times(1);
+
         SpinLock::Lock lock_message(message.mutex);
         receiver->sendGrantPacket(&message, &mockDriver, lock_message);
+
+        Protocol::Packet::GrantHeader* header =
+            (Protocol::Packet::GrantHeader*)payload;
+        EXPECT_EQ(msgId, header->common.messageId);
+        EXPECT_EQ(6U, header->indexLimit);
+        EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);
+        EXPECT_EQ(sourceAddr, mockPacket.address);
+
+        Mock::VerifyAndClearExpectations(&mockDriver);
     }
 
-    Mock::VerifyAndClearExpectations(&mockDriver);
+    {
+        // GRANT 1 more packet; MAX packet index 9.
+        message.message->numPackets = 8;
 
-    Protocol::Packet::GrantHeader* header =
-        (Protocol::Packet::GrantHeader*)payload;
-    EXPECT_EQ(msgId, header->common.messageId);
-    EXPECT_EQ(6000U, header->offset);
-    EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);
-    EXPECT_EQ(sourceAddr, mockPacket.address);
+        EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
+        EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1)))
+            .Times(1);
+        EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+            .Times(1);
+
+        SpinLock::Lock lock_message(message.mutex);
+        receiver->sendGrantPacket(&message, &mockDriver, lock_message);
+
+        Protocol::Packet::GrantHeader* header =
+            (Protocol::Packet::GrantHeader*)payload;
+        EXPECT_EQ(msgId, header->common.messageId);
+        EXPECT_EQ(9U, header->indexLimit);
+        EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);
+        EXPECT_EQ(sourceAddr, mockPacket.address);
+
+        Mock::VerifyAndClearExpectations(&mockDriver);
+    }
 }
 
 TEST_F(ReceiverTest, schedule)

@@ -62,13 +62,11 @@ class SenderTest : public ::testing::Test {
 
     static OutboundMessage* addMessage(Sender* sender, Protocol::MessageId id,
                                        Transport::Op* op,
-                                       uint32_t grantOffset = 0)
+                                       uint16_t grantIndex = 0)
     {
         OutboundMessage* message = &op->outMessage;
         message->id = id;
-        message->grantOffset = grantOffset;
-        message->grantIndex =
-            message->grantOffset / message->message.PACKET_DATA_LENGTH;
+        message->grantIndex = grantIndex;
         sender->outboundMessages.insert({id, op});
         return message;
     }
@@ -102,66 +100,40 @@ TEST_F(SenderTest, handleGrantPacket_basic)
 {
     Protocol::MessageId msgId = {42, 1, 1};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    op->outMessage.message.messageLength = 9000;
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 4999);
-    EXPECT_EQ(4, message->grantIndex);
+    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    EXPECT_EQ(5, message->grantIndex);
 
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = msgId;
-    header->offset = 6500;
+    header->indexLimit = 7;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
     sender.handleGrantPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(6500, message->grantOffset);
-    EXPECT_EQ(6, message->grantIndex);
+    EXPECT_EQ(7, message->grantIndex);
 }
 
 TEST_F(SenderTest, handleGrantPacket_staleGrant)
 {
     Protocol::MessageId msgId = {42, 1, 1};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    op->outMessage.message.messageLength = 9000;
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 4999);
-    EXPECT_EQ(4, message->grantIndex);
+    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    EXPECT_EQ(5, message->grantIndex);
 
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = msgId;
-    header->offset = 4000;
+    header->indexLimit = 4;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
     sender.handleGrantPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(4999, message->grantOffset);
-    EXPECT_EQ(4, message->grantIndex);
-}
-
-TEST_F(SenderTest, handleGrantPacket_excessGrant)
-{
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    op->outMessage.message.messageLength = 9000;
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 4999);
-    EXPECT_EQ(4, message->grantIndex);
-
-    Protocol::Packet::GrantHeader* header =
-        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
-    header->common.messageId = msgId;
-    header->offset = 9001;
-
-    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-        .Times(1);
-
-    sender.handleGrantPacket(&mockPacket, &mockDriver);
-
-    EXPECT_EQ(8999, message->grantOffset);
-    EXPECT_EQ(8, message->grantIndex);
+    EXPECT_EQ(5, message->grantIndex);
 }
 
 TEST_F(SenderTest, handleGrantPacket_dropGrant)
@@ -170,7 +142,7 @@ TEST_F(SenderTest, handleGrantPacket_dropGrant)
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = msgId;
-    header->offset = 6500;
+    header->indexLimit = 4;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
@@ -205,8 +177,7 @@ TEST_F(SenderTest, sendMessage_basic)
     EXPECT_TRUE(sender.outboundMessages.find(msgId) !=
                 sender.outboundMessages.end());
     EXPECT_EQ(op, sender.outboundMessages.find(msgId)->second);
-    EXPECT_EQ(419U, op->outMessage.grantOffset);
-    EXPECT_EQ(0U, op->outMessage.grantIndex);
+    EXPECT_EQ(5U, op->outMessage.grantIndex);
 }
 
 TEST_F(SenderTest, sendMessage_expectAcknowledgement)
@@ -324,7 +295,7 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
     Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
 }
 
-TEST_F(SenderTest, sendMessage_unsheduledLimit)
+TEST_F(SenderTest, sendMessage_unscheduledLimit)
 {
     Protocol::MessageId msgId = {42, 1, 1};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
@@ -346,8 +317,7 @@ TEST_F(SenderTest, sendMessage_unsheduledLimit)
     EXPECT_EQ(op, sender.outboundMessages.find(msgId)->second);
     EXPECT_EQ(msgId, op->outMessage.id);
     EXPECT_EQ(destination, op->outMessage.destination);
-    EXPECT_EQ(4999U, op->outMessage.grantOffset);
-    EXPECT_EQ(4U, op->outMessage.grantIndex);
+    EXPECT_EQ(5U, op->outMessage.grantIndex);
 }
 
 TEST_F(SenderTest, dropMessage)
@@ -355,7 +325,7 @@ TEST_F(SenderTest, dropMessage)
     Protocol::MessageId msgId = {42, 1, 1};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.message.messageLength = 9000;
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 4999);
+    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
 
     sender.dropMessage(op);
 
@@ -376,13 +346,13 @@ TEST_F(SenderTest, trySend_basic)
     for (uint64_t i = 0; i < 4; ++i) {
         op[i] = transport->opPool.construct(transport, &mockDriver);
         Protocol::MessageId msgId = {42, 10 + i, 1};
-        message[i] = SenderTest::addMessage(&sender, msgId, op[i], 4999);
+        message[i] = SenderTest::addMessage(&sender, msgId, op[i], 5);
     }
 
     // Message 0: All packets sent
     message[0]->message.messageLength = 5000;
-    EXPECT_EQ(4, message[0]->grantIndex);
-    message[0]->sentIndex = 4;
+    EXPECT_EQ(5, message[0]->grantIndex);
+    message[0]->sentIndex = 5;
     message[0]->sent = true;
     for (int i = 0; i < 5; ++i) {
         message[0]->message.setPacket(i, nullptr);
@@ -390,24 +360,24 @@ TEST_F(SenderTest, trySend_basic)
 
     // Message 1: Waiting for more grants
     message[1]->message.messageLength = 9000;
-    EXPECT_EQ(4, message[1]->grantIndex);
-    message[1]->sentIndex = 4;
+    EXPECT_EQ(5, message[1]->grantIndex);
+    message[1]->sentIndex = 5;
     for (int i = 0; i < 9; ++i) {
         message[1]->message.setPacket(i, nullptr);
     }
 
     // Message 2: New message, send 5 packets
     message[2]->message.messageLength = 9000;
-    EXPECT_EQ(4, message[2]->grantIndex);
-    EXPECT_EQ(-1, message[2]->sentIndex);
+    EXPECT_EQ(5, message[2]->grantIndex);
+    EXPECT_EQ(0, message[2]->sentIndex);
     for (int i = 0; i < 9; ++i) {
         message[2]->message.setPacket(i, &mockPacket);
     }
 
-    // Message 3: Send 5 packets to complete send.
+    // Message 3: Send 3 packets to complete send.
     message[3]->message.messageLength = 5000;
-    EXPECT_EQ(4, message[3]->grantIndex);
-    EXPECT_EQ(-1, message[3]->sentIndex);
+    EXPECT_EQ(5, message[3]->grantIndex);
+    EXPECT_EQ(0, message[3]->sentIndex);
     for (int i = 0; i < 5; ++i) {
         message[3]->message.setPacket(i, &mockPacket);
     }
@@ -416,21 +386,24 @@ TEST_F(SenderTest, trySend_basic)
 
     sender.trySend();
 
-    EXPECT_EQ(4U, message[0]->sentIndex);
+    EXPECT_EQ(5U, message[0]->sentIndex);
     EXPECT_TRUE(message[0]->sent);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[0]));
-    EXPECT_EQ(4U, message[1]->sentIndex);
+    EXPECT_EQ(5U, message[1]->sentIndex);
     EXPECT_FALSE(message[1]->sent);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[1]));
-    EXPECT_EQ(4U, message[2]->sentIndex);
+    EXPECT_EQ(5U, message[2]->sentIndex);
     EXPECT_FALSE(message[2]->sent);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
+    EXPECT_EQ(0U, message[3]->sentIndex);
+    EXPECT_FALSE(message[3]->sent);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[3]));
 
     EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(5);
 
     sender.trySend();
 
-    EXPECT_EQ(4U, message[3]->sentIndex);
+    EXPECT_EQ(5U, message[3]->sentIndex);
     EXPECT_TRUE(message[3]->sent);
     EXPECT_EQ(1U, transport->updateHints.ops.count(op[3]));
 }
@@ -442,9 +415,9 @@ TEST_F(SenderTest, trySend_alreadyRunning)
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 1000;
     EXPECT_EQ(1U, op->outMessage.message.getNumPackets());
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 999);
-    EXPECT_EQ(0, message->grantIndex);
-    EXPECT_EQ(-1, message->sentIndex);
+    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 1);
+    EXPECT_EQ(1, message->grantIndex);
+    EXPECT_EQ(0, message->sentIndex);
 
     sender.sending.test_and_set();
 
@@ -452,7 +425,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
 
     sender.trySend();
 
-    EXPECT_EQ(-1, message->sentIndex);
+    EXPECT_EQ(0, message->sentIndex);
 }
 
 TEST_F(SenderTest, trySend_nothingToSend)

@@ -193,26 +193,6 @@ struct CommonHeader {
 } __attribute__((packed));
 
 /**
- * Describes the wire format for GRANT packets. A GRANT is sent by
- * the receiver back to the sender to indicate that it is now safe
- * for the sender to transmit a given range of bytes in the message.
- * This packet type is used for flow control.
- */
-struct GrantHeader {
-    CommonHeader common;  ///< Common header fields.
-    uint32_t offset;      ///< Byte offset within the message; the
-                          ///< sender should now transmit all data up
-                          ///< to (but not including) this offset, if
-                          ///< it hasn't already.
-
-    /// GrantHeader constructor.
-    GrantHeader(MessageId messageId, uint32_t offset)
-        : common(Opcode::GRANT, messageId)
-        , offset(offset)
-    {}
-} __attribute__((packed));
-
-/**
  * Describes the wire format for a DATA packet, which contains a portion of
  * a request or response message
  */
@@ -221,9 +201,7 @@ struct DataHeader {
     uint32_t totalLength;  ///< Total # bytes in the message (*not* just in this
                            ///< packet).
     uint16_t index;  ///< Index of this packet in the array of packets that form
-                     ///< the message. With the know packet data length, the
-                     ///< index can by computed given the packet's byte offset
-                     ///< into the message and vice versa.
+                     ///< the message.
 
     // The remaining packet bytes after the header constitute message data
     // starting at the offset corresponding to the given packet index.
@@ -233,6 +211,24 @@ struct DataHeader {
         : common(Opcode::DATA, messageId)
         , totalLength(totalLength)
         , index(index)
+    {}
+} __attribute__((packed));
+
+/**
+ * Describes the wire format for GRANT packets. A GRANT is sent by the receiver
+ * back to the sender to indicate that it is now safe for the sender to transmit
+ * a given range of DATA packets in the message. This packet type is used for
+ * flow control.
+ */
+struct GrantHeader {
+    CommonHeader common;  ///< Common header fields.
+    uint16_t indexLimit;  ///< Packets with an index up to (but not including)
+                          ///< this value can be transmitted by the sender.
+
+    /// GrantHeader constructor.
+    GrantHeader(MessageId messageId, uint16_t indexLimit)
+        : common(Opcode::GRANT, messageId)
+        , indexLimit(indexLimit)
     {}
 } __attribute__((packed));
 

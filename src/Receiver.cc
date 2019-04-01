@@ -110,6 +110,10 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         // may disappear when the packet goes away.
         std::string addrStr = packet->address->toString();
         message->source = driver->getAddress(&addrStr);
+        message->numExpectedPackets =
+            messageLength / message->message->PACKET_DATA_LENGTH;
+        message->numExpectedPackets +=
+            messageLength % message->message->PACKET_DATA_LENGTH ? 1 : 0;
     }
 
     // All packets already received; must be a duplicate.
@@ -275,12 +279,15 @@ Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
     //               a single packet length. The sender might get stuck if the
     //               grants are smaller than a single packet.
     uint32_t RTT_BYTES = RTT_TIME_US * (driver->getBandwidth() / 8);
-    uint32_t totalBytesReceived = message->message->PACKET_DATA_LENGTH *
-                                  message->message->getNumPackets();
-    uint32_t offset = totalBytesReceived + RTT_BYTES;
+    uint32_t RTT_PACKETS = RTT_BYTES / message->message->PACKET_DATA_LENGTH;
+    uint16_t indexLimit =
+        std::min(Util::downCast<uint16_t>(message->message->getNumPackets() +
+                                          RTT_PACKETS),
+                 message->numExpectedPackets);
 
     Driver::Packet* packet = driver->allocPacket();
-    new (packet->payload) Protocol::Packet::GrantHeader(message->id, offset);
+    new (packet->payload)
+        Protocol::Packet::GrantHeader(message->id, indexLimit);
     packet->length = sizeof(Protocol::Packet::GrantHeader);
     packet->address = message->source;
     driver->sendPackets(&packet, 1);
