@@ -285,13 +285,8 @@ Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
                                           RTT_PACKETS),
                  message->numExpectedPackets);
 
-    Driver::Packet* packet = driver->allocPacket();
-    new (packet->payload)
-        Protocol::Packet::GrantHeader(message->id, indexLimit);
-    packet->length = sizeof(Protocol::Packet::GrantHeader);
-    packet->address = message->source;
-    driver->sendPackets(&packet, 1);
-    driver->releasePackets(&packet, 1);
+    ControlPacket::send<Protocol::Packet::GrantHeader>(driver, message->source,
+                                                       message->id, indexLimit);
 }
 
 /**

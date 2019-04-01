@@ -22,6 +22,7 @@
 #include <deque>
 #include <unordered_map>
 
+#include "ControlPacket.h"
 #include "InboundMessage.h"
 #include "ObjectPool.h"
 #include "Protocol.h"
@@ -65,13 +66,8 @@ class Receiver {
                                       const SpinLock::Lock& lock_op)
     {
         (void)lock_op;
-        Driver::Packet* packet = driver->allocPacket();
-        new (packet->payload)
-            Protocol::Packet::DoneHeader(op->inMessage->getId());
-        packet->length = sizeof(Protocol::Packet::DoneHeader);
-        packet->address = op->inMessage->source;
-        driver->sendPackets(&packet, 1);
-        driver->releasePackets(&packet, 1);
+        ControlPacket::send<Protocol::Packet::DoneHeader>(
+            driver, op->inMessage->source, op->inMessage->getId());
     }
 
   private:
