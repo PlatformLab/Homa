@@ -308,6 +308,107 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
     EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
 }
 
+TEST_F(ReceiverTest, handlePingPacket_basic)
+{
+    // Setup registered op
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id(42, 32, 22);
+    Homa::Mock::MockDriver::MockAddress mockAddress;
+    InboundMessage* message = receiver->messagePool.construct();
+    message->id = id;
+    message->grantIndexLimit = 11;
+    message->source = &mockAddress;
+    op->inMessage = message;
+    receiver->registeredOps.insert({id, op});
+    op->inMessage->newPacket = false;
+
+    char pingPayload[1028];
+    Homa::Mock::MockDriver::MockPacket pingPacket(pingPayload);
+    pingPacket.address = &mockAddress;
+    Protocol::Packet::PingHeader* pingHeader =
+        (Protocol::Packet::PingHeader*)pingPacket.payload;
+    pingHeader->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
+        .Times(1);
+
+    receiver->handlePingPacket(&pingPacket, &mockDriver);
+
+    EXPECT_EQ(&mockAddress, mockPacket.address);
+    Protocol::Packet::GrantHeader* header =
+        (Protocol::Packet::GrantHeader*)payload;
+    EXPECT_EQ(Protocol::Packet::GRANT, header->common.opcode);
+    EXPECT_EQ(id, header->common.messageId);
+    EXPECT_EQ(message->grantIndexLimit, header->indexLimit);
+}
+
+TEST_F(ReceiverTest, handlePingPacket_unregisteredMessage)
+{
+    // Setup unregistered message
+    Protocol::MessageId id(42, 32, 22);
+    Homa::Mock::MockDriver::MockAddress mockAddress;
+    InboundMessage* message = receiver->messagePool.construct();
+    message->id = id;
+    message->grantIndexLimit = 11;
+    message->source = &mockAddress;
+    receiver->unregisteredMessages.insert({id, message});
+
+    char pingPayload[1028];
+    Homa::Mock::MockDriver::MockPacket pingPacket(pingPayload);
+    pingPacket.address = &mockAddress;
+    Protocol::Packet::PingHeader* pingHeader =
+        (Protocol::Packet::PingHeader*)pingPacket.payload;
+    pingHeader->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
+        .Times(1);
+
+    receiver->handlePingPacket(&pingPacket, &mockDriver);
+
+    EXPECT_EQ(&mockAddress, mockPacket.address);
+    Protocol::Packet::GrantHeader* header =
+        (Protocol::Packet::GrantHeader*)payload;
+    EXPECT_EQ(Protocol::Packet::GRANT, header->common.opcode);
+    EXPECT_EQ(id, header->common.messageId);
+    EXPECT_EQ(message->grantIndexLimit, header->indexLimit);
+}
+
+TEST_F(ReceiverTest, handlePingPacket_unknown)
+{
+    Protocol::MessageId id(42, 32, 22);
+    Homa::Mock::MockDriver::MockAddress mockAddress;
+
+    char pingPayload[1028];
+    Homa::Mock::MockDriver::MockPacket pingPacket(pingPayload);
+    pingPacket.address = &mockAddress;
+    Protocol::Packet::PingHeader* pingHeader =
+        (Protocol::Packet::PingHeader*)pingPacket.payload;
+    pingHeader->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
+        .Times(1);
+
+    receiver->handlePingPacket(&pingPacket, &mockDriver);
+
+    EXPECT_EQ(&mockAddress, mockPacket.address);
+    Protocol::Packet::UnknownHeader* header =
+        (Protocol::Packet::UnknownHeader*)payload;
+    EXPECT_EQ(Protocol::Packet::UNKNOWN, header->common.opcode);
+    EXPECT_EQ(id, header->common.messageId);
+}
+
 TEST_F(ReceiverTest, receiveMessage)
 {
     InboundMessage* msg0 = receiver->messagePool.construct();
@@ -462,6 +563,7 @@ TEST_F(ReceiverTest, sendGrantPacket)
             (Protocol::Packet::GrantHeader*)payload;
         EXPECT_EQ(msgId, header->common.messageId);
         EXPECT_EQ(6U, header->indexLimit);
+        EXPECT_EQ(6U, message.grantIndexLimit);
         EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);
         EXPECT_EQ(sourceAddr, mockPacket.address);
 
@@ -485,6 +587,7 @@ TEST_F(ReceiverTest, sendGrantPacket)
             (Protocol::Packet::GrantHeader*)payload;
         EXPECT_EQ(msgId, header->common.messageId);
         EXPECT_EQ(9U, header->indexLimit);
+        EXPECT_EQ(9U, message.grantIndexLimit);
         EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);
         EXPECT_EQ(sourceAddr, mockPacket.address);
 

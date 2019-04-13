@@ -45,6 +45,7 @@ class Receiver {
     explicit Receiver();
     virtual ~Receiver();
     virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
+    virtual void handlePingPacket(Driver::Packet* packet, Driver* driver);
     virtual InboundMessage* receiveMessage();
     virtual void dropMessage(InboundMessage* message);
     virtual void registerOp(Protocol::MessageId id, Transport::Op* op);

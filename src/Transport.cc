@@ -301,6 +301,9 @@ Transport::processPackets()
             case Protocol::Packet::RESEND:
                 sender->handleResendPacket(packet, driver);
                 break;
+            case Protocol::Packet::PING:
+                receiver->handlePingPacket(packet, driver);
+                break;
         }
     }
 }

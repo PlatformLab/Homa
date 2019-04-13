@@ -151,6 +151,65 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 }
 
 /**
+ * Process an incoming PING packet.
+ *
+ * @param packet
+ *      The incoming PING packet to be processed.
+ * @param driver
+ *      The driver from which the PING packet was received.
+ */
+void
+Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
+{
+    SpinLock::UniqueLock lock(mutex);
+    Tub<SpinLock::Lock> lock_op;
+
+    Protocol::Packet::PingHeader* header =
+        static_cast<Protocol::Packet::PingHeader*>(packet->payload);
+    Protocol::MessageId id = header->common.messageId;
+
+    Transport::Op* op = nullptr;
+    InboundMessage* message = nullptr;
+
+    auto it = registeredOps.find(id);
+    if (it != registeredOps.end()) {
+        // Registered Op
+        op = it->second;
+        assert(op->inMessage != nullptr);
+        message = op->inMessage;
+    } else {
+        // Unregistered Message
+        auto it = unregisteredMessages.find(id);
+        if (it != unregisteredMessages.end()) {
+            // Existing unregistered message
+            message = it->second;
+        }
+    }
+
+    if (message != nullptr) {
+        // Lock handoff
+        if (op != nullptr) {
+            lock_op.construct(op->mutex);
+        }
+        SpinLock::Lock lock_message(message->mutex);
+        lock.unlock();
+
+        // We are here either because a GRANT got lost, or we haven't issued
+        // a GRANT in along time.  In either case, resend the latest GRANT so
+        // the Sender knows we are still working on the message.
+        ControlPacket::send<Protocol::Packet::GrantHeader>(
+            driver, message->source, message->id, message->grantIndexLimit);
+    } else {
+        lock.unlock();
+        // We are here because we have no knowledge of the message the Sender is
+        // asking about.  Reply UNKNOWN so the Sender can react accordingly.
+        ControlPacket::send<Protocol::Packet::UnknownHeader>(
+            driver, packet->address, id);
+    }
+    driver->releasePackets(&packet, 1);
+}
+
+/**
  * Return an InboundMessage that has not been registered with an Transport::Op.
  *
  * The Transport should regularly call this method to insure incomming messages
@@ -284,6 +343,7 @@ Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
         std::min(Util::downCast<uint16_t>(message->message->getNumPackets() +
                                           RTT_PACKETS),
                  message->numExpectedPackets);
+    message->grantIndexLimit = indexLimit;
 
     ControlPacket::send<Protocol::Packet::GrantHeader>(driver, message->source,
                                                        message->id, indexLimit);

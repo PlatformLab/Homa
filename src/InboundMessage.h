@@ -40,6 +40,7 @@ class InboundMessage {
         , id(0, 0, 0)
         , source(nullptr)
         , numExpectedPackets(0)
+        , grantIndexLimit(0)
         , message()
         , newPacket(false)
         , fullMessageReceived(false)
@@ -82,6 +83,8 @@ class InboundMessage {
     Driver::Address* source;
     /// Number of packets the message is expected to contain.
     uint16_t numExpectedPackets;
+    /// The packet index up to which the Receiver as granted.
+    uint16_t grantIndexLimit;
     /// Collection of packets being received.
     Tub<Message> message;
     /// Marked true when a new data packet arrives; cleared by the scheduler.
