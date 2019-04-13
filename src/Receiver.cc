@@ -116,6 +116,9 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             messageLength % message->message->PACKET_DATA_LENGTH ? 1 : 0;
     }
 
+    // Sender is still sending; consider this message active.
+    message->active = true;
+
     // All packets already received; must be a duplicate.
     if (message->fullMessageReceived) {
         // drop packet
@@ -148,6 +151,56 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         driver->releasePackets(&packet, 1);
     }
     return;
+}
+
+/**
+ * Process an incoming BUSY packet.
+ *
+ * @param packet
+ *      The incoming BUSY packet to be processed.
+ * @param driver
+ *      The driver from which the BUSY packet was received.
+ */
+void
+Receiver::handleBusyPacket(Driver::Packet* packet, Driver* driver)
+{
+    SpinLock::UniqueLock lock(mutex);
+    Tub<SpinLock::Lock> lock_op;
+
+    Protocol::Packet::BusyHeader* header =
+        static_cast<Protocol::Packet::BusyHeader*>(packet->payload);
+    Protocol::MessageId id = header->common.messageId;
+
+    Transport::Op* op = nullptr;
+    InboundMessage* message = nullptr;
+
+    auto it = registeredOps.find(id);
+    if (it != registeredOps.end()) {
+        // Registered Op
+        op = it->second;
+        assert(op->inMessage != nullptr);
+        message = op->inMessage;
+    } else {
+        // Unregistered Message
+        auto it = unregisteredMessages.find(id);
+        if (it != unregisteredMessages.end()) {
+            // Existing unregistered message
+            message = it->second;
+        }
+    }
+
+    if (message != nullptr) {
+        // Lock handoff
+        if (op != nullptr) {
+            lock_op.construct(op->mutex);
+        }
+        SpinLock::Lock lock_message(message->mutex);
+        lock.unlock();
+        // Sender has replied BUSY to our RESEND request; consider this message
+        // still active.
+        message->active = true;
+    }
+    driver->releasePackets(&packet, 1);
 }
 
 /**
@@ -193,6 +246,9 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
         }
         SpinLock::Lock lock_message(message->mutex);
         lock.unlock();
+
+        // Sender is checking on this message; consider it still active.
+        message->active = true;
 
         // We are here either because a GRANT got lost, or we haven't issued
         // a GRANT in along time.  In either case, resend the latest GRANT so

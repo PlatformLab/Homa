@@ -609,16 +609,24 @@ TEST_F(TransportTest, processPackets)
     EXPECT_CALL(*mockSender,
                 handleResendPacket(Eq(&resendPacket), Eq(&mockDriver)));
 
+    // Set BUSY packet
+    Homa::Mock::MockDriver::MockPacket busyPacket(payload[4], 1024);
+    static_cast<Protocol::Packet::PingHeader*>(busyPacket.payload)
+        ->common.opcode = Protocol::Packet::BUSY;
+    packets[4] = &busyPacket;
+    EXPECT_CALL(*mockReceiver,
+                handleBusyPacket(Eq(&busyPacket), Eq(&mockDriver)));
+
     // Set PING packet
-    Homa::Mock::MockDriver::MockPacket pingPacket(payload[4], 1024);
+    Homa::Mock::MockDriver::MockPacket pingPacket(payload[5], 1024);
     static_cast<Protocol::Packet::PingHeader*>(pingPacket.payload)
         ->common.opcode = Protocol::Packet::PING;
-    packets[4] = &pingPacket;
+    packets[5] = &pingPacket;
     EXPECT_CALL(*mockReceiver,
                 handlePingPacket(Eq(&pingPacket), Eq(&mockDriver)));
 
     EXPECT_CALL(mockDriver, receivePackets)
-        .WillOnce(DoAll(SetArrayArgument<1>(packets, packets + 5), Return(5)));
+        .WillOnce(DoAll(SetArrayArgument<1>(packets, packets + 6), Return(6)));
 
     transport->processPackets();
 }

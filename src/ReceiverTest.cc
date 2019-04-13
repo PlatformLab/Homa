@@ -75,6 +75,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     Protocol::MessageId id(42, 32, 22);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
+    message->active = false;
     op->inMessage = message;
     receiver->registeredOps.insert({id, op});
     op->inMessage->newPacket = false;
@@ -113,6 +114,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_TRUE(op->inMessage->message->occupied.test(1));
     EXPECT_EQ(1U, op->inMessage->message->getNumPackets());
     EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
+    EXPECT_TRUE(op->inMessage->active);
     EXPECT_TRUE(op->inMessage->newPacket);
     EXPECT_FALSE(op->inMessage->fullMessageReceived);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
@@ -308,6 +310,65 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
     EXPECT_EQ(1000U, op->inMessage->message->PACKET_DATA_LENGTH);
 }
 
+TEST_F(ReceiverTest, handleBusyPacket_basic)
+{
+    // Setup registered op
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id(42, 32, 22);
+    InboundMessage* message = receiver->messagePool.construct();
+    message->id = id;
+    message->active = false;
+    op->inMessage = message;
+    receiver->registeredOps.insert({id, op});
+    op->inMessage->newPacket = false;
+
+    Protocol::Packet::BusyHeader* busyHeader =
+        (Protocol::Packet::BusyHeader*)mockPacket.payload;
+    busyHeader->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    receiver->handleBusyPacket(&mockPacket, &mockDriver);
+
+    EXPECT_TRUE(message->active);
+}
+
+TEST_F(ReceiverTest, handleBusyPacket_unregisteredMessage)
+{
+    // Setup unregistered message
+    Protocol::MessageId id(42, 32, 22);
+    InboundMessage* message = receiver->messagePool.construct();
+    message->id = id;
+    message->active = false;
+    receiver->unregisteredMessages.insert({id, message});
+
+    Protocol::Packet::BusyHeader* busyHeader =
+        (Protocol::Packet::BusyHeader*)mockPacket.payload;
+    busyHeader->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    receiver->handleBusyPacket(&mockPacket, &mockDriver);
+
+    EXPECT_TRUE(message->active);
+}
+
+TEST_F(ReceiverTest, handleBusyPacket_unknown)
+{
+    Protocol::MessageId id(42, 32, 22);
+
+    Protocol::Packet::BusyHeader* busyHeader =
+        (Protocol::Packet::BusyHeader*)mockPacket.payload;
+    busyHeader->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    receiver->handleBusyPacket(&mockPacket, &mockDriver);
+}
+
 TEST_F(ReceiverTest, handlePingPacket_basic)
 {
     // Setup registered op
@@ -318,6 +379,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
     message->id = id;
     message->grantIndexLimit = 11;
     message->source = &mockAddress;
+    message->active = false;
     op->inMessage = message;
     receiver->registeredOps.insert({id, op});
     op->inMessage->newPacket = false;
@@ -338,6 +400,8 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
 
     receiver->handlePingPacket(&pingPacket, &mockDriver);
 
+    EXPECT_TRUE(message->active);
+
     EXPECT_EQ(&mockAddress, mockPacket.address);
     Protocol::Packet::GrantHeader* header =
         (Protocol::Packet::GrantHeader*)payload;
@@ -355,6 +419,7 @@ TEST_F(ReceiverTest, handlePingPacket_unregisteredMessage)
     message->id = id;
     message->grantIndexLimit = 11;
     message->source = &mockAddress;
+    message->active = false;
     receiver->unregisteredMessages.insert({id, message});
 
     char pingPayload[1028];
@@ -372,6 +437,8 @@ TEST_F(ReceiverTest, handlePingPacket_unregisteredMessage)
         .Times(1);
 
     receiver->handlePingPacket(&pingPacket, &mockDriver);
+
+    EXPECT_TRUE(message->active);
 
     EXPECT_EQ(&mockAddress, mockPacket.address);
     Protocol::Packet::GrantHeader* header =

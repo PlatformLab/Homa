@@ -43,6 +43,7 @@ class InboundMessage {
         , grantIndexLimit(0)
         , message()
         , newPacket(false)
+        , active(false)
         , fullMessageReceived(false)
     {}
 
@@ -63,6 +64,16 @@ class InboundMessage {
     Protocol::MessageId getId()
     {
         return id;
+    }
+
+    /**
+     * Return true if the InboundMessage has received any packets since the last
+     * timeout; false, otherwise.
+     */
+    bool isActive() const
+    {
+        SpinLock::Lock lock(mutex);
+        return active;
     }
 
     /**
@@ -89,6 +100,9 @@ class InboundMessage {
     Tub<Message> message;
     /// Marked true when a new data packet arrives; cleared by the scheduler.
     bool newPacket;
+    /// True if any packets (DATA, PING, BUSY) for this message has been
+    /// received since the last timeout; false, otherwise.
+    bool active;
     /// True if all packets of the message have been received.
     bool fullMessageReceived;
 
