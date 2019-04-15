@@ -15,7 +15,11 @@ find_package(Threads)
 # Doxygen documentation generation tool (http://www.doxygen.org)
 find_package(Doxygen OPTIONAL_COMPONENTS dot mscgen dia)
 
+# Network Interface library (https://www.dpdk.org/)
 find_package(Dpdk REQUIRED)
+
+# Source control tool; needed to download external libraries.
+find_package(Git REQUIRED)
 
 ################################################################################
 ## Source Configuration ########################################################
@@ -28,8 +32,46 @@ configure_file (
 )
 
 ################################################################################
+## Fetch External Libraries ####################################################
+################################################################################
+
+include(FetchContent)
+
+## Google Test #################################################################
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        ba96d0b1161f540656efdaed035b3c062b60e006
+)
+FetchContent_GetProperties(googletest)
+if(NOT googletest_POPULATED)
+    FetchContent_Populate(googletest)
+    add_subdirectory(
+        ${googletest_SOURCE_DIR}
+        ${googletest_BINARY_DIR}
+        EXCLUDE_FROM_ALL
+    )
+endif()
+
+## PerfUtils ###################################################################
+FetchContent_Declare(
+    PerfUtils
+    GIT_REPOSITORY https://github.com/PlatformLab/PerfUtils.git
+    GIT_TAG        14c2357450729ccfa082c73c16d25fbae00857d0
+)
+FetchContent_GetProperties(PerfUtils)
+if(NOT perfutils_POPULATED)
+    FetchContent_Populate(PerfUtils)
+    add_subdirectory(
+        ${perfutils_SOURCE_DIR}
+        ${perfutils_BINARY_DIR}
+        EXCLUDE_FROM_ALL
+    )
+endif()
+
+################################################################################
 ## Target Defintions ###########################################################
-################################################################################ 
+################################################################################
 
 ## lib Homa ####################################################################
 add_library(Homa
@@ -52,6 +94,10 @@ target_include_directories(Homa
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(Homa
+    PRIVATE
+        PerfUtils
 )
 target_compile_features(Homa
     PUBLIC
@@ -150,7 +196,7 @@ endif()
 ## Install & Export ############################################################
 ################################################################################
 
-install(TARGETS Homa DpdkDriver EXPORT HomaTargets 
+install(TARGETS Homa DpdkDriver EXPORT HomaTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
@@ -197,23 +243,6 @@ install(
 ##  UNIT TESTS  ################################################################
 ################################################################################
 
-include(FetchContent)
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        ba96d0b1161f540656efdaed035b3c062b60e006
-)
-
-FetchContent_GetProperties(googletest)
-if(NOT googletest_POPULATED)
-    FetchContent_Populate(googletest)
-    add_subdirectory(
-        ${googletest_SOURCE_DIR}
-        ${googletest_BINARY_DIR}
-        EXCLUDE_FROM_ALL
-    )
-endif()
-
 include(GoogleTest)
 
 enable_testing()
@@ -234,7 +263,7 @@ add_executable(unit_test
     src/TubTest.cc
     src/UtilTest.cc
 )
-target_link_libraries(unit_test Homa)
+target_link_libraries(unit_test Homa PerfUtils)
 
 # Drivers/Fake Tests
 target_sources(unit_test
@@ -247,7 +276,7 @@ target_link_libraries(unit_test FakeDriver)
 #DPDK Tests
 target_sources(unit_test
     PUBLIC
-        src/Drivers/DPDK/MacAddressTest.cc    
+        src/Drivers/DPDK/MacAddressTest.cc
 )
 target_link_libraries(unit_test DpdkDriver)
 
