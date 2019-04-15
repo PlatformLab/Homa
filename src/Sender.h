@@ -45,6 +45,7 @@ class Sender {
     virtual void handleDonePacket(Driver::Packet* packet, Driver* driver);
     virtual void handleGrantPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleResendPacket(Driver::Packet* packet, Driver* driver);
+    virtual void handleUnknownPacket(Driver::Packet* packet, Driver* driver);
     virtual void sendMessage(Protocol::MessageId id,
                              Driver::Address* destination, Transport::Op* op,
                              bool expectAcknowledgement = false);

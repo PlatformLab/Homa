@@ -524,7 +524,7 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::INITIAL_REQUEST_TAG)),
-                            Eq(destination), Eq(op), Eq(false)));
+                            Eq(destination), Eq(op), Eq(true)));
 
     transport->sendRequest(op, destination);
 
@@ -574,8 +574,8 @@ TEST_F(TransportTest, poll)
 
 TEST_F(TransportTest, processPackets)
 {
-    char payload[5][1024];
-    Homa::Driver::Packet* packets[5];
+    char payload[7][1024];
+    Homa::Driver::Packet* packets[7];
 
     // Set DATA packet
     Homa::Mock::MockDriver::MockPacket dataPacket(payload[0], 1024);
@@ -625,8 +625,16 @@ TEST_F(TransportTest, processPackets)
     EXPECT_CALL(*mockReceiver,
                 handlePingPacket(Eq(&pingPacket), Eq(&mockDriver)));
 
+    // Set UNKNOWN packet
+    Homa::Mock::MockDriver::MockPacket unknownPacket(payload[6], 1024);
+    static_cast<Protocol::Packet::UnknownHeader*>(unknownPacket.payload)
+        ->common.opcode = Protocol::Packet::UNKNOWN;
+    packets[6] = &unknownPacket;
+    EXPECT_CALL(*mockSender,
+                handleUnknownPacket(Eq(&unknownPacket), Eq(&mockDriver)));
+
     EXPECT_CALL(mockDriver, receivePackets)
-        .WillOnce(DoAll(SetArrayArgument<1>(packets, packets + 6), Return(6)));
+        .WillOnce(DoAll(SetArrayArgument<1>(packets, packets + 7), Return(7)));
 
     transport->processPackets();
 }

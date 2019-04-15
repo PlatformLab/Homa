@@ -64,7 +64,7 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     if (it != outboundMessages.end()) {
         op = it->second;
     } else {
-        // No message for this grant; grant must be old; just drop it.
+        // No message for this DONE packet; must be old. Just drop it.
         driver->releasePackets(&packet, 1);
         return;
     }
@@ -164,7 +164,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     if (it != outboundMessages.end()) {
         op = it->second;
     } else {
-        // No message for this grant; grant must be old; just drop it.
+        // No message for this grant; grant must be old. Just drop it.
         driver->releasePackets(&packet, 1);
         return;
     }
@@ -177,6 +177,54 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     assert(header->indexLimit <= message->message.getNumPackets());
     message->grantIndex = std::max(message->grantIndex, header->indexLimit);
 
+    driver->releasePackets(&packet, 1);
+}
+
+/**
+ * Process an incoming UNKNOWN packet.
+ *
+ * @param packet
+ *      Incoming UNKNOWN packet to be processed.
+ * @param driver
+ *      Driver from which the packet was received and to which it should be
+ *      returned after the packet has been processed.
+ */
+void
+Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
+{
+    SpinLock::UniqueLock lock(mutex);
+
+    Protocol::Packet::UnknownHeader* header =
+        static_cast<Protocol::Packet::UnknownHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->common.messageId;
+    Transport::Op* op = nullptr;
+
+    auto it = outboundMessages.find(msgId);
+    if (it != outboundMessages.end()) {
+        op = it->second;
+    } else {
+        // No message for this UNKNOWN packet; must be old. Just drop it.
+        driver->releasePackets(&packet, 1);
+        return;
+    }
+
+    // Lock handoff
+    SpinLock::Lock lock_op(op->mutex);
+    lock.unlock();
+
+    OutboundMessage* message = &op->outMessage;
+
+    if (!message->isDone()) {
+        message->sent = false;
+        message->sentIndex = 0;
+        // TODO(cstlee): May want to use the unscheduled-limit here instead of
+        // just granting a single packet.
+        message->grantIndex = 1;
+        op->hintUpdate();
+    } else {
+        // The message is already considered "done" so the UNKNOWN packet must
+        // be a stale response to a ping.
+    }
     driver->releasePackets(&packet, 1);
 }
 

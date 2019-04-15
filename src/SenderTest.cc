@@ -78,8 +78,8 @@ TEST_F(SenderTest, handleDonePacket)
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     op->outMessage.acknowledged = false;
 
-    Protocol::Packet::GrantHeader* header =
-        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
+    Protocol::Packet::DoneHeader* header =
+        static_cast<Protocol::Packet::DoneHeader*>(mockPacket.payload);
     header->common.messageId = id;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
@@ -243,6 +243,69 @@ TEST_F(SenderTest, handleGrantPacket_dropGrant)
         .Times(1);
 
     sender.handleGrantPacket(&mockPacket, &mockDriver);
+}
+
+TEST_F(SenderTest, handleUnknownPacket_basic)
+{
+    Protocol::MessageId msgId = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    message->sent = true;
+    message->acknowledged = false;
+    message->sentIndex = 5;
+    EXPECT_EQ(5, message->grantIndex);
+
+    Protocol::Packet::UnknownHeader* header =
+        static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
+    header->common.messageId = msgId;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender.handleUnknownPacket(&mockPacket, &mockDriver);
+
+    EXPECT_FALSE(message->sent);
+    EXPECT_EQ(0U, message->sentIndex);
+    EXPECT_EQ(1U, message->grantIndex);
+}
+
+TEST_F(SenderTest, handleUnknownPacket_no_message)
+{
+    Protocol::MessageId msgId = {42, 1, 1};
+
+    Protocol::Packet::UnknownHeader* header =
+        static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
+    header->common.messageId = msgId;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender.handleUnknownPacket(&mockPacket, &mockDriver);
+}
+
+TEST_F(SenderTest, handleUnknownPacket_done)
+{
+    Protocol::MessageId msgId = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    message->sent = true;
+    message->acknowledged = true;
+    message->sentIndex = 5;
+    EXPECT_EQ(5, message->grantIndex);
+
+    Protocol::Packet::UnknownHeader* header =
+        static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
+    header->common.messageId = msgId;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender.handleUnknownPacket(&mockPacket, &mockDriver);
+
+    EXPECT_TRUE(message->sent);
+    EXPECT_TRUE(message->acknowledged);
+    EXPECT_EQ(5U, message->sentIndex);
+    EXPECT_EQ(5U, message->grantIndex);
 }
 
 TEST_F(SenderTest, sendMessage_basic)

@@ -227,7 +227,7 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
         receiver->registerOp({opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG},
                              op);
         sender->sendMessage({opId, Protocol::MessageId::INITIAL_REQUEST_TAG},
-                            destination, op);
+                            destination, op, true);
     }
 }
 
@@ -306,6 +306,9 @@ Transport::processPackets()
                 break;
             case Protocol::Packet::PING:
                 receiver->handlePingPacket(packet, driver);
+                break;
+            case Protocol::Packet::UNKNOWN:
+                sender->handleUnknownPacket(packet, driver);
                 break;
         }
     }
