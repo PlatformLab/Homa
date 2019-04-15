@@ -367,14 +367,15 @@ Sender::trySend()
         SpinLock::Lock lock_op(op->mutex, std::adopt_lock);
         OutboundMessage* message = &op->outMessage;
         assert(message->grantIndex <= message->message.getNumPackets());
-        int numPkts = message->grantIndex - message->sentIndex;
-        for (int i = 0; i < numPkts; ++i) {
+        assert(message->grantIndex >= message->sentIndex);
+        uint16_t numPkts = message->grantIndex - message->sentIndex;
+        for (uint16_t i = 0; i < numPkts; ++i) {
             Driver::Packet* packet =
-                message->message.getPacket(message->sentIndex);
+                message->message.getPacket(message->sentIndex + i);
             assert(packet != nullptr);
             message->message.driver->sendPackets(&packet, 1);
         }
-        message->sentIndex += message->grantIndex;
+        message->sentIndex += numPkts;
         if (message->sentIndex >= message->message.getNumPackets()) {
             // We have finished sending the message.
             message->sent = true;

@@ -27,6 +27,7 @@ namespace Core {
 namespace {
 
 using ::testing::Eq;
+using ::testing::Mock;
 using ::testing::NiceMock;
 using ::testing::Pointee;
 using ::testing::Return;
@@ -501,6 +502,63 @@ TEST_F(SenderTest, poll)
 }
 
 TEST_F(SenderTest, trySend_basic)
+{
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id = {42, 10, 1};
+    OutboundMessage* message = SenderTest::addMessage(&sender, id, op, 2);
+    Homa::Mock::MockDriver::MockPacket* packet[5];
+    for (int i = 0; i < 5; ++i) {
+        packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
+        message->message.setPacket(i, packet[i]);
+    }
+    message->message.messageLength = 4000;
+    EXPECT_EQ(5U, message->message.getNumPackets());
+    EXPECT_EQ(2U, message->grantIndex);
+    EXPECT_EQ(0U, message->sentIndex);
+    EXPECT_FALSE(message->sent);
+
+    // 2 granted packets to be sent; won't be finished.
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[0]), Eq(1)));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[1]), Eq(1)));
+    sender.trySend();  // < test call
+    EXPECT_EQ(2U, message->grantIndex);
+    EXPECT_EQ(2U, message->sentIndex);
+    EXPECT_FALSE(message->sent);
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // No additional grants; no packets sent; won't be finished.
+    EXPECT_CALL(mockDriver, sendPackets).Times(0);
+    sender.trySend();  // < test call
+    EXPECT_EQ(2U, message->grantIndex);
+    EXPECT_EQ(2U, message->sentIndex);
+    EXPECT_FALSE(message->sent);
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // 3 more granted packets; will finish.
+    message->grantIndex = 5;
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[2]), Eq(1)));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[3]), Eq(1)));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[4]), Eq(1)));
+    sender.trySend();  // < test call
+    EXPECT_EQ(5U, message->grantIndex);
+    EXPECT_EQ(5U, message->sentIndex);
+    EXPECT_TRUE(message->sent);
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // Message already finished.
+    message->grantIndex = 6;
+    EXPECT_CALL(mockDriver, sendPackets).Times(0);
+    sender.trySend();  // < test call
+    EXPECT_EQ(5U, message->sentIndex);
+    EXPECT_TRUE(message->sent);
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    for (int i = 0; i < 5; ++i) {
+        delete packet[i];
+    }
+}
+
+TEST_F(SenderTest, trySend_multipleMessages)
 {
     Transport::Op* op[4];
     OutboundMessage* message[4];
