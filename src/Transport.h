@@ -52,7 +52,8 @@ class Transport {
      * Contains the state for an operation that is sent and received by the
      * Transport and its helper modules.
      */
-    struct Op : public OpContext {
+    class Op : public OpContext {
+      public:
         /**
          * Constructor.
          */
@@ -60,9 +61,10 @@ class Transport {
                     bool isServerOp = true)
             : OpContext(transport)
             , mutex()
+            , outMessage(driver)
+            , inMessage(nullptr)
             , retained(false)
             , isServerOp(isServerOp)
-            , outMessage(driver)
             , destroy()
         {}
 
@@ -99,6 +101,17 @@ class Transport {
             }
         }
 
+        /// Mutex for controlling internal access to Op members.
+        SpinLock mutex;
+
+        /// Message to be sent out as part of this Op.  Processed by the Sender.
+        OutboundMessage outMessage;
+
+        /// Message to be received as part of this Op.  Processed by the
+        /// Receiver.
+        InboundMessage* inMessage;
+
+      private:
         /**
          * Signal that this Op should be garbage collected.
          *
@@ -118,9 +131,6 @@ class Transport {
 
         void processUpdates(const SpinLock::Lock& lock);
 
-        /// Mutex for controlling internal access to Op members.
-        SpinLock mutex;
-
         /// True if this Op is being held by the application in a RemoteOp or a
         /// ServerOp; otherwise, false.
         std::atomic<bool> retained;
@@ -128,15 +138,10 @@ class Transport {
         /// True if this Op is for a ServerOp; false it is for a RemoteOp.
         const bool isServerOp;
 
-        /// Message to be sent out as part of this Op.  Processed by the Sender.
-        OutboundMessage outMessage;
-
-        /// Message to be received as part of this Op.  Processed by the
-        /// Receiver.
-        InboundMessage* inMessage;
-
         /// True if this Op will be destroyed soon; false otherwise.
         bool destroy;
+
+        friend class Transport;
     };
 
     explicit Transport(Driver* driver, uint64_t transportId);
