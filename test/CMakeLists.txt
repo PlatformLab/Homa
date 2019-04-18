@@ -2,8 +2,6 @@
 ##  TESTS  #####################################################################
 ################################################################################
 
-## system_test #################################################################
-
 include(FetchContent)
 FetchContent_Declare(
     docopt
@@ -21,6 +19,8 @@ if(NOT docopt_POPULATED)
     )
 endif()
 
+## system_test #################################################################
+
 add_executable(system_test
     system_test.cc
 )
@@ -29,4 +29,18 @@ target_link_libraries(system_test
     FakeDriver
     Threads::Threads
     docopt
+)
+
+## Perf ########################################################################
+
+add_executable(Perf
+    Perf.cc
+)
+target_include_directories(Perf
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(Perf
+    docopt
+    PerfUtils
 )
