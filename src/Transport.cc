@@ -310,6 +310,9 @@ Transport::processPackets()
             case Protocol::Packet::UNKNOWN:
                 sender->handleUnknownPacket(packet, driver);
                 break;
+            case Protocol::Packet::ERROR:
+                sender->handleErrorPacket(packet, driver);
+                break;
         }
     }
 }

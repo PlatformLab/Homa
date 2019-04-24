@@ -309,6 +309,30 @@ TEST_F(SenderTest, handleUnknownPacket_done)
     EXPECT_EQ(5U, message->grantIndex);
 }
 
+TEST_F(SenderTest, handleErrorPacket)
+{
+    Protocol::MessageId id = {42, 1, 32};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    op->outMessage.failed = false;
+
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(2);
+
+    sender.handleErrorPacket(&mockPacket, &mockDriver);
+
+    EXPECT_FALSE(op->outMessage.failed);
+
+    sender.outboundMessages.insert({id, op});
+
+    sender.handleErrorPacket(&mockPacket, &mockDriver);
+
+    EXPECT_TRUE(op->outMessage.failed);
+}
+
 TEST_F(SenderTest, sendMessage_basic)
 {
     Protocol::MessageId msgId = {42, 1, 1};

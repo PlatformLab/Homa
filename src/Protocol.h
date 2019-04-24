@@ -159,6 +159,7 @@ enum Opcode {
     BUSY = 25,
     PING = 26,
     UNKNOWN = 27,
+    ERROR = 28,
 };
 
 /**
@@ -307,6 +308,20 @@ struct UnknownHeader {
     /// UnknownHeader constructor.
     UnknownHeader(MessageId messageId)
         : common(Opcode::UNKNOWN, messageId)
+    {}
+} __attribute__((packed));
+
+/**
+ * Describes the wire format for a ERROR packet.  The ERROR packet is used to
+ * indicate that the Operation associated with a particular Message has
+ * encountered a transport level error.
+ */
+struct ErrorHeader {
+    CommonHeader common;  ///< Common header fields.
+
+    /// ErrorHeader constructor.
+    ErrorHeader(MessageId messageId)
+        : common(Opcode::ERROR, messageId)
     {}
 } __attribute__((packed));
 

@@ -229,6 +229,44 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
 }
 
 /**
+ * Process an incoming ERROR packet.
+ *
+ * @param packet
+ *      Incoming ERROR packet to be processed.
+ * @param driver
+ *      Driver from which the packet was received and to which it should be
+ *      returned after the packet has been processed.
+ */
+void
+Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
+{
+    SpinLock::UniqueLock lock(mutex);
+
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->common.messageId;
+    Transport::Op* op = nullptr;
+
+    auto it = outboundMessages.find(msgId);
+    if (it != outboundMessages.end()) {
+        op = it->second;
+    } else {
+        // No message for this ERROR packet; must be old. Just drop it.
+        driver->releasePackets(&packet, 1);
+        return;
+    }
+
+    // Lock handoff
+    SpinLock::Lock lock_op(op->mutex);
+    lock.unlock();
+
+    OutboundMessage* message = &op->outMessage;
+    message->failed = true;
+    op->hintUpdate();
+    driver->releasePackets(&packet, 1);
+}
+
+/**
  * Queue a message to be sent.
  *
  * @param id

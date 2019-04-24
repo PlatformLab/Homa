@@ -44,6 +44,7 @@ class OutboundMessage {
         , sentIndex(0)
         , sent(false)
         , acknowledged(true)
+        , failed(false)
     {}
 
     /**
@@ -65,6 +66,15 @@ class OutboundMessage {
         return sent && acknowledged;
     }
 
+    /**
+     * True if this Message (or related delegated Message) has failed to send;
+     * false, otherwise.
+     */
+    bool hasFailed() const
+    {
+        return failed;
+    }
+
   private:
     /// Contains the unique identifier for this message.
     Protocol::MessageId id;
@@ -81,6 +91,9 @@ class OutboundMessage {
     /// True if this message is no longer waiting for a DONE acknowledgement;
     /// false, otherwise.
     bool acknowledged;
+    /// True if this message (or some delegated message down the line) has
+    /// failed to send.
+    bool failed;
 
     friend class Sender;
 };
