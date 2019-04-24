@@ -251,6 +251,7 @@ add_executable(unit_test
     src/CodeLocationTest.cc
     src/DebugTest.cc
     src/HomaTest.cc
+    src/IntrusiveTest.cc
     src/MessageTest.cc
     src/ObjectPoolTest.cc
     src/ReceiverTest.cc
