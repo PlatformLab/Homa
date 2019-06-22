@@ -63,7 +63,7 @@ class Transport {
             : OpContext(transport)
             , mutex()
             , opId(opId)
-            , outMessage(driver)
+            , outMessage(driver, this)
             , inMessage(nullptr)
             , retained(false)
             , isServerOp(isServerOp)

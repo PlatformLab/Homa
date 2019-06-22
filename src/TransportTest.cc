@@ -482,8 +482,8 @@ TEST_F(TransportTest, sendRequest_ServerOp)
     op->inMessage->id.tag--;
     Driver::Address* destination = (Driver::Address*)22;
 
-    EXPECT_CALL(*mockSender,
-                sendMessage(Eq(expectedId), Eq(destination), Eq(op), Eq(true)));
+    EXPECT_CALL(*mockSender, sendMessage(Eq(expectedId), Eq(destination),
+                                         Eq(&op->outMessage), Eq(true)));
 
     transport->sendRequest(op, destination);
 }
@@ -505,7 +505,7 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::INITIAL_REQUEST_TAG)),
-                            Eq(destination), Eq(op), Eq(true)));
+                            Eq(destination), Eq(&op->outMessage), Eq(true)));
 
     transport->sendRequest(op, destination);
 
@@ -536,7 +536,7 @@ TEST_F(TransportTest, sendReply)
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
-                            Eq(replyAddress), Eq(op), Eq(false)));
+                            Eq(replyAddress), Eq(&op->outMessage), Eq(false)));
 
     transport->sendReply(op);
 
@@ -741,7 +741,7 @@ TEST_F(TransportTest, cleanupOps)
     }
     EXPECT_EQ(2U, transport->unusedOps.queue.size());
 
-    EXPECT_CALL(*mockSender, dropMessage(Eq(serverOp))).Times(1);
+    EXPECT_CALL(*mockSender, dropMessage(Eq(&serverOp->outMessage))).Times(1);
     EXPECT_CALL(*mockReceiver, dropOp(Eq(serverOp))).Times(1);
 
     transport->cleanupOps();
@@ -758,7 +758,7 @@ TEST_F(TransportTest, cleanupOps)
     }
     EXPECT_EQ(1U, transport->unusedOps.queue.size());
 
-    EXPECT_CALL(*mockSender, dropMessage(Eq(remoteOp))).Times(1);
+    EXPECT_CALL(*mockSender, dropMessage(Eq(&remoteOp->outMessage))).Times(1);
     EXPECT_CALL(*mockReceiver, dropOp(Eq(remoteOp))).Times(1);
 
     transport->cleanupOps();

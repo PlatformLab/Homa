@@ -19,6 +19,7 @@
 
 #include "ControlPacket.h"
 #include "Debug.h"
+#include "Transport.h"
 
 namespace Homa {
 namespace Core {
@@ -62,11 +63,11 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::DoneHeader* header =
         static_cast<Protocol::Packet::DoneHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    Transport::Op* op = nullptr;
+    OutboundMessage* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
-        op = it->second;
+        message = it->second;
     } else {
         // No message for this DONE packet; must be old. Just drop it.
         driver->releasePackets(&packet, 1);
@@ -74,10 +75,9 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Lock handoff
-    SpinLock::Lock lock_op(op->mutex);
+    SpinLock::Lock lock_message(message->mutex);
     lock.unlock();
 
-    OutboundMessage* message = &op->outMessage;
     message->acknowledged = true;
     transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
@@ -100,11 +100,11 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::ResendHeader* header =
         static_cast<Protocol::Packet::ResendHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    Transport::Op* op = nullptr;
+    OutboundMessage* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
-        op = it->second;
+        message = it->second;
     } else {
         // No message for this RESEND; RESEND must be old. Just ignore it; this
         // case should be pretty rare and the Receiver will timeout eventually.
@@ -113,10 +113,8 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Lock handoff
-    SpinLock::Lock lock_op(op->mutex);
+    SpinLock::Lock lock_message(message->mutex);
     lock.unlock();
-
-    OutboundMessage* message = &op->outMessage;
 
     uint16_t index = header->index;
     uint16_t resendEnd = index + header->num;
@@ -162,11 +160,11 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    Transport::Op* op = nullptr;
+    OutboundMessage* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
-        op = it->second;
+        message = it->second;
     } else {
         // No message for this grant; grant must be old. Just drop it.
         driver->releasePackets(&packet, 1);
@@ -174,10 +172,9 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Lock handoff
-    SpinLock::Lock lock_op(op->mutex);
+    SpinLock::Lock lock_message(message->mutex);
     lock.unlock();
 
-    OutboundMessage* message = &op->outMessage;
     assert(header->indexLimit <= message->message.getNumPackets());
     message->grantIndex = std::max(message->grantIndex, header->indexLimit);
 
@@ -201,11 +198,11 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    Transport::Op* op = nullptr;
+    OutboundMessage* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
-        op = it->second;
+        message = it->second;
     } else {
         // No message for this UNKNOWN packet; must be old. Just drop it.
         driver->releasePackets(&packet, 1);
@@ -213,12 +210,10 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Lock handoff
-    SpinLock::Lock lock_op(op->mutex);
+    SpinLock::Lock lock_message(message->mutex);
     lock.unlock();
 
-    OutboundMessage* message = &op->outMessage;
-
-    if (!message->isDone()) {
+    if (!message->isDone(lock_message)) {
         message->sent = false;
         message->sentIndex = 0;
         // TODO(cstlee): May want to use the unscheduled-limit here instead of
@@ -249,11 +244,11 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::ErrorHeader* header =
         static_cast<Protocol::Packet::ErrorHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    Transport::Op* op = nullptr;
+    OutboundMessage* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
-        op = it->second;
+        message = it->second;
     } else {
         // No message for this ERROR packet; must be old. Just drop it.
         driver->releasePackets(&packet, 1);
@@ -261,10 +256,9 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Lock handoff
-    SpinLock::Lock lock_op(op->mutex);
+    SpinLock::Lock lock_message(message->mutex);
     lock.unlock();
 
-    OutboundMessage* message = &op->outMessage;
     message->failed = true;
     transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
@@ -277,8 +271,8 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
  *      Unique identifier for this message.
  * @param destination
  *      Destination address for this message.
- * @param op
- *      Transport::Op containing the OutboundMessage to be sent.
+ * @param message
+ *      OutboundMessage to be sent.
  * @param expectAcknowledgement
  *      True means the Sender should wait for a DONE packet before declaring
  *      this message "done"; false means the message is "done" after the last
@@ -288,10 +282,10 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
  */
 void
 Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
-                    Transport::Op* op, bool expectAcknowledgement)
+                    OutboundMessage* message, bool expectAcknowledgement)
 {
     SpinLock::UniqueLock lock(mutex);
-    SpinLock::Lock lock_op(op->mutex);
+    SpinLock::Lock lock_message(message->mutex);
 
     if (outboundMessages.find(id) != outboundMessages.end()) {
         // message already sending, drop the send request.
@@ -301,12 +295,11 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
             id.transportId, id.sequence, id.tag);
         return;
     } else {
-        outboundMessages.insert({id, op});
+        outboundMessages.insert({id, message});
     }
 
     lock.unlock();  // End sender critical section.
 
-    OutboundMessage* message = &op->outMessage;
     message->id = id;
     message->destination = destination;
     message->acknowledged = !expectAcknowledgement;
@@ -347,20 +340,19 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
 }
 
 /**
- * Inform the Sender that a Message is no longer needed and the associated
- * Transport::Op should no longer be used.
+ * Inform the Sender that a Message is no longer needed.
  *
- * @param op
- *      The Transport::Op which contains the Message that is no longer needed.
+ * @param message
+ *      The OutboundMessage that is no longer needed.
  */
 void
-Sender::dropMessage(Transport::Op* op)
+Sender::dropMessage(OutboundMessage* message)
 {
     SpinLock::Lock lock(mutex);
-    SpinLock::Lock lock_message(op->mutex);
-    auto it = outboundMessages.find(op->outMessage.id);
+    SpinLock::Lock lock_message(message->mutex);
+    auto it = outboundMessages.find(message->id);
     if (it != outboundMessages.end()) {
-        assert(op == it->second);
+        assert(message == it->second);
         outboundMessages.erase(it);
     }
 }
@@ -388,26 +380,24 @@ Sender::trySend()
     }
 
     SpinLock::Lock lock(mutex);
-    Transport::Op* op = nullptr;
+    OutboundMessage* message = nullptr;
     auto it = outboundMessages.begin();
     while (it != outboundMessages.end()) {
-        op = it->second;
-        op->mutex.lock();
-        OutboundMessage* message = &op->outMessage;
+        message = it->second;
+        message->mutex.lock();
         if (message->sentIndex < message->message.getNumPackets() &&
             message->sentIndex < message->grantIndex) {
             // found a message to send.
             break;
         }
-        op->mutex.unlock();
-        op = nullptr;
+        message->mutex.unlock();
+        message = nullptr;
         it++;
     }
 
     // If there is a message to send; send the next packets.
-    if (op != nullptr) {
-        SpinLock::Lock lock_op(op->mutex, std::adopt_lock);
-        OutboundMessage* message = &op->outMessage;
+    if (message != nullptr) {
+        SpinLock::Lock lock_message(message->mutex, std::adopt_lock);
         assert(message->grantIndex <= message->message.getNumPackets());
         assert(message->grantIndex >= message->sentIndex);
         uint16_t numPkts = message->grantIndex - message->sentIndex;

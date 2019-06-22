@@ -127,7 +127,7 @@ Transport::~Transport()
     mutex.lock();
     for (auto it = activeOps.begin(); it != activeOps.end(); ++it) {
         Op* op = *it;
-        sender->dropMessage(op);
+        sender->dropMessage(&op->outMessage);
         receiver->dropOp(op);
         op->mutex.lock();
         opPool.destroy(op);
@@ -216,21 +216,19 @@ void
 Transport::sendRequest(OpContext* context, Driver::Address* destination)
 {
     Op* op = static_cast<Op*>(context);
-    SpinLock::UniqueLock lock_op(op->mutex);
+    SpinLock::Lock lock_op(op->mutex);
     if (op->isServerOp) {
         Protocol::MessageId requestId(op->inMessage->getId());
         Protocol::MessageId delegationId(Protocol::OpId(requestId),
                                          requestId.tag + 1);
-        lock_op.unlock();  // Allow Sender to take the lock.
-        sender->sendMessage(delegationId, destination, op, true);
+        sender->sendMessage(delegationId, destination, &op->outMessage, true);
     } else {
         op->state.store(OpContext::State::IN_PROGRESS);
-        lock_op.unlock();  // Allow Sender/Receiver to take the lock.
         receiver->registerOp(
             {op->opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG}, op);
         sender->sendMessage(
             {op->opId, Protocol::MessageId::INITIAL_REQUEST_TAG}, destination,
-            op, true);
+            &op->outMessage, true);
     }
 }
 
@@ -246,7 +244,7 @@ void
 Transport::sendReply(OpContext* context)
 {
     Op* op = static_cast<Op*>(context);
-    SpinLock::UniqueLock lock_op(op->mutex);
+    SpinLock::Lock lock_op(op->mutex);
     assert(op->isServerOp);
     Protocol::OpId opId(op->inMessage->getId());
     Driver::Address* replyAddress =
@@ -254,9 +252,8 @@ Transport::sendReply(OpContext* context)
                                 ->getHeader<Protocol::Message::Header>()
                                 ->replyAddress);
     op->state.store(OpContext::State::IN_PROGRESS);
-    lock_op.unlock();  // Allow Sender to take the lock.
     sender->sendMessage({opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG},
-                        replyAddress, op);
+                        replyAddress, &op->outMessage);
 }
 
 /// See Homa::Transport::poll()
@@ -422,7 +419,7 @@ Transport::cleanupOps()
 
         assert(op->destroy);
 
-        sender->dropMessage(op);
+        sender->dropMessage(&op->outMessage);
         receiver->dropOp(op);
 
         op->mutex.lock();

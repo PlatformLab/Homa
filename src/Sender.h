@@ -25,10 +25,11 @@
 #include "OutboundMessage.h"
 #include "Protocol.h"
 #include "SpinLock.h"
-#include "Transport.h"
 
 namespace Homa {
 namespace Core {
+// Forward Declaration
+class Transport;
 
 /**
  * The Sender takes takes outgoing messages and sends out the message's packets
@@ -48,9 +49,10 @@ class Sender {
     virtual void handleUnknownPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleErrorPacket(Driver::Packet* packet, Driver* driver);
     virtual void sendMessage(Protocol::MessageId id,
-                             Driver::Address* destination, Transport::Op* op,
+                             Driver::Address* destination,
+                             OutboundMessage* message,
                              bool expectAcknowledgement = false);
-    virtual void dropMessage(Transport::Op* op);
+    virtual void dropMessage(OutboundMessage* message);
     virtual void poll();
 
   private:
@@ -60,9 +62,8 @@ class Sender {
     /// Transport of which this Sender is a part.
     Transport* transport;
 
-    /// Tracks the set of outbound messages; contains the associated Op
-    /// for a given MessageId.
-    std::unordered_map<Protocol::MessageId, Transport::Op*,
+    /// Tracks the set of outbound messages being sent by the Sender.
+    std::unordered_map<Protocol::MessageId, OutboundMessage*,
                        Protocol::MessageId::Hasher>
         outboundMessages;
 

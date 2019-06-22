@@ -20,6 +20,7 @@
 
 #include "Message.h"
 #include "Protocol.h"
+#include "SpinLock.h"
 
 namespace Homa {
 namespace Core {
@@ -36,8 +37,9 @@ class OutboundMessage {
     /**
      * Construct an OutboundMessage.
      */
-    explicit OutboundMessage(Driver* driver)
-        : id(0, 0, 0)
+    explicit OutboundMessage(Driver* driver, void* op)
+        : mutex()
+        , id(0, 0, 0)
         , destination(nullptr)
         , message(driver, sizeof(Protocol::Packet::DataHeader), 0)
         , grantIndex(0)
@@ -45,7 +47,7 @@ class OutboundMessage {
         , sent(false)
         , acknowledged(true)
         , failed(false)
-        , op(nullptr)
+        , op(op)
     {}
 
     /**
@@ -56,24 +58,17 @@ class OutboundMessage {
      */
     Message* get()
     {
+        SpinLock::Lock lock(mutex);
         return &message;
-    }
-
-    /**
-     * Associate a particular Transport::Op with this Message.  Allows the
-     * receiver to single the Transport about this Message when update occur.
-     */
-    void registerOp(void* op)
-    {
-        this->op = op;
     }
 
     /**
      * True if this Message has finished processing; false, otherwise.
      */
-    bool isDone()
+    bool isDone() const
     {
-        return sent && acknowledged;
+        SpinLock::Lock lock(mutex);
+        return isDone(lock);
     }
 
     /**
@@ -82,10 +77,25 @@ class OutboundMessage {
      */
     bool hasFailed() const
     {
+        SpinLock::Lock lock(mutex);
         return failed;
     }
 
   private:
+    /**
+     * True if this Message has finished processing; false, otherwise.
+     *
+     * @param lock
+     *      Ensure the caller holds this message's mutex.
+     */
+    bool isDone(SpinLock::Lock& lock) const
+    {
+        (void)lock;
+        return sent && acknowledged;
+    }
+
+    /// Monitor style lock.
+    mutable SpinLock mutex;
     /// Contains the unique identifier for this message.
     Protocol::MessageId id;
     /// Contains destination address this message.
@@ -105,7 +115,7 @@ class OutboundMessage {
     /// failed to send.
     bool failed;
     /// Transport::Op associated with this message.
-    void* op;
+    void* const op;
 
     friend class Sender;
 };
