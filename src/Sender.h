@@ -39,7 +39,7 @@ namespace Core {
  */
 class Sender {
   public:
-    explicit Sender();
+    explicit Sender(Transport* transport);
     virtual ~Sender();
 
     virtual void handleDonePacket(Driver::Packet* packet, Driver* driver);
@@ -56,6 +56,9 @@ class Sender {
   private:
     /// Protects the top-level
     SpinLock mutex;
+
+    /// Transport of which this Sender is a part.
+    Transport* transport;
 
     /// Tracks the set of outbound messages; contains the associated Op
     /// for a given MessageId.

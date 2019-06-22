@@ -31,6 +31,10 @@ namespace Mock {
  */
 class MockSender : public Core::Sender {
   public:
+    MockSender(Core::Transport* transport)
+        : Sender(transport)
+    {}
+
     MOCK_METHOD2(handleDonePacket,
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD2(handleGrantPacket,

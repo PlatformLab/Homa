@@ -49,13 +49,12 @@ class ReceiverTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        receiver = new Receiver();
         transport = new Transport(&mockDriver, 1);
+        receiver = transport->receiver.get();
     }
 
     ~ReceiverTest()
     {
-        delete receiver;
         delete transport;
         Debug::setLogPolicy(savedLogPolicy);
     }
@@ -71,8 +70,8 @@ class ReceiverTest : public ::testing::Test {
 TEST_F(ReceiverTest, handleDataPacket_basic)
 {
     // Setup registered op
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     Protocol::MessageId id(42, 32, 22);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
     message->active = false;
@@ -264,8 +263,8 @@ TEST_F(ReceiverTest, handleDataPacket_newUnregistered)
 TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 {
     // Register op
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     Protocol::MessageId id(42, 32, 22);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
     op->inMessage = message;
@@ -313,8 +312,8 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 TEST_F(ReceiverTest, handleBusyPacket_basic)
 {
     // Setup registered op
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     Protocol::MessageId id(42, 32, 22);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
     message->active = false;
@@ -372,8 +371,8 @@ TEST_F(ReceiverTest, handleBusyPacket_unknown)
 TEST_F(ReceiverTest, handlePingPacket_basic)
 {
     // Setup registered op
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     Protocol::MessageId id(42, 32, 22);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     Homa::Mock::MockDriver::MockAddress mockAddress;
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
@@ -514,7 +513,7 @@ TEST_F(ReceiverTest, dropMessage)
 TEST_F(ReceiverTest, registerOp_existingMessage)
 {
     Protocol::MessageId id = {42, 32, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
     receiver->unregisteredMessages.insert({id, message});
@@ -535,7 +534,7 @@ TEST_F(ReceiverTest, registerOp_existingMessage)
 TEST_F(ReceiverTest, registerOp_newMessage)
 {
     Protocol::MessageId id = {42, 32, 0};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
 
     EXPECT_EQ(0U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(receiver->registeredOps.end(), receiver->registeredOps.find(id));
@@ -550,7 +549,7 @@ TEST_F(ReceiverTest, registerOp_newMessage)
 TEST_F(ReceiverTest, dropOp)
 {
     Protocol::MessageId id = {42, 32, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     InboundMessage* message = receiver->messagePool.construct();
     message->id = id;
     op->inMessage = message;
@@ -576,7 +575,7 @@ TEST_F(ReceiverTest, sendDonePacket)
 {
     Protocol::MessageId id = {42, 32, 1};
     Homa::Mock::MockDriver::MockAddress mockAddress;
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     InboundMessage* message = receiver->messagePool.construct();
     message->source = &mockAddress;
     message->id = id;
@@ -700,7 +699,7 @@ TEST_F(ReceiverTest, schedule)
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     EXPECT_FALSE(message->newPacket);
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     op->inMessage = message;
     receiver->registeredOps.insert({id, op});
     receiver->unregisteredMessages.erase(id);

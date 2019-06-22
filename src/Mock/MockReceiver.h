@@ -31,8 +31,8 @@ namespace Mock {
  */
 class MockReceiver : public Core::Receiver {
   public:
-    MockReceiver()
-        : Receiver()
+    MockReceiver(Core::Transport* transport)
+        : Receiver(transport)
     {}
 
     MOCK_METHOD2(handleDataPacket,

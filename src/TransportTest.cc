@@ -42,9 +42,9 @@ class TransportTest : public ::testing::Test {
   public:
     TransportTest()
         : mockDriver()
-        , mockSender(new NiceMock<Homa::Mock::MockSender>())
-        , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>())
         , transport(new Transport(&mockDriver, 22))
+        , mockSender(new NiceMock<Homa::Mock::MockSender>(transport))
+        , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>(transport))
         , savedLogPolicy(Debug::getLogPolicy())
     {
         transport->sender.reset(mockSender);
@@ -62,35 +62,16 @@ class TransportTest : public ::testing::Test {
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
+    Transport* transport;
     NiceMock<Homa::Mock::MockSender>* mockSender;
     NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
-    Transport* transport;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
 
-TEST_F(TransportTest, Op_hintUpdate)
-{
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
-    EXPECT_TRUE(transport->updateHints.order.empty());
-
-    op->hintUpdate();
-
-    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
-    EXPECT_EQ(1U, transport->updateHints.order.size());
-    EXPECT_EQ(op, transport->updateHints.order.front());
-
-    op->hintUpdate();
-
-    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
-    EXPECT_EQ(1U, transport->updateHints.order.size());
-    EXPECT_EQ(op, transport->updateHints.order.front());
-}
-
 TEST_F(TransportTest, Op_drop)
 {
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0));
 
     EXPECT_FALSE(op->destroy);
     EXPECT_TRUE(transport->unusedOps.queue.empty());
@@ -116,7 +97,8 @@ TEST_F(TransportTest, Op_drop)
 
 TEST_F(TransportTest, Op_processUpdates_destroy)
 {
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0));
     op->state.store(OpContext::State::IN_PROGRESS);
     op->destroy = true;
 
@@ -129,8 +111,8 @@ TEST_F(TransportTest, Op_processUpdates_destroy)
 
 TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
     InboundMessage inMessage;
     inMessage.message.construct(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
@@ -169,8 +151,8 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
 
 TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
     op->state.store(OpContext::State::IN_PROGRESS);
     EXPECT_FALSE(op->outMessage.isDone());
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
@@ -187,8 +169,8 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone)
 
 TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_noSendDone)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
     op->state.store(OpContext::State::IN_PROGRESS);
     op->outMessage.sent = true;
     InboundMessage inMessage;
@@ -209,8 +191,8 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_noSendDone)
 
 TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_sendDone)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
     op->state.store(OpContext::State::IN_PROGRESS);
     op->outMessage.sent = true;
     InboundMessage inMessage;
@@ -237,8 +219,8 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_sendDone)
 
 TEST_F(TransportTest, Op_processUpdates_ServerOp_COMPLETED)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
     op->state.store(OpContext::State::COMPLETED);
     op->retained = true;
     EXPECT_FALSE(op->destroy);
@@ -264,8 +246,8 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_COMPLETED)
 
 TEST_F(TransportTest, Op_processUpdates_ServerOp_FAILED)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
     op->state.store(OpContext::State::FAILED);
     op->retained = true;
     EXPECT_FALSE(op->destroy);
@@ -291,8 +273,8 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_FAILED)
 
 TEST_F(TransportTest, Op_processUpdates_RemoteOp_not_retained)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, false);
+    Transport::Op* op = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(0, 0), false);
     op->retained = true;
     EXPECT_FALSE(op->destroy);
 
@@ -315,8 +297,8 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_not_retained)
 
 TEST_F(TransportTest, Op_processUpdates_RemoteOp_NOT_STARTED)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, false);
+    Transport::Op* op = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(0, 0), false);
     op->state.store(OpContext::State::NOT_STARTED);
     op->retained = true;
 
@@ -331,8 +313,8 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_NOT_STARTED)
 
 TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, false);
+    Transport::Op* op = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(0, 0), false);
     InboundMessage inMessage;
     inMessage.message.construct(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
@@ -371,8 +353,8 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
 
 TEST_F(TransportTest, Op_processUpdates_RemoteOp_COMPLETED)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, false);
+    Transport::Op* op = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(0, 0), false);
     op->state.store(OpContext::State::COMPLETED);
     op->retained = true;
 
@@ -387,8 +369,8 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_COMPLETED)
 
 TEST_F(TransportTest, Op_processUpdates_RemoteOp_FAILED)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, false);
+    Transport::Op* op = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(0, 0), false);
     op->state.store(OpContext::State::FAILED);
     op->retained = true;
 
@@ -433,8 +415,8 @@ TEST_F(TransportTest, receiveOp)
     Driver::Address::Raw rawAddress;
     rawAddress.bytes[0] = 22;
 
-    Transport::Op* serverOp =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* serverOp = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(0, 0), true);
 
     InboundMessage inMessage;
     inMessage.message.construct(transport->driver,
@@ -478,8 +460,8 @@ TEST_F(TransportTest, receiveOp_empty)
 
 TEST_F(TransportTest, releaseOp)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, false);
+    Transport::Op* op = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(0, 0), false);
     op->retained.store(true);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
@@ -491,8 +473,8 @@ TEST_F(TransportTest, releaseOp)
 
 TEST_F(TransportTest, sendRequest_ServerOp)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
     InboundMessage message;
     Protocol::MessageId expectedId = {transport->transportId, 42, 3};
     op->inMessage = &message;
@@ -508,12 +490,11 @@ TEST_F(TransportTest, sendRequest_ServerOp)
 
 TEST_F(TransportTest, sendRequest_RemoteOp)
 {
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, false);
-
     Protocol::OpId expectedOpId = {transport->transportId,
                                    transport->nextOpSequenceNumber};
     Driver::Address* destination = (Driver::Address*)22;
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    expectedOpId, false);
 
     EXPECT_CALL(*mockReceiver,
                 registerOp(Eq(Protocol::MessageId(
@@ -536,8 +517,8 @@ TEST_F(TransportTest, sendReply)
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
     Driver::Address* replyAddress = (Driver::Address*)22;
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, true);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
     Protocol::OpId expectedOpId = {42, 32};
     InboundMessage message;
     message.id = Protocol::MessageId(expectedOpId, 2);
@@ -570,6 +551,27 @@ TEST_F(TransportTest, poll)
     EXPECT_CALL(*mockReceiver, receiveMessage).WillOnce(Return(nullptr));
 
     transport->poll();
+}
+
+TEST_F(TransportTest, hintUpdatedOp)
+{
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0));
+
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+    EXPECT_TRUE(transport->updateHints.order.empty());
+
+    transport->hintUpdatedOp(op);
+
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_EQ(1U, transport->updateHints.order.size());
+    EXPECT_EQ(op, transport->updateHints.order.front());
+
+    transport->hintUpdatedOp(op);
+
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_EQ(1U, transport->updateHints.order.size());
+    EXPECT_EQ(op, transport->updateHints.order.front());
 }
 
 TEST_F(TransportTest, processPackets)
@@ -683,12 +685,12 @@ TEST_F(TransportTest, processInboundMessages_dropResponse)
 
 TEST_F(TransportTest, checkForUpdates)
 {
-    Transport::Op* staleOp =
-        transport->opPool.construct(transport, &mockDriver, false);
-    staleOp->hintUpdate();
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, false);
-    op->hintUpdate();
+    Transport::Op* staleOp = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(1, 1), false);
+    transport->hintUpdatedOp(staleOp);
+    Transport::Op* op = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(1, 2), false);
+    transport->hintUpdatedOp(op);
     transport->activeOps.insert(op);
 
     EXPECT_FALSE(staleOp->destroy);
@@ -709,31 +711,63 @@ TEST_F(TransportTest, checkForUpdates)
 
 TEST_F(TransportTest, cleanupOps)
 {
-    Transport::Op* staleOp =
-        transport->opPool.construct(transport, &mockDriver);
+    // Stale Op
+    Transport::Op* staleOp = transport->opPool.construct(transport, &mockDriver,
+                                                         Protocol::OpId(1, 1));
+    // Server Op
+    Transport::Op* serverOp = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(2, 1));
+    serverOp->outMessage.id = {42, 32, 2};
+    transport->activeOps.insert(serverOp);
+    // Remote Op
+    Transport::Op* remoteOp = transport->opPool.construct(
+        transport, &mockDriver, Protocol::OpId(1, 2), false);
+    remoteOp->outMessage.id = {42, 32, 1};
+    transport->activeOps.insert(remoteOp);
+    transport->remoteOps.insert({remoteOp->opId, remoteOp});
+
+    EXPECT_EQ(0U, transport->activeOps.count(staleOp));
+    EXPECT_EQ(1U, transport->activeOps.count(serverOp));
+    EXPECT_EQ(1U, transport->activeOps.count(remoteOp));
+    EXPECT_EQ(1U, transport->remoteOps.count(remoteOp->opId));
+
     {
         SpinLock::Lock lock(staleOp->mutex);
         staleOp->drop(lock);
     }
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     {
-        SpinLock::Lock lock(op->mutex);
-        op->drop(lock);
+        SpinLock::Lock lock(serverOp->mutex);
+        serverOp->drop(lock);
     }
-    transport->activeOps.insert(op);
-
     EXPECT_EQ(2U, transport->unusedOps.queue.size());
-    EXPECT_EQ(0U, transport->activeOps.count(staleOp));
-    EXPECT_EQ(1U, transport->activeOps.count(op));
 
-    EXPECT_CALL(*mockSender, dropMessage(Eq(op))).Times(1);
-    EXPECT_CALL(*mockReceiver, dropOp(Eq(op))).Times(1);
+    EXPECT_CALL(*mockSender, dropMessage(Eq(serverOp))).Times(1);
+    EXPECT_CALL(*mockReceiver, dropOp(Eq(serverOp))).Times(1);
 
     transport->cleanupOps();
 
     EXPECT_EQ(0U, transport->unusedOps.queue.size());
     EXPECT_EQ(0U, transport->activeOps.count(staleOp));
-    EXPECT_EQ(0U, transport->activeOps.count(op));
+    EXPECT_EQ(0U, transport->activeOps.count(serverOp));
+    EXPECT_EQ(1U, transport->activeOps.count(remoteOp));
+    EXPECT_EQ(1U, transport->remoteOps.count(remoteOp->opId));
+
+    {
+        SpinLock::Lock lock(remoteOp->mutex);
+        remoteOp->drop(lock);
+    }
+    EXPECT_EQ(1U, transport->unusedOps.queue.size());
+
+    EXPECT_CALL(*mockSender, dropMessage(Eq(remoteOp))).Times(1);
+    EXPECT_CALL(*mockReceiver, dropOp(Eq(remoteOp))).Times(1);
+
+    transport->cleanupOps();
+
+    EXPECT_EQ(0U, transport->unusedOps.queue.size());
+    EXPECT_EQ(0U, transport->activeOps.count(staleOp));
+    EXPECT_EQ(0U, transport->activeOps.count(serverOp));
+    EXPECT_EQ(0U, transport->activeOps.count(remoteOp));
+    EXPECT_EQ(0U, transport->remoteOps.count(remoteOp->opId));
 }
 
 }  // namespace

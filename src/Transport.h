@@ -19,6 +19,7 @@
 #include <atomic>
 #include <bitset>
 #include <deque>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -57,10 +58,11 @@ class Transport {
         /**
          * Constructor.
          */
-        explicit Op(Transport* transport, Driver* driver,
+        explicit Op(Transport* transport, Driver* driver, Protocol::OpId opId,
                     bool isServerOp = true)
             : OpContext(transport)
             , mutex()
+            , opId(opId)
             , outMessage(driver)
             , inMessage(nullptr)
             , retained(false)
@@ -89,20 +91,11 @@ class Transport {
             return nullptr;
         }
 
-        /**
-         * Signal that this Op's state may have been updated.
-         */
-        inline void hintUpdate()
-        {
-            SpinLock::Lock lock(transport->updateHints.mutex);
-            auto ret = transport->updateHints.ops.insert(this);
-            if (ret.second) {
-                transport->updateHints.order.push_back(this);
-            }
-        }
-
         /// Mutex for controlling internal access to Op members.
         SpinLock mutex;
+
+        /// Identifier for the operation with which this Op is associated.
+        const Protocol::OpId opId;
 
         /// Message to be sent out as part of this Op.  Processed by the Sender.
         OutboundMessage outMessage;
@@ -154,6 +147,21 @@ class Transport {
     void sendReply(OpContext* context);
     void poll();
 
+    /**
+     * Signal that an Op's state may have been updated.
+     *
+     * @param op
+     *      Pointer to an Op whose state may have been updated.
+     */
+    inline void hintUpdatedOp(void* op)
+    {
+        SpinLock::Lock lock(updateHints.mutex);
+        auto ret = updateHints.ops.insert(op);
+        if (ret.second) {
+            updateHints.order.push_back(op);
+        }
+    }
+
     /// Driver from which this transport will send and receive packets.
     Driver* const driver;
 
@@ -184,15 +192,19 @@ class Transport {
     /// Set of Op objects are currently being managed by this Transport.
     std::unordered_set<Op*> activeOps;
 
+    /// Tracks the set of Op objects that were initiated by this Transport
+    /// (i.e. Op objects that represent RemoteOps).
+    std::unordered_map<Protocol::OpId, Op*, Protocol::OpId::Hasher> remoteOps;
+
     /// Collection of Op objects that may have been recently updated.
     struct {
         /// Protects updateHints.
         SpinLock mutex;
         /// Set of Op objects that might have been updated.
-        std::unordered_set<Op*> ops;
+        std::unordered_set<void*> ops;
         /// The order in which Op objects were (possibly) updated.  Used to
         /// ensure Op object processing is not starved.
-        std::deque<Op*> order;
+        std::deque<void*> order;
     } updateHints;
 
     /// Colletion of Op objects that are waiting to be destructed.  Allow the

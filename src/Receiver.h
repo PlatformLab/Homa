@@ -42,7 +42,7 @@ namespace Core {
  */
 class Receiver {
   public:
-    explicit Receiver();
+    explicit Receiver(Transport* transport);
     virtual ~Receiver();
     virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleBusyPacket(Driver::Packet* packet, Driver* driver);
@@ -79,6 +79,9 @@ class Receiver {
 
     /// Mutex for monitor-style locking of Receiver state.
     SpinLock mutex;
+
+    /// Transport of which this Receiver is a part.
+    Transport* transport;
 
     /// Tracks the set of Transport::Op objects with expected InboundMessages.
     std::unordered_map<Protocol::MessageId, Transport::Op*,

@@ -45,6 +45,7 @@ class InboundMessage {
         , newPacket(false)
         , active(false)
         , fullMessageReceived(false)
+        , op(nullptr)
     {}
 
     /**
@@ -64,6 +65,16 @@ class InboundMessage {
     Protocol::MessageId getId()
     {
         return id;
+    }
+
+    /**
+     * Associate a particular Transport::Op with this Message.  Allows the
+     * receiver to single the Transport about this Message when update occur.
+     */
+    void registerOp(void* op)
+    {
+        SpinLock::Lock lock(mutex);
+        this->op = op;
     }
 
     /**
@@ -105,6 +116,8 @@ class InboundMessage {
     bool active;
     /// True if all packets of the message have been received.
     bool fullMessageReceived;
+    /// Transport::Op associated with this message.
+    void* op;
 
     friend class Receiver;
 };

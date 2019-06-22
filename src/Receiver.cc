@@ -26,11 +26,12 @@ const uint32_t RTT_TIME_US = 5;
 /**
  * Receiver constructor.
  *
- * @param scheduler
- *      Scheduler that should be informed when message packets are received.
+ * @param transport
+ *      The Tranport object that owns this Receiver.
  */
-Receiver::Receiver()
+Receiver::Receiver(Transport* transport)
     : mutex()
+    , transport(transport)
     , registeredOps()
     , unregisteredMessages()
     , receivedMessages()
@@ -143,7 +144,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         if (totalReceivedBytes >= message->message->rawLength()) {
             message->fullMessageReceived = true;
             if (op != nullptr) {
-                op->hintUpdate();
+                transport->hintUpdatedOp(op);
             }
         }
     } else {
@@ -311,7 +312,7 @@ Receiver::dropMessage(InboundMessage* message)
 }
 
 /**
- * Inform the Receiver that an incomming Message is expected and should be
+ * Inform the Receiver that an incoming Message is expected and should be
  * associated with a particular Transport::Op.
  *
  * @param id
@@ -330,7 +331,7 @@ Receiver::registerOp(Protocol::MessageId id, Transport::Op* op)
         // Existing message
         message = it->second;
         unregisteredMessages.erase(it);
-        op->hintUpdate();
+        transport->hintUpdatedOp(op);
     } else {
         // New message
         message = messagePool.construct();
@@ -372,7 +373,7 @@ Receiver::poll()
 }
 
 /**
- * Send a GRANT packet to the Sender of an incomming Message.
+ * Send a GRANT packet to the Sender of an incoming Message.
  *
  * @param message
  *      InboundMessage for which to send a GRANT.
@@ -406,7 +407,7 @@ Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
 }
 
 /**
- * Schedule incomming messages by sending GRANTs.
+ * Schedule incoming messages by sending GRANTs.
  */
 void
 Receiver::schedule()

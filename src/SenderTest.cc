@@ -46,6 +46,7 @@ class SenderTest : public ::testing::Test {
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         transport = new Transport(&mockDriver, 1);
+        sender = transport->sender.get();
     }
 
     ~SenderTest()
@@ -58,7 +59,7 @@ class SenderTest : public ::testing::Test {
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     char payload[1028];
     Transport* transport;
-    Sender sender;
+    Sender* sender;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 
     static OutboundMessage* addMessage(Sender* sender, Protocol::MessageId id,
@@ -68,6 +69,7 @@ class SenderTest : public ::testing::Test {
         OutboundMessage* message = &op->outMessage;
         message->id = id;
         message->grantIndex = grantIndex;
+        message->registerOp(op);
         sender->outboundMessages.insert({id, op});
         return message;
     }
@@ -76,7 +78,7 @@ class SenderTest : public ::testing::Test {
 TEST_F(SenderTest, handleDonePacket)
 {
     Protocol::MessageId id = {42, 1, 32};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     op->outMessage.acknowledged = false;
 
     Protocol::Packet::DoneHeader* header =
@@ -86,22 +88,22 @@ TEST_F(SenderTest, handleDonePacket)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(2);
 
-    sender.handleDonePacket(&mockPacket, &mockDriver);
+    sender->handleDonePacket(&mockPacket, &mockDriver);
 
     EXPECT_FALSE(op->outMessage.acknowledged);
 
-    sender.outboundMessages.insert({id, op});
+    sender->outboundMessages.insert({id, op});
 
-    sender.handleDonePacket(&mockPacket, &mockDriver);
+    sender->handleDonePacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(op->outMessage.acknowledged);
 }
 
 TEST_F(SenderTest, handleResendPacket_basic)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
     for (int i = 0; i < 10; ++i) {
         packets.push_back(new Homa::Mock::MockDriver::MockPacket(payload));
@@ -113,7 +115,7 @@ TEST_F(SenderTest, handleResendPacket_basic)
 
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
-    resendHdr->common.messageId = msgId;
+    resendHdr->common.messageId = id;
     resendHdr->index = 3;
     resendHdr->num = 5;
 
@@ -122,7 +124,7 @@ TEST_F(SenderTest, handleResendPacket_basic)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleResendPacket(&mockPacket, &mockDriver);
+    sender->handleResendPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_EQ(8U, message->grantIndex);
@@ -134,24 +136,24 @@ TEST_F(SenderTest, handleResendPacket_basic)
 
 TEST_F(SenderTest, handleResendPacket_staleResend)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
+    Protocol::MessageId id = {42, 1, 1};
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
-    resendHdr->common.messageId = msgId;
+    resendHdr->common.messageId = id;
     resendHdr->index = 3;
     resendHdr->num = 5;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleResendPacket(&mockPacket, &mockDriver);
+    sender->handleResendPacket(&mockPacket, &mockDriver);
 }
 
 TEST_F(SenderTest, handleResendPacket_eagerResend)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     char data[1028];
     Homa::Mock::MockDriver::MockPacket dataPacket(data);
     for (int i = 0; i < 10; ++i) {
@@ -163,7 +165,7 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
 
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
-    resendHdr->common.messageId = msgId;
+    resendHdr->common.messageId = id;
     resendHdr->index = 5;
     resendHdr->num = 3;
 
@@ -180,77 +182,77 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleResendPacket(&mockPacket, &mockDriver);
+    sender->handleResendPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_EQ(8U, message->grantIndex);
 
     Protocol::Packet::BusyHeader* busyHdr =
         static_cast<Protocol::Packet::BusyHeader*>(mockPacket.payload);
-    EXPECT_EQ(msgId, busyHdr->common.messageId);
+    EXPECT_EQ(id, busyHdr->common.messageId);
 }
 
 TEST_F(SenderTest, handleGrantPacket_basic)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     message->message.numPackets = 10;
     EXPECT_EQ(5, message->grantIndex);
 
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
-    header->common.messageId = msgId;
+    header->common.messageId = id;
     header->indexLimit = 7;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleGrantPacket(&mockPacket, &mockDriver);
+    sender->handleGrantPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(7, message->grantIndex);
 }
 
 TEST_F(SenderTest, handleGrantPacket_staleGrant)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     message->message.numPackets = 10;
     EXPECT_EQ(5, message->grantIndex);
 
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
-    header->common.messageId = msgId;
+    header->common.messageId = id;
     header->indexLimit = 4;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleGrantPacket(&mockPacket, &mockDriver);
+    sender->handleGrantPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(5, message->grantIndex);
 }
 
 TEST_F(SenderTest, handleGrantPacket_dropGrant)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
+    Protocol::MessageId id = {42, 1, 1};
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
-    header->common.messageId = msgId;
+    header->common.messageId = id;
     header->indexLimit = 4;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleGrantPacket(&mockPacket, &mockDriver);
+    sender->handleGrantPacket(&mockPacket, &mockDriver);
 }
 
 TEST_F(SenderTest, handleUnknownPacket_basic)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     message->sent = true;
     message->acknowledged = false;
     message->sentIndex = 5;
@@ -258,12 +260,12 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
 
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
-    header->common.messageId = msgId;
+    header->common.messageId = id;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleUnknownPacket(&mockPacket, &mockDriver);
+    sender->handleUnknownPacket(&mockPacket, &mockDriver);
 
     EXPECT_FALSE(message->sent);
     EXPECT_EQ(0U, message->sentIndex);
@@ -272,23 +274,23 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
 
 TEST_F(SenderTest, handleUnknownPacket_no_message)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
+    Protocol::MessageId id = {42, 1, 1};
 
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
-    header->common.messageId = msgId;
+    header->common.messageId = id;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleUnknownPacket(&mockPacket, &mockDriver);
+    sender->handleUnknownPacket(&mockPacket, &mockDriver);
 }
 
 TEST_F(SenderTest, handleUnknownPacket_done)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     message->sent = true;
     message->acknowledged = true;
     message->sentIndex = 5;
@@ -296,12 +298,12 @@ TEST_F(SenderTest, handleUnknownPacket_done)
 
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
-    header->common.messageId = msgId;
+    header->common.messageId = id;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender.handleUnknownPacket(&mockPacket, &mockDriver);
+    sender->handleUnknownPacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(message->sent);
     EXPECT_TRUE(message->acknowledged);
@@ -312,7 +314,7 @@ TEST_F(SenderTest, handleUnknownPacket_done)
 TEST_F(SenderTest, handleErrorPacket)
 {
     Protocol::MessageId id = {42, 1, 32};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     op->outMessage.failed = false;
 
     Protocol::Packet::ErrorHeader* header =
@@ -322,21 +324,21 @@ TEST_F(SenderTest, handleErrorPacket)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(2);
 
-    sender.handleErrorPacket(&mockPacket, &mockDriver);
+    sender->handleErrorPacket(&mockPacket, &mockDriver);
 
     EXPECT_FALSE(op->outMessage.failed);
 
-    sender.outboundMessages.insert({id, op});
+    sender->outboundMessages.insert({id, op});
 
-    sender.handleErrorPacket(&mockPacket, &mockDriver);
+    sender->handleErrorPacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(op->outMessage.failed);
 }
 
 TEST_F(SenderTest, sendMessage_basic)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
 
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 420;
@@ -344,10 +346,10 @@ TEST_F(SenderTest, sendMessage_basic)
                         op->outMessage.message.PACKET_HEADER_LENGTH;
     Driver::Address* destination = (Driver::Address*)22;
 
-    EXPECT_FALSE(sender.outboundMessages.find(msgId) !=
-                 sender.outboundMessages.end());
+    EXPECT_FALSE(sender->outboundMessages.find(id) !=
+                 sender->outboundMessages.end());
 
-    sender.sendMessage(msgId, destination, op);
+    sender->sendMessage(id, destination, op);
 
     EXPECT_EQ(22U, (uint64_t)mockPacket.address);
     EXPECT_EQ(0U, mockPacket.priority);
@@ -357,29 +359,29 @@ TEST_F(SenderTest, sendMessage_basic)
     EXPECT_EQ(destination, op->outMessage.destination);
     EXPECT_TRUE(op->outMessage.acknowledged);
     EXPECT_EQ(op->outMessage.message.messageLength, header->totalLength);
-    EXPECT_TRUE(sender.outboundMessages.find(msgId) !=
-                sender.outboundMessages.end());
-    EXPECT_EQ(op, sender.outboundMessages.find(msgId)->second);
+    EXPECT_TRUE(sender->outboundMessages.find(id) !=
+                sender->outboundMessages.end());
+    EXPECT_EQ(op, sender->outboundMessages.find(id)->second);
     EXPECT_EQ(1U, op->outMessage.grantIndex);
 }
 
 TEST_F(SenderTest, sendMessage_expectAcknowledgement)
 {
     Protocol::MessageId id = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 420;
     mockPacket.length = op->outMessage.message.messageLength +
                         op->outMessage.message.PACKET_HEADER_LENGTH;
     Driver::Address* destination = (Driver::Address*)22;
 
-    sender.sendMessage(id, destination, op, true);
+    sender->sendMessage(id, destination, op, true);
     EXPECT_FALSE(op->outMessage.acknowledged);
 
     // Remove the op so we can test adding it again.
-    sender.outboundMessages.erase(id);
+    sender->outboundMessages.erase(id);
 
-    sender.sendMessage(id, destination, op);
+    sender->sendMessage(id, destination, op);
     EXPECT_TRUE(op->outMessage.acknowledged);
 }
 
@@ -389,8 +391,8 @@ TEST_F(SenderTest, sendMessage_multipacket)
     char payload1[1028];
     NiceMock<Homa::Mock::MockDriver::MockPacket> packet0(payload0);
     NiceMock<Homa::Mock::MockDriver::MockPacket> packet1(payload1);
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
 
     op->outMessage.message.setPacket(0, &packet0);
     op->outMessage.message.setPacket(1, &packet1);
@@ -402,7 +404,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
     EXPECT_EQ(28U, sizeof(Protocol::Packet::DataHeader));
     EXPECT_EQ(1000U, op->outMessage.message.PACKET_DATA_LENGTH);
 
-    sender.sendMessage(msgId, destination, op);
+    sender->sendMessage(id, destination, op);
 
     Protocol::Packet::DataHeader* header = nullptr;
     // Packet0
@@ -438,11 +440,11 @@ TEST_F(SenderTest, sendMessage_missingPacket)
     // VectorHandler handler;
     // Debug::setLogHandler(std::ref(handler));
 
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     op->outMessage.message.setPacket(1, &mockPacket);
 
-    EXPECT_DEATH(sender.sendMessage(msgId, nullptr, op),
+    EXPECT_DEATH(sender->sendMessage(id, nullptr, op),
                  ".*Incomplete message with id \\(42:1:1\\); missing packet at "
                  "offset 0; this shouldn't happen.*");
 }
@@ -452,8 +454,8 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
     VectorHandler handler;
     Debug::setLogHandler(std::ref(handler));
 
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 420;
     mockPacket.length = op->outMessage.message.messageLength +
@@ -461,12 +463,12 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
     Driver::Address* destination = (Driver::Address*)22;
 
     // First send should succeed.
-    sender.sendMessage(msgId, destination, op);
+    sender->sendMessage(id, destination, op);
 
     EXPECT_EQ(0U, handler.messages.size());
 
     // Second send should be dropped.
-    sender.sendMessage(msgId, destination, op);
+    sender->sendMessage(id, destination, op);
 
     EXPECT_EQ(1U, handler.messages.size());
     const Debug::DebugMessage& m = handler.messages.at(0);
@@ -483,8 +485,8 @@ TEST_F(SenderTest, sendMessage_duplicateMessage)
 
 TEST_F(SenderTest, sendMessage_unscheduledLimit)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     for (int i = 0; i < 9; ++i) {
         op->outMessage.message.setPacket(i, &mockPacket);
     }
@@ -496,40 +498,40 @@ TEST_F(SenderTest, sendMessage_unscheduledLimit)
 
     EXPECT_CALL(mockDriver, getBandwidth).WillOnce(Return(8000));
 
-    sender.sendMessage(msgId, destination, op);
+    sender->sendMessage(id, destination, op);
 
-    EXPECT_TRUE(sender.outboundMessages.find(msgId) !=
-                sender.outboundMessages.end());
-    EXPECT_EQ(op, sender.outboundMessages.find(msgId)->second);
-    EXPECT_EQ(msgId, op->outMessage.id);
+    EXPECT_TRUE(sender->outboundMessages.find(id) !=
+                sender->outboundMessages.end());
+    EXPECT_EQ(op, sender->outboundMessages.find(id)->second);
+    EXPECT_EQ(id, op->outMessage.id);
     EXPECT_EQ(destination, op->outMessage.destination);
     EXPECT_EQ(5U, op->outMessage.grantIndex);
 }
 
 TEST_F(SenderTest, dropMessage)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     op->outMessage.message.messageLength = 9000;
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 5);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
 
-    sender.dropMessage(op);
+    sender->dropMessage(op);
 
-    EXPECT_FALSE(sender.outboundMessages.find(msgId) !=
-                 sender.outboundMessages.end());
+    EXPECT_FALSE(sender->outboundMessages.find(id) !=
+                 sender->outboundMessages.end());
 }
 
 TEST_F(SenderTest, poll)
 {
     // Nothing to test.
-    sender.poll();
+    sender->poll();
 }
 
 TEST_F(SenderTest, trySend_basic)
 {
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
     Protocol::MessageId id = {42, 10, 1};
-    OutboundMessage* message = SenderTest::addMessage(&sender, id, op, 2);
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 2);
     Homa::Mock::MockDriver::MockPacket* packet[5];
     for (int i = 0; i < 5; ++i) {
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
@@ -544,7 +546,7 @@ TEST_F(SenderTest, trySend_basic)
     // 2 granted packets to be sent; won't be finished.
     EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[0]), Eq(1)));
     EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[1]), Eq(1)));
-    sender.trySend();  // < test call
+    sender->trySend();  // < test call
     EXPECT_EQ(2U, message->grantIndex);
     EXPECT_EQ(2U, message->sentIndex);
     EXPECT_FALSE(message->sent);
@@ -552,7 +554,7 @@ TEST_F(SenderTest, trySend_basic)
 
     // No additional grants; no packets sent; won't be finished.
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
-    sender.trySend();  // < test call
+    sender->trySend();  // < test call
     EXPECT_EQ(2U, message->grantIndex);
     EXPECT_EQ(2U, message->sentIndex);
     EXPECT_FALSE(message->sent);
@@ -563,7 +565,7 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[2]), Eq(1)));
     EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[3]), Eq(1)));
     EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[4]), Eq(1)));
-    sender.trySend();  // < test call
+    sender->trySend();  // < test call
     EXPECT_EQ(5U, message->grantIndex);
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_TRUE(message->sent);
@@ -572,7 +574,7 @@ TEST_F(SenderTest, trySend_basic)
     // Message already finished.
     message->grantIndex = 6;
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
-    sender.trySend();  // < test call
+    sender->trySend();  // < test call
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_TRUE(message->sent);
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -587,9 +589,9 @@ TEST_F(SenderTest, trySend_multipleMessages)
     Transport::Op* op[4];
     OutboundMessage* message[4];
     for (uint64_t i = 0; i < 4; ++i) {
-        op[i] = transport->opPool.construct(transport, &mockDriver);
-        Protocol::MessageId msgId = {42, 10 + i, 1};
-        message[i] = SenderTest::addMessage(&sender, msgId, op[i], 5);
+        Protocol::MessageId id = {42, 10 + i, 1};
+        op[i] = transport->opPool.construct(transport, &mockDriver, id);
+        message[i] = SenderTest::addMessage(sender, id, op[i], 5);
     }
 
     // Message 0: All packets sent
@@ -627,7 +629,7 @@ TEST_F(SenderTest, trySend_multipleMessages)
 
     EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(5);
 
-    sender.trySend();
+    sender->trySend();
 
     EXPECT_EQ(5U, message[0]->sentIndex);
     EXPECT_TRUE(message[0]->sent);
@@ -644,7 +646,7 @@ TEST_F(SenderTest, trySend_multipleMessages)
 
     EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(5);
 
-    sender.trySend();
+    sender->trySend();
 
     EXPECT_EQ(5U, message[3]->sentIndex);
     EXPECT_TRUE(message[3]->sent);
@@ -653,29 +655,29 @@ TEST_F(SenderTest, trySend_multipleMessages)
 
 TEST_F(SenderTest, trySend_alreadyRunning)
 {
-    Protocol::MessageId msgId = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver);
+    Protocol::MessageId id = {42, 1, 1};
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     op->outMessage.message.setPacket(0, &mockPacket);
     op->outMessage.message.messageLength = 1000;
     EXPECT_EQ(1U, op->outMessage.message.getNumPackets());
-    OutboundMessage* message = SenderTest::addMessage(&sender, msgId, op, 1);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 1);
     EXPECT_EQ(1, message->grantIndex);
     EXPECT_EQ(0, message->sentIndex);
 
-    sender.sending.test_and_set();
+    sender->sending.test_and_set();
 
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
 
-    sender.trySend();
+    sender->trySend();
 
     EXPECT_EQ(0, message->sentIndex);
 }
 
 TEST_F(SenderTest, trySend_nothingToSend)
 {
-    EXPECT_TRUE(sender.outboundMessages.empty());
+    EXPECT_TRUE(sender->outboundMessages.empty());
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
-    sender.trySend();
+    sender->trySend();
 }
 
 }  // namespace

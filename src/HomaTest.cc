@@ -34,9 +34,11 @@ class HomaTest : public ::testing::Test {
     HomaTest()
         : mockDriver()
         , mockAddress()
-        , mockSender(new NiceMock<Homa::Mock::MockSender>())
-        , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>())
         , transport(new Transport(&mockDriver, 22))
+        , mockSender(
+              new NiceMock<Homa::Mock::MockSender>(transport->internal.get()))
+        , mockReceiver(
+              new NiceMock<Homa::Mock::MockReceiver>(transport->internal.get()))
         , buf()
         , packet0(buf + 0)
         , packet1(buf + 2048)
@@ -58,9 +60,9 @@ class HomaTest : public ::testing::Test {
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
     Homa::Mock::MockDriver::MockAddress mockAddress;
+    Transport* transport;
     NiceMock<Homa::Mock::MockSender>* mockSender;
     NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
-    Transport* transport;
     char buf[4096];
     Homa::Mock::MockDriver::MockPacket packet0;
     Homa::Mock::MockDriver::MockPacket packet1;
@@ -221,10 +223,11 @@ TEST_F(HomaTest, Transport_receiveServerOp)
 {
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
+    Protocol::MessageId id(42, 1, 1);
     Core::Transport::Op* op = transport->internal->opPool.construct(
-        transport->internal.get(), transport->internal->driver);
+        transport->internal.get(), transport->internal->driver, id);
     Core::InboundMessage inMessage;
-    inMessage.id = Protocol::MessageId(42, 1, 1);
+    inMessage.id = id;
     inMessage.message.construct(&mockDriver,
                                 sizeof(Protocol::Packet::DataHeader), 0);
     op->inMessage = &inMessage;

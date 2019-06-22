@@ -45,6 +45,7 @@ class OutboundMessage {
         , sent(false)
         , acknowledged(true)
         , failed(false)
+        , op(nullptr)
     {}
 
     /**
@@ -56,6 +57,15 @@ class OutboundMessage {
     Message* get()
     {
         return &message;
+    }
+
+    /**
+     * Associate a particular Transport::Op with this Message.  Allows the
+     * receiver to single the Transport about this Message when update occur.
+     */
+    void registerOp(void* op)
+    {
+        this->op = op;
     }
 
     /**
@@ -94,6 +104,8 @@ class OutboundMessage {
     /// True if this message (or some delegated message down the line) has
     /// failed to send.
     bool failed;
+    /// Transport::Op associated with this message.
+    void* op;
 
     friend class Sender;
 };

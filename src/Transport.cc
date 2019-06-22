@@ -59,7 +59,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
                     Protocol::MessageId::INITIAL_REQUEST_TAG) {
                     Receiver::sendDonePacket(this, transport->driver, lock);
                 }
-                hintUpdate();
+                transport->hintUpdatedOp(this);
             }
         } else if (copyOfState == State::COMPLETED) {
             if (!retained) {
@@ -83,7 +83,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
                 // Strip-off the Message::Header.
                 inMessage->get()->defineHeader<Protocol::Message::Header>();
                 state.store(State::COMPLETED);
-                hintUpdate();
+                transport->hintUpdatedOp(this);
             }
         } else if (copyOfState == State::COMPLETED) {
             // Nothing to do.
@@ -108,11 +108,12 @@ Transport::Transport(Driver* driver, uint64_t transportId)
     : driver(driver)
     , transportId(transportId)
     , nextOpSequenceNumber(1)
-    , sender(new Sender())
-    , receiver(new Receiver())
+    , sender(new Sender(this))
+    , receiver(new Receiver(this))
     , mutex()
     , opPool()
     , activeOps()
+    , remoteOps()
     , updateHints()
     , unusedOps()
     , pendingServerOps()
@@ -140,8 +141,10 @@ OpContext*
 Transport::allocOp()
 {
     SpinLock::UniqueLock lock(mutex);
-    Op* op = opPool.construct(this, driver, false);
+    Protocol::OpId opId(transportId, nextOpSequenceNumber++);
+    Op* op = opPool.construct(this, driver, opId, false);
     activeOps.insert(op);
+    remoteOps.insert({opId, op});
 
     // Lock handoff
     SpinLock::Lock lock_op(op->mutex);
@@ -155,7 +158,7 @@ Transport::allocOp()
 }
 
 /**
- * Return an OpContext for an incomming request (ServerOp) if one exists.
+ * Return an OpContext for an incoming request (ServerOp) if one exists.
  * Otherwise, return a nullptr;
  */
 OpContext*
@@ -196,7 +199,7 @@ Transport::releaseOp(OpContext* context)
 {
     Op* op = static_cast<Op*>(context);
     op->retained.store(false);
-    op->hintUpdate();
+    hintUpdatedOp(op);
 }
 
 /**
@@ -221,13 +224,13 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
         lock_op.unlock();  // Allow Sender to take the lock.
         sender->sendMessage(delegationId, destination, op, true);
     } else {
-        Protocol::OpId opId(transportId, nextOpSequenceNumber++);
         op->state.store(OpContext::State::IN_PROGRESS);
         lock_op.unlock();  // Allow Sender/Receiver to take the lock.
-        receiver->registerOp({opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG},
-                             op);
-        sender->sendMessage({opId, Protocol::MessageId::INITIAL_REQUEST_TAG},
-                            destination, op, true);
+        receiver->registerOp(
+            {op->opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG}, op);
+        sender->sendMessage(
+            {op->opId, Protocol::MessageId::INITIAL_REQUEST_TAG}, destination,
+            op, true);
     }
 }
 
@@ -273,7 +276,7 @@ Transport::poll()
 }
 
 /**
- * Helper method which receives a burst of incomming packets and process them
+ * Helper method which receives a burst of incoming packets and process them
  * through the transport protocol.  Pulled out of Transport::poll() to simplify
  * unit testing.
  */
@@ -318,7 +321,7 @@ Transport::processPackets()
 }
 
 /**
- * Helper method to process any incomming messages.
+ * Helper method to process any incoming messages.
  */
 void
 Transport::processInboundMessages()
@@ -331,11 +334,11 @@ Transport::processInboundMessages()
             // waiting for it;  Drop the message.
             receiver->dropMessage(message);
         } else {
-            // Incomming message is a request.
+            // Incoming message is a request.
             Op* op = nullptr;
             {
                 SpinLock::Lock lock(mutex);
-                op = opPool.construct(this, driver, true);
+                op = opPool.construct(this, driver, message->getId(), true);
                 activeOps.insert(op);
             }
             receiver->registerOp(id, op);
@@ -359,25 +362,26 @@ Transport::checkForUpdates()
     }
 
     for (uint i = 0; i < hints; ++i) {
-        Op* op = nullptr;
+        void* hint = nullptr;
         // Take a hint.
         {
             SpinLock::Lock lock(updateHints.mutex);
             if (updateHints.order.empty()) {
                 break;
             } else {
-                op = updateHints.order.front();
+                hint = updateHints.order.front();
                 updateHints.order.pop_front();
-                updateHints.ops.erase(op);
+                updateHints.ops.erase(hint);
             }
         }
         // Check that the hinted Op is still active.
         SpinLock::UniqueLock lock(mutex);
-        if (activeOps.count(op) == 0) {
+        if (activeOps.count(static_cast<Op*>(hint)) == 0) {
             continue;
         }
 
         // Lock handoff
+        Op* op = static_cast<Op*>(hint);
         SpinLock::Lock lock_op(op->mutex);
         lock.unlock();
 
@@ -422,6 +426,9 @@ Transport::cleanupOps()
         receiver->dropOp(op);
 
         op->mutex.lock();
+        if (!op->isServerOp) {
+            remoteOps.erase(op->opId);
+        }
         activeOps.erase(op);
         opPool.destroy(op);
     }

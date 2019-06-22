@@ -29,9 +29,13 @@ const uint32_t RTT_TIME_US = 5;
 
 /**
  * Sender Constructor.
+ *
+ * @param transport
+ *      The Tranport object that owns this Sender.
  */
-Sender::Sender()
+Sender::Sender(Transport* transport)
     : mutex()
+    , transport(transport)
     , outboundMessages()
     , sending()
 {}
@@ -75,7 +79,7 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
 
     OutboundMessage* message = &op->outMessage;
     message->acknowledged = true;
-    op->hintUpdate();
+    transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
 }
 
@@ -220,7 +224,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
         // TODO(cstlee): May want to use the unscheduled-limit here instead of
         // just granting a single packet.
         message->grantIndex = 1;
-        op->hintUpdate();
+        transport->hintUpdatedOp(message->op);
     } else {
         // The message is already considered "done" so the UNKNOWN packet must
         // be a stale response to a ping.
@@ -262,7 +266,7 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
 
     OutboundMessage* message = &op->outMessage;
     message->failed = true;
-    op->hintUpdate();
+    transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
 }
 
@@ -417,7 +421,7 @@ Sender::trySend()
         if (message->sentIndex >= message->message.getNumPackets()) {
             // We have finished sending the message.
             message->sent = true;
-            op->hintUpdate();
+            transport->hintUpdatedOp(message->op);
         }
     }
 
