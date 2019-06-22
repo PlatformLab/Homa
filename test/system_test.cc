@@ -42,9 +42,10 @@ static const char USAGE[] = R"(Homa System Test.
         -h --help       Show this screen.
         --version       Show version.
         -v --verbose    Show verbose output.
-        --hops=<n>      Number of hops an op should make [default: 1]. 
+        --hops=<n>      Number of hops an op should make [default: 1].
         --servers=<n>   Number of virtual servers [default: 1].
         --size=<n>      Number of bytes to send as a payload [default: 10].
+        --lossRate=<f>  Rate at which packets are lost [default: 0.0].
 )";
 
 bool _PRINT_CLIENT_ = false;
@@ -193,6 +194,7 @@ main(int argc, char* argv[])
     int numServers = args["--servers"].asLong();
     int numBytes = args["--size"].asLong();
     int verboseLevel = args["--verbose"].asLong();
+    double packetLossRate = atof(args["--lossRate"].asString().c_str());
 
     // level of verboseness
     bool printSummary = false;
@@ -211,6 +213,8 @@ main(int argc, char* argv[])
         _PRINT_SERVER_ = true;
         Homa::Debug::setLogPolicy(Homa::Debug::logPolicyFromString("VERBOSE"));
     }
+
+    Homa::Drivers::Fake::FakeNetworkConfig::setPacketLossRate(packetLossRate);
 
     uint64_t nextServerId = 101;
     std::vector<std::string> addresses;

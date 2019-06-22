@@ -32,6 +32,17 @@ const int NUM_PRIORITIES = 8;
 /// Maximum number of bytes a packet can hold.
 const uint32_t MAX_PAYLOAD_SIZE = 1500;
 
+/// A set of methods to contol the underlying FakeNetwork's behavior.
+namespace FakeNetworkConfig {
+/**
+ * Configure the FakeNetwork to drop packets at the specified loss rate.
+ *
+ * E.g. setting a rate of 1.0 will cause all packets to be dropped; a rate
+ * of 0.5 will drop the packets half the time.
+ */
+void setPacketLossRate(double lossRate);
+}  // namespace FakeNetworkConfig
+
 /**
  * Represents a packet of data that can be send or is received through a
  * FakeDriver over a FakeNetwork.
@@ -77,12 +88,12 @@ class FakePacket : public Driver::Packet {
     FakePacket& operator=(const FakePacket&) = delete;
 };
 
-/// Holds the incomming packets for a particular driver.
+/// Holds the incoming packets for a particular driver.
 struct FakeNIC {
     /// Monitor lock for the FakeNIC structure.
     std::mutex mutex;
 
-    /// A set of incomming packets queued by priority.
+    /// A set of incoming packets queued by priority.
     std::array<std::deque<FakePacket*>, NUM_PRIORITIES> priorityQueue;
 
     FakeNIC();
@@ -119,7 +130,7 @@ class FakeDriver : public Driver {
     /// Identifier for this driver on the fake network.
     uint64_t localAddressId;
 
-    /// Holds the incomming packets for this driver.
+    /// Holds the incoming packets for this driver.
     FakeNIC nic;
 
     // Disable copy and assign

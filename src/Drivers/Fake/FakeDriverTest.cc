@@ -212,7 +212,7 @@ TEST(FakeDriverTest, getMaxPayloadSize)
 TEST(FakeDriverTest, getBandwidth)
 {
     FakeDriver driver;
-    EXPECT_EQ(0U, driver.getBandwidth());
+    EXPECT_EQ(10000U, driver.getBandwidth());
 }
 
 TEST(FakeDriverTest, getLocalAddress)
