@@ -43,9 +43,6 @@ class MockReceiver : public Core::Receiver {
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD0(receiveMessage, Core::InboundMessage*());
     MOCK_METHOD1(dropMessage, void(Core::InboundMessage* message));
-    MOCK_METHOD2(registerOp,
-                 void(Protocol::MessageId id, Core::Transport::Op* op));
-    MOCK_METHOD1(dropOp, void(Core::Transport::Op* op));
     MOCK_METHOD0(poll, void());
 };
 

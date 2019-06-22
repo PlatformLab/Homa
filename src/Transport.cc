@@ -45,6 +45,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
 
     if (isServerOp) {
         if (copyOfState == State::NOT_STARTED) {
+            assert(inMessage != nullptr);
             if (inMessage->isReady()) {
                 // Strip-off the Message::Header.
                 inMessage->get()->defineHeader<Protocol::Message::Header>();
@@ -57,7 +58,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
                 state.store(State::COMPLETED);
                 if (inMessage->getId().tag !=
                     Protocol::MessageId::INITIAL_REQUEST_TAG) {
-                    Receiver::sendDonePacket(this, transport->driver, lock);
+                    Receiver::sendDonePacket(inMessage, transport->driver);
                 }
                 transport->hintUpdatedOp(this);
             }
@@ -79,7 +80,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
         } else if (copyOfState == State::NOT_STARTED) {
             // Nothing to do.
         } else if (copyOfState == State::IN_PROGRESS) {
-            if (inMessage->isReady()) {
+            if (inMessage != nullptr && inMessage->isReady()) {
                 // Strip-off the Message::Header.
                 inMessage->get()->defineHeader<Protocol::Message::Header>();
                 state.store(State::COMPLETED);
@@ -128,7 +129,9 @@ Transport::~Transport()
     for (auto it = activeOps.begin(); it != activeOps.end(); ++it) {
         Op* op = *it;
         sender->dropMessage(&op->outMessage);
-        receiver->dropOp(op);
+        if (op->inMessage != nullptr) {
+            receiver->dropMessage(op->inMessage);
+        }
         op->mutex.lock();
         opPool.destroy(op);
     }
@@ -224,8 +227,6 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
         sender->sendMessage(delegationId, destination, &op->outMessage, true);
     } else {
         op->state.store(OpContext::State::IN_PROGRESS);
-        receiver->registerOp(
-            {op->opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG}, op);
         sender->sendMessage(
             {op->opId, Protocol::MessageId::INITIAL_REQUEST_TAG}, destination,
             &op->outMessage, true);
@@ -327,18 +328,31 @@ Transport::processInboundMessages()
          message != nullptr; message = receiver->receiveMessage()) {
         Protocol::MessageId id = message->getId();
         if (id.tag == Protocol::MessageId::ULTIMATE_RESPONSE_TAG) {
-            // The response message is not registered so there is no RemoteOp
-            // waiting for it;  Drop the message.
-            receiver->dropMessage(message);
+            // Incoming message is a response.
+            auto it = remoteOps.find(id);
+            if (it != remoteOps.end()) {
+                Op* op = it->second;
+                SpinLock::Lock lock_op(op->mutex);
+                message->registerOp(op);
+                op->inMessage = message;
+                hintUpdatedOp(op);
+            } else {
+                // There is no RemoteOp waiting for this message; Drop it.
+                receiver->dropMessage(message);
+            }
         } else {
             // Incoming message is a request.
-            Op* op = nullptr;
-            {
-                SpinLock::Lock lock(mutex);
-                op = opPool.construct(this, driver, message->getId(), true);
-                activeOps.insert(op);
-            }
-            receiver->registerOp(id, op);
+            SpinLock::UniqueLock lock(mutex);
+            Op* op = opPool.construct(this, driver, message->getId(), true);
+            activeOps.insert(op);
+
+            // Lock handoff
+            SpinLock::Lock lock_op(op->mutex);
+            lock.unlock();
+
+            message->registerOp(op);
+            op->inMessage = message;
+            hintUpdatedOp(op);
         }
     }
 }
@@ -420,7 +434,9 @@ Transport::cleanupOps()
         assert(op->destroy);
 
         sender->dropMessage(&op->outMessage);
-        receiver->dropOp(op);
+        if (op->inMessage != nullptr) {
+            receiver->dropMessage(op->inMessage);
+        }
 
         op->mutex.lock();
         if (!op->isServerOp) {

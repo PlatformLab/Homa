@@ -20,6 +20,7 @@
 #include "Mock/MockDriver.h"
 #include "Mock/MockReceiver.h"
 #include "Mock/MockSender.h"
+#include "Protocol.h"
 
 #include <Homa/Debug.h>
 
@@ -496,11 +497,6 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     expectedOpId, false);
 
-    EXPECT_CALL(*mockReceiver,
-                registerOp(Eq(Protocol::MessageId(
-                               expectedOpId,
-                               Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
-                           Eq(op)));
     EXPECT_CALL(*mockSender,
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
@@ -649,27 +645,33 @@ TEST_F(TransportTest, processPackets)
     transport->processPackets();
 }
 
-TEST_F(TransportTest, processInboundMessages_newRequest)
+TEST_F(TransportTest, processInboundMessages_response)
 {
-    Protocol::MessageId id(42, 32, Protocol::MessageId::INITIAL_REQUEST_TAG);
+    Protocol::MessageId id(42, 32, Protocol::MessageId::ULTIMATE_RESPONSE_TAG);
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, id, false);
+    transport->remoteOps.insert({id, op});
     InboundMessage message;
     message.id = id;
 
-    EXPECT_EQ(0U, transport->opPool.outstandingObjects);
-    EXPECT_TRUE(transport->activeOps.empty());
+    EXPECT_EQ(1U, transport->remoteOps.count(id));
+    EXPECT_EQ(nullptr, message.op);
+    EXPECT_EQ(nullptr, op->inMessage);
+    EXPECT_EQ(0U, transport->updateHints.ops.size());
 
     EXPECT_CALL(*mockReceiver, receiveMessage)
         .WillOnce(Return(&message))
         .WillOnce(Return(nullptr));
-    EXPECT_CALL(*mockReceiver, registerOp(Eq(id), _));
+    EXPECT_CALL(*mockReceiver, dropMessage).Times(0);
 
     transport->processInboundMessages();
 
-    EXPECT_EQ(1U, transport->opPool.outstandingObjects);
-    EXPECT_FALSE(transport->activeOps.empty());
+    EXPECT_EQ(op, message.op);
+    EXPECT_EQ(&message, op->inMessage);
+    EXPECT_EQ(1U, transport->updateHints.ops.size());
 }
 
-TEST_F(TransportTest, processInboundMessages_dropResponse)
+TEST_F(TransportTest, processInboundMessages_responseDrop)
 {
     Protocol::MessageId id(42, 32, Protocol::MessageId::ULTIMATE_RESPONSE_TAG);
     InboundMessage message;
@@ -681,6 +683,33 @@ TEST_F(TransportTest, processInboundMessages_dropResponse)
     EXPECT_CALL(*mockReceiver, dropMessage(Eq(&message)));
 
     transport->processInboundMessages();
+}
+
+TEST_F(TransportTest, processInboundMessages_request)
+{
+    Protocol::MessageId id(42, 32, Protocol::MessageId::INITIAL_REQUEST_TAG);
+    InboundMessage message;
+    message.id = id;
+
+    EXPECT_EQ(nullptr, message.op);
+    EXPECT_EQ(0U, transport->opPool.outstandingObjects);
+    EXPECT_TRUE(transport->activeOps.empty());
+    EXPECT_EQ(0U, transport->updateHints.ops.size());
+
+    EXPECT_CALL(*mockReceiver, receiveMessage)
+        .WillOnce(Return(&message))
+        .WillOnce(Return(nullptr));
+    EXPECT_CALL(*mockReceiver, dropMessage).Times(0);
+
+    transport->processInboundMessages();
+
+    EXPECT_NE(nullptr, message.op);
+    EXPECT_EQ(&message, static_cast<Transport::Op*>(message.op)->inMessage);
+    EXPECT_EQ(1U, transport->opPool.outstandingObjects);
+    EXPECT_FALSE(transport->activeOps.empty());
+    EXPECT_EQ(1U, transport->updateHints.ops.size());
+
+    Mock::VerifyAndClearExpectations(mockReceiver);
 }
 
 TEST_F(TransportTest, checkForUpdates)
@@ -719,6 +748,8 @@ TEST_F(TransportTest, cleanupOps)
         transport, &mockDriver, Protocol::OpId(2, 1));
     serverOp->outMessage.id = {42, 32, 2};
     transport->activeOps.insert(serverOp);
+    InboundMessage message;
+    serverOp->inMessage = &message;
     // Remote Op
     Transport::Op* remoteOp = transport->opPool.construct(
         transport, &mockDriver, Protocol::OpId(1, 2), false);
@@ -742,7 +773,7 @@ TEST_F(TransportTest, cleanupOps)
     EXPECT_EQ(2U, transport->unusedOps.queue.size());
 
     EXPECT_CALL(*mockSender, dropMessage(Eq(&serverOp->outMessage))).Times(1);
-    EXPECT_CALL(*mockReceiver, dropOp(Eq(serverOp))).Times(1);
+    EXPECT_CALL(*mockReceiver, dropMessage(Eq(serverOp->inMessage))).Times(1);
 
     transport->cleanupOps();
 
@@ -759,7 +790,7 @@ TEST_F(TransportTest, cleanupOps)
     EXPECT_EQ(1U, transport->unusedOps.queue.size());
 
     EXPECT_CALL(*mockSender, dropMessage(Eq(&remoteOp->outMessage))).Times(1);
-    EXPECT_CALL(*mockReceiver, dropOp(Eq(remoteOp))).Times(1);
+    EXPECT_CALL(*mockReceiver, dropMessage).Times(0);
 
     transport->cleanupOps();
 

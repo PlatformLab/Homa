@@ -1,5 +1,4 @@
 /* Copyright (c) 2018-2019, Stanford University
-    Lock
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -32,8 +31,7 @@ const uint32_t RTT_TIME_US = 5;
 Receiver::Receiver(Transport* transport)
     : mutex()
     , transport(transport)
-    , registeredOps()
-    , unregisteredMessages()
+    , inboundMessages()
     , receivedMessages()
     , messagePool()
     , scheduling()
@@ -45,8 +43,7 @@ Receiver::Receiver(Transport* transport)
 Receiver::~Receiver()
 {
     mutex.lock();
-    for (auto it = unregisteredMessages.begin();
-         it != unregisteredMessages.end(); ++it) {
+    for (auto it = inboundMessages.begin(); it != inboundMessages.end(); ++it) {
         InboundMessage* message = it->second;
         messagePool.destroy(message);
     }
@@ -64,42 +61,28 @@ void
 Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 {
     SpinLock::UniqueLock lock(mutex);
-    Tub<SpinLock::Lock> lock_op;
 
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(packet->payload);
     uint16_t dataHeaderLength = sizeof(Protocol::Packet::DataHeader);
     Protocol::MessageId id = header->common.messageId;
 
-    Transport::Op* op = nullptr;
     InboundMessage* message = nullptr;
 
-    auto it = registeredOps.find(id);
-    if (it != registeredOps.end()) {
-        // Registered Op
-        op = it->second;
-        assert(op->inMessage != nullptr);
-        message = op->inMessage;
+    auto it = inboundMessages.find(id);
+    if (it != inboundMessages.end()) {
+        // Existing message
+        message = it->second;
     } else {
-        // Unregistered Message
-        auto it = unregisteredMessages.find(id);
-        if (it != unregisteredMessages.end()) {
-            // Existing unregistered message
-            message = it->second;
-        } else {
-            // New unregistered message
-            message = messagePool.construct();
-            // Touch OK w/o lock before externalizing.
-            message->id = id;
-            unregisteredMessages.insert(it, {id, message});
-            receivedMessages.push_back(message);
-        }
+        // New message
+        message = messagePool.construct();
+        // Touch OK w/o lock before externalizing.
+        message->id = id;
+        inboundMessages.insert(it, {id, message});
+        receivedMessages.push_back(message);
     }
 
     // Lock handoff
-    if (op != nullptr) {
-        lock_op.construct(op->mutex);
-    }
     SpinLock::Lock lock_message(message->mutex);
     lock.unlock();
 
@@ -143,8 +126,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         message->newPacket = true;
         if (totalReceivedBytes >= message->message->rawLength()) {
             message->fullMessageReceived = true;
-            if (op != nullptr) {
-                transport->hintUpdatedOp(op);
+            if (message->op != nullptr) {
+                transport->hintUpdatedOp(message->op);
             }
         }
     } else {
@@ -166,37 +149,18 @@ void
 Receiver::handleBusyPacket(Driver::Packet* packet, Driver* driver)
 {
     SpinLock::UniqueLock lock(mutex);
-    Tub<SpinLock::Lock> lock_op;
 
     Protocol::Packet::BusyHeader* header =
         static_cast<Protocol::Packet::BusyHeader*>(packet->payload);
     Protocol::MessageId id = header->common.messageId;
 
-    Transport::Op* op = nullptr;
-    InboundMessage* message = nullptr;
-
-    auto it = registeredOps.find(id);
-    if (it != registeredOps.end()) {
-        // Registered Op
-        op = it->second;
-        assert(op->inMessage != nullptr);
-        message = op->inMessage;
-    } else {
-        // Unregistered Message
-        auto it = unregisteredMessages.find(id);
-        if (it != unregisteredMessages.end()) {
-            // Existing unregistered message
-            message = it->second;
-        }
-    }
-
-    if (message != nullptr) {
+    auto it = inboundMessages.find(id);
+    if (it != inboundMessages.end()) {
+        InboundMessage* message = it->second;
         // Lock handoff
-        if (op != nullptr) {
-            lock_op.construct(op->mutex);
-        }
         SpinLock::Lock lock_message(message->mutex);
         lock.unlock();
+
         // Sender has replied BUSY to our RESEND request; consider this message
         // still active.
         message->active = true;
@@ -216,35 +180,15 @@ void
 Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
 {
     SpinLock::UniqueLock lock(mutex);
-    Tub<SpinLock::Lock> lock_op;
 
     Protocol::Packet::PingHeader* header =
         static_cast<Protocol::Packet::PingHeader*>(packet->payload);
     Protocol::MessageId id = header->common.messageId;
 
-    Transport::Op* op = nullptr;
-    InboundMessage* message = nullptr;
-
-    auto it = registeredOps.find(id);
-    if (it != registeredOps.end()) {
-        // Registered Op
-        op = it->second;
-        assert(op->inMessage != nullptr);
-        message = op->inMessage;
-    } else {
-        // Unregistered Message
-        auto it = unregisteredMessages.find(id);
-        if (it != unregisteredMessages.end()) {
-            // Existing unregistered message
-            message = it->second;
-        }
-    }
-
-    if (message != nullptr) {
+    auto it = inboundMessages.find(id);
+    if (it != inboundMessages.end()) {
+        InboundMessage* message = it->second;
         // Lock handoff
-        if (op != nullptr) {
-            lock_op.construct(op->mutex);
-        }
         SpinLock::Lock lock_message(message->mutex);
         lock.unlock();
 
@@ -267,20 +211,18 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
 }
 
 /**
- * Return an InboundMessage that has not been registered with an Transport::Op.
+ * Return a handle to a new (partially) received InboundMessage.  If the message
+ * is only partially received when returned; the Receiver will continue to
+ * proceesing incoming packets for the InboundMessage.
  *
- * The Transport should regularly call this method to insure incomming messages
- * are processed.  The Transport can choose to register the InboundMessage with
- * an Transport::Op or drop the message if it is not of interest.
- *
- * Returned message may not be fully received.  The Receiver will continue to
- * process packets into the returned InboundMessage until it is dropped.
+ * The Transport should regularly call this method to insure incoming messages
+ * are processed.
  *
  * @return
- *      A new InboundMessage which has been at least partially received but not
- *      register, if available; otherwise, nullptr.
+ *      A new InboundMessage which has been at least partially received, if
+ *      available; otherwise, nullptr.
  *
- * @sa registerOp(), dropMessage()
+ * @sa dropMessage()
  */
 InboundMessage*
 Receiver::receiveMessage()
@@ -306,59 +248,7 @@ Receiver::dropMessage(InboundMessage* message)
 {
     SpinLock::Lock lock(mutex);
     message->mutex.lock();
-    if (unregisteredMessages.erase(message->id) > 0) {
-        messagePool.destroy(message);
-    }
-}
-
-/**
- * Inform the Receiver that an incoming Message is expected and should be
- * associated with a particular Transport::Op.
- *
- * @param id
- *      Id of the Message that should be expected.
- * @param op
- *      Transport::Op where the expected Message should be accumulated.
- */
-void
-Receiver::registerOp(Protocol::MessageId id, Transport::Op* op)
-{
-    SpinLock::Lock lock(mutex);
-    SpinLock::Lock lock_op(op->mutex);
-    InboundMessage* message;
-    auto it = unregisteredMessages.find(id);
-    if (it != unregisteredMessages.end()) {
-        // Existing message
-        message = it->second;
-        unregisteredMessages.erase(it);
-        transport->hintUpdatedOp(op);
-    } else {
-        // New message
-        message = messagePool.construct();
-        // Touch OK w/o lock before externalizing.
-        message->id = id;
-    }
-    op->inMessage = message;
-    registeredOps.insert({id, op});
-}
-
-/**
- * Inform the Receiver that a Message is no longer needed and the associated
- * Transport::Op should no longer be used.
- *
- * @param op
- *      The Transport::Op which contains the Message that is no longer needed.
- */
-void
-Receiver::dropOp(Transport::Op* op)
-{
-    SpinLock::Lock lock(mutex);
-    SpinLock::Lock lock_op(op->mutex);
-    if (op->inMessage != nullptr) {
-        InboundMessage* message = op->inMessage;
-        message->mutex.lock();
-        op->inMessage = nullptr;
-        registeredOps.erase(message->id);
+    if (inboundMessages.erase(message->id) > 0) {
         messagePool.destroy(message);
     }
 }
@@ -418,49 +308,19 @@ Receiver::schedule()
     }
 
     SpinLock::UniqueLock lock(mutex);
-    Tub<SpinLock::Lock> lock_op;
-    Tub<SpinLock::Lock> lock_message;
 
-    Transport::Op* op = nullptr;
-    InboundMessage* message = nullptr;
-
-    // First look in registered ops
-    auto it = registeredOps.begin();
-    while (it != registeredOps.end()) {
-        op = it->second;
-        lock_op.construct(op->mutex);
-        message = op->inMessage;
-        lock_message.construct(message->mutex);
+    auto it = inboundMessages.begin();
+    while (it != inboundMessages.end()) {
+        InboundMessage* message = it->second;
+        SpinLock::Lock lock_message(message->mutex);
         if (message->newPacket) {
-            // found a message to send.
+            // found a message to grant.
+            lock.unlock();
+            sendGrantPacket(message, message->message->driver, lock_message);
+            message->newPacket = false;
             break;
         }
-        lock_message.destroy();
-        message = nullptr;
-        lock_op.destroy();
-        op = nullptr;
         it++;
-    }
-
-    // Look in unregisteredMessages if we still don't have one.
-    if (message == nullptr) {
-        auto it = unregisteredMessages.begin();
-        while (it != unregisteredMessages.end()) {
-            message = it->second;
-            lock_message.construct(message->mutex);
-            if (message->newPacket) {
-                // found a message to send.
-                break;
-            }
-            lock_message.destroy();
-            message = nullptr;
-            it++;
-        }
-    }
-
-    if (message != nullptr) {
-        sendGrantPacket(message, message->message->driver, *lock_message);
-        message->newPacket = false;
     }
 
     scheduling.clear();
