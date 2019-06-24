@@ -16,10 +16,11 @@
 #ifndef HOMA_CORE_INBOUNDMESSAGE_H
 #define HOMA_CORE_INBOUNDMESSAGE_H
 
+#include <Homa/Driver.h>
+
 #include "Message.h"
 #include "Protocol.h"
 #include "SpinLock.h"
-#include "Tub.h"
 
 namespace Homa {
 namespace Core {
@@ -35,13 +36,14 @@ class Receiver;
  */
 class InboundMessage {
   public:
-    InboundMessage()
+    explicit InboundMessage(Driver* driver, uint16_t packetHeaderLength,
+                            uint32_t messageLength)
         : mutex()
         , id(0, 0, 0)
         , source(nullptr)
         , numExpectedPackets(0)
         , grantIndexLimit(0)
-        , message()
+        , message(driver, packetHeaderLength, messageLength)
         , newPacket(false)
         , active(false)
         , fullMessageReceived(false)
@@ -56,7 +58,7 @@ class InboundMessage {
     Message* get()
     {
         SpinLock::Lock lock(mutex);
-        return message.get();
+        return &message;
     }
 
     /**
@@ -108,7 +110,7 @@ class InboundMessage {
     /// The packet index up to which the Receiver as granted.
     uint16_t grantIndexLimit;
     /// Collection of packets being received.
-    Tub<Message> message;
+    Message message;
     /// Marked true when a new data packet arrives; cleared by the scheduler.
     bool newPacket;
     /// True if any packets (DATA, PING, BUSY) for this message has been

@@ -148,9 +148,8 @@ TEST_F(HomaTest, RemoteOp_isReady_COMPLETED)
     RemoteOp op(transport);
     op.request = nullptr;
     op.response = nullptr;
-    Core::InboundMessage inMessage;
+    Core::InboundMessage inMessage(&mockDriver, 28, 0);
     inMessage.id = Protocol::MessageId(42, 32, 22);
-    inMessage.message.construct(&mockDriver, 28, 0);
     static_cast<Core::Transport::Op*>(op.op)->inMessage = &inMessage;
 
     op.op->state = Core::OpContext::State::COMPLETED;
@@ -226,10 +225,9 @@ TEST_F(HomaTest, Transport_receiveServerOp)
     Protocol::MessageId id(42, 1, 1);
     Core::Transport::Op* op = transport->internal->opPool.construct(
         transport->internal.get(), transport->internal->driver, id);
-    Core::InboundMessage inMessage;
+    Core::InboundMessage inMessage(&mockDriver,
+                                   sizeof(Protocol::Packet::DataHeader), 0);
     inMessage.id = id;
-    inMessage.message.construct(&mockDriver,
-                                sizeof(Protocol::Packet::DataHeader), 0);
     op->inMessage = &inMessage;
     transport->internal->pendingServerOps.queue.push_back(op);
 

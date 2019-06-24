@@ -61,6 +61,7 @@ void
 Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 {
     SpinLock::UniqueLock lock(mutex);
+    SpinLock::UniqueLock lock_message;
 
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(packet->payload);
@@ -73,32 +74,33 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     if (it != inboundMessages.end()) {
         // Existing message
         message = it->second;
+        // Lock handoff
+        lock_message = SpinLock::UniqueLock(message->mutex);
+        lock.unlock();
     } else {
         // New message
-        message = messagePool.construct();
-        // Touch OK w/o lock before externalizing.
+        uint32_t messageLength = header->totalLength;
+        message =
+            messagePool.construct(driver, dataHeaderLength, messageLength);
         message->id = id;
         inboundMessages.insert(it, {id, message});
         receivedMessages.push_back(message);
-    }
 
-    // Lock handoff
-    SpinLock::Lock lock_message(message->mutex);
-    lock.unlock();
+        // Lock handoff
+        lock_message = SpinLock::UniqueLock(message->mutex);
+        lock.unlock();
 
-    assert(id == message->id);
-    if (!message->message) {
-        uint32_t messageLength = header->totalLength;
-        message->message.construct(driver, dataHeaderLength, messageLength);
         // Get an address pointer from the driver; the one in the packet
         // may disappear when the packet goes away.
         std::string addrStr = packet->address->toString();
         message->source = driver->getAddress(&addrStr);
         message->numExpectedPackets =
-            messageLength / message->message->PACKET_DATA_LENGTH;
+            messageLength / message->message.PACKET_DATA_LENGTH;
         message->numExpectedPackets +=
-            messageLength % message->message->PACKET_DATA_LENGTH ? 1 : 0;
+            messageLength % message->message.PACKET_DATA_LENGTH ? 1 : 0;
     }
+
+    assert(id == message->id);
 
     // Sender is still sending; consider this message active.
     message->active = true;
@@ -112,19 +114,19 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 
     // Things that must be true (sanity check)
     assert(message->source->toString() == packet->address->toString());
-    assert(message->message->rawLength() == header->totalLength);
+    assert(message->message.rawLength() == header->totalLength);
 
     // Add the packet
-    bool packetAdded = message->message->setPacket(header->index, packet);
+    bool packetAdded = message->message.setPacket(header->index, packet);
     if (packetAdded) {
         // This value is technically sloppy since last packet of the message
         // which may not be a full packet. However, this should be fine since
         // receiving the last packet means we don't need the scheduler to GRANT
         // more packets anyway.
-        uint32_t totalReceivedBytes = message->message->PACKET_DATA_LENGTH *
-                                      message->message->getNumPackets();
+        uint32_t totalReceivedBytes = message->message.PACKET_DATA_LENGTH *
+                                      message->message.getNumPackets();
         message->newPacket = true;
-        if (totalReceivedBytes >= message->message->rawLength()) {
+        if (totalReceivedBytes >= message->message.rawLength()) {
             message->fullMessageReceived = true;
             if (message->op != nullptr) {
                 transport->hintUpdatedOp(message->op);
@@ -285,9 +287,9 @@ Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
     //               a single packet length. The sender might get stuck if the
     //               grants are smaller than a single packet.
     uint32_t RTT_BYTES = RTT_TIME_US * (driver->getBandwidth() / 8);
-    uint32_t RTT_PACKETS = RTT_BYTES / message->message->PACKET_DATA_LENGTH;
+    uint32_t RTT_PACKETS = RTT_BYTES / message->message.PACKET_DATA_LENGTH;
     uint16_t indexLimit =
-        std::min(Util::downCast<uint16_t>(message->message->getNumPackets() +
+        std::min(Util::downCast<uint16_t>(message->message.getNumPackets() +
                                           RTT_PACKETS),
                  message->numExpectedPackets);
     message->grantIndexLimit = indexLimit;
@@ -316,7 +318,7 @@ Receiver::schedule()
         if (message->newPacket) {
             // found a message to grant.
             lock.unlock();
-            sendGrantPacket(message, message->message->driver, lock_message);
+            sendGrantPacket(message, message->message.driver, lock_message);
             message->newPacket = false;
             break;
         }
