@@ -13,6 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <chrono>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -70,6 +71,21 @@ rdtscTest()
     return PerfUtils::Cycles::toSeconds(stop - start) / count;
 }
 
+TestInfo rdhrcTestInfo = {
+    "rdhrc", "Read std::chrono::high_resolution_clock",
+    R"(Measure the cost of reading the std::chrono::high_resolution_clock.)"};
+double
+rdhrcTest()
+{
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        auto timestamp = std::chrono::high_resolution_clock::now();
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
 // The following struct and table define each performance test in terms of
 // function that implements the test and collection of string information about
 // the test like the test's string name.
@@ -82,6 +98,7 @@ struct TestCase {
 };
 TestCase tests[] = {
     {rdtscTest, &rdtscTestInfo},
+    {rdhrcTest, &rdhrcTestInfo},
 };
 
 /**
