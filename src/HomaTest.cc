@@ -35,8 +35,8 @@ class HomaTest : public ::testing::Test {
         : mockDriver()
         , mockAddress()
         , transport(new Transport(&mockDriver, 22))
-        , mockSender(
-              new NiceMock<Homa::Mock::MockSender>(transport->internal.get()))
+        , mockSender(new NiceMock<Homa::Mock::MockSender>(
+              transport->internal.get(), 0, 0))
         , mockReceiver(
               new NiceMock<Homa::Mock::MockReceiver>(transport->internal.get()))
         , buf()

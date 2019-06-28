@@ -17,6 +17,8 @@
 
 #include <algorithm>
 
+#include <Cycles.h>
+
 #include "ControlPacket.h"
 #include "Debug.h"
 #include "Transport.h"
@@ -33,11 +35,20 @@ const uint32_t RTT_TIME_US = 5;
  *
  * @param transport
  *      The Tranport object that owns this Sender.
+ * @param messageTimeoutCycles
+ *      Number of cycles of inactivity to wait before this Sender declares an
+ *      OutboundMessage send failure.
+ * @param pingIntervalCycles
+ *      Number of cycles of inactivity to wait between checking on the liveness
+ *      of an OutboundMessage.
  */
-Sender::Sender(Transport* transport)
+Sender::Sender(Transport* transport, uint64_t messageTimeoutCycles,
+               uint64_t pingIntervalCycles)
     : mutex()
     , transport(transport)
     , outboundMessages()
+    , messageTimeouts(messageTimeoutCycles)
+    , pingTimeouts(pingIntervalCycles)
     , sending()
 {}
 
@@ -74,9 +85,9 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
         return;
     }
 
-    // Lock handoff
     SpinLock::Lock lock_message(message->mutex);
-    lock.unlock();
+    messageTimeouts.setTimeout(&message->messageTimeout);
+    lock.unlock();  // End Sender critical section
 
     message->acknowledged = true;
     transport->hintUpdatedOp(message->op);
@@ -112,9 +123,10 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         return;
     }
 
-    // Lock handoff
     SpinLock::Lock lock_message(message->mutex);
-    lock.unlock();
+    messageTimeouts.setTimeout(&message->messageTimeout);
+    pingTimeouts.setTimeout(&message->pingTimeout);
+    lock.unlock();  // End Sender critical section
 
     uint16_t index = header->index;
     uint16_t resendEnd = index + header->num;
@@ -171,9 +183,10 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
         return;
     }
 
-    // Lock handoff
     SpinLock::Lock lock_message(message->mutex);
-    lock.unlock();
+    messageTimeouts.setTimeout(&message->messageTimeout);
+    pingTimeouts.setTimeout(&message->pingTimeout);
+    lock.unlock();  // End Sender critical section
 
     assert(header->indexLimit <= message->message.getNumPackets());
     message->grantIndex = std::max(message->grantIndex, header->indexLimit);
@@ -213,7 +226,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
     SpinLock::Lock lock_message(message->mutex);
     lock.unlock();
 
-    if (!message->isDone(lock_message)) {
+    if (!message->acknowledged) {
         message->sent = false;
         message->sentIndex = 0;
         // TODO(cstlee): May want to use the unscheduled-limit here instead of
@@ -255,9 +268,8 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
         return;
     }
 
-    // Lock handoff
     SpinLock::Lock lock_message(message->mutex);
-    lock.unlock();
+    lock.unlock();  // End Sender critical section
 
     message->failed = true;
     transport->hintUpdatedOp(message->op);
@@ -273,16 +285,12 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
  *      Destination address for this message.
  * @param message
  *      OutboundMessage to be sent.
- * @param expectAcknowledgement
- *      True means the Sender should wait for a DONE packet before declaring
- *      this message "done"; false means the message is "done" after the last
- *      byte of the message is sent.
  *
  * @sa dropMessage()
  */
 void
 Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
-                    OutboundMessage* message, bool expectAcknowledgement)
+                    OutboundMessage* message)
 {
     SpinLock::UniqueLock lock(mutex);
     SpinLock::Lock lock_message(message->mutex);
@@ -296,13 +304,14 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
         return;
     } else {
         outboundMessages.insert({id, message});
+        messageTimeouts.setTimeout(&message->messageTimeout);
+        pingTimeouts.setTimeout(&message->pingTimeout);
     }
 
     lock.unlock();  // End sender critical section.
 
     message->id = id;
     message->destination = destination;
-    message->acknowledged = !expectAcknowledgement;
     uint32_t unscheduledBytes =
         RTT_TIME_US * (message->message.driver->getBandwidth() / 8);
 
@@ -353,6 +362,8 @@ Sender::dropMessage(OutboundMessage* message)
     auto it = outboundMessages.find(message->id);
     if (it != outboundMessages.end()) {
         assert(message == it->second);
+        messageTimeouts.cancelTimeout(&message->messageTimeout);
+        pingTimeouts.cancelTimeout(&message->pingTimeout);
         outboundMessages.erase(it);
     }
 }
@@ -364,6 +375,7 @@ void
 Sender::poll()
 {
     trySend();
+    checkTimeouts();
 }
 
 /**
@@ -416,6 +428,44 @@ Sender::trySend()
     }
 
     sending.clear();
+}
+
+/**
+ * Process any outbound messages that have timed out.
+ *
+ * Pull out of poll() for ease of testing.
+ */
+void
+Sender::checkTimeouts()
+{
+    while (true) {
+        SpinLock::UniqueLock lock(mutex);
+        // No remaining timeouts.
+        if (pingTimeouts.list.empty()) {
+            break;
+        }
+        OutboundMessage* message = &pingTimeouts.list.front();
+        SpinLock::Lock lock_message(message->mutex);
+        // No remaining expired timeouts.
+        if (!message->pingTimeout.hasElapsed()) {
+            break;
+        }
+        // Found expired timeout.
+        pingTimeouts.setTimeout(&message->pingTimeout);
+        lock.unlock();  // End Sender critical section.
+
+        // Message is done or has failed; Signal the Transport and wait for the
+        // message to be dropped.
+        if (message->acknowledged || message->failed) {
+            transport->hintUpdatedOp(message->op);
+            continue;
+        }
+
+        // Have not heard from the Receiver in the last timeout period.  Ping
+        // the receiver to ensure it still knows about this Message.
+        ControlPacket::send<Protocol::Packet::PingHeader>(
+            message->message.driver, message->destination, message->id);
+    }
 }
 
 }  // namespace Core

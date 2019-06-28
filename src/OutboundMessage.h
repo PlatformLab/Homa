@@ -21,6 +21,7 @@
 #include "Message.h"
 #include "Protocol.h"
 #include "SpinLock.h"
+#include "Timeout.h"
 
 namespace Homa {
 namespace Core {
@@ -45,9 +46,11 @@ class OutboundMessage {
         , grantIndex(0)
         , sentIndex(0)
         , sent(false)
-        , acknowledged(true)
+        , acknowledged(false)
         , failed(false)
         , op(op)
+        , messageTimeout(this)
+        , pingTimeout(this)
     {}
 
     /**
@@ -63,12 +66,27 @@ class OutboundMessage {
     }
 
     /**
-     * True if this Message has finished processing; false, otherwise.
+     * Return the unique identifier for this Message.
      */
-    bool isDone() const
+    Protocol::MessageId getId()
     {
         SpinLock::Lock lock(mutex);
-        return isDone(lock);
+        return id;
+    }
+
+    bool isSent() const
+    {
+        SpinLock::Lock lock(mutex);
+        return sent;
+    }
+
+    /**
+     * True if this Message has finished processing; false, otherwise.
+     */
+    bool isAcked() const
+    {
+        SpinLock::Lock lock(mutex);
+        return acknowledged;
     }
 
     /**
@@ -82,18 +100,6 @@ class OutboundMessage {
     }
 
   private:
-    /**
-     * True if this Message has finished processing; false, otherwise.
-     *
-     * @param lock
-     *      Ensure the caller holds this message's mutex.
-     */
-    bool isDone(SpinLock::Lock& lock) const
-    {
-        (void)lock;
-        return sent && acknowledged;
-    }
-
     /// Monitor style lock.
     mutable SpinLock mutex;
     /// Contains the unique identifier for this message.
@@ -116,6 +122,12 @@ class OutboundMessage {
     bool failed;
     /// Transport::Op associated with this message.
     void* const op;
+    /// Intrusive structure used by the Sender to keep track when the sending of
+    /// this message should be considered failed.
+    Timeout<OutboundMessage> messageTimeout;
+    /// Intrusive structure used by the Sender to keep track when this message
+    /// should be checked to ensure progress is still being made.
+    Timeout<OutboundMessage> pingTimeout;
 
     friend class Sender;
 };

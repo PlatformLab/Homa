@@ -310,7 +310,7 @@ class List {
      */
     Iterator remove(Iterator pos)
     {
-        assert(pos.node->list == this);
+        assert(pos.node->list == this || pos.node->list == nullptr);
         Iterator nextPos(pos.node->next);
         pos.node->unlink();
         return nextPos;
@@ -326,7 +326,7 @@ class List {
      */
     void remove(Node* node)
     {
-        assert(node->list == this);
+        assert(node->list == this || node->list == nullptr);
         node->unlink();
     }
 

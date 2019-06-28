@@ -260,6 +260,7 @@ add_executable(unit_test
     src/STLUtilTest.cc
     src/StringUtilTest.cc
     src/ThreadIdTest.cc
+    src/TimeoutTest.cc
     src/TransportTest.cc
     src/TubTest.cc
     src/UtilTest.cc

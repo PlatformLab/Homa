@@ -17,6 +17,8 @@
 
 #include "Sender.h"
 
+#include <Cycles.h>
+
 #include <Homa/Debug.h>
 
 #include "Mock/MockDriver.h"
@@ -47,12 +49,16 @@ class SenderTest : public ::testing::Test {
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         transport = new Transport(&mockDriver, 1);
         sender = transport->sender.get();
+        sender->messageTimeouts.timeoutIntervalCycles = 1000;
+        sender->pingTimeouts.timeoutIntervalCycles = 100;
+        PerfUtils::Cycles::mockTscValue = 10000;
     }
 
     ~SenderTest()
     {
         delete transport;
         Debug::setLogPolicy(savedLogPolicy);
+        PerfUtils::Cycles::mockTscValue = 0;
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
@@ -70,6 +76,8 @@ class SenderTest : public ::testing::Test {
         message->id = id;
         message->grantIndex = grantIndex;
         sender->outboundMessages.insert({id, message});
+        sender->messageTimeouts.list.push_back(&message->messageTimeout.node);
+        sender->pingTimeouts.list.push_back(&message->pingTimeout.node);
         return message;
     }
 };
@@ -91,12 +99,14 @@ TEST_F(SenderTest, handleDonePacket)
     sender->handleDonePacket(&mockPacket, &mockDriver);
 
     EXPECT_FALSE(message->acknowledged);
+    EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
 
     sender->outboundMessages.insert({id, message});
 
     sender->handleDonePacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(message->acknowledged);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
 }
 
 TEST_F(SenderTest, handleResendPacket_basic)
@@ -128,6 +138,8 @@ TEST_F(SenderTest, handleResendPacket_basic)
 
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_EQ(8U, message->grantIndex);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
 
     for (int i = 0; i < 10; ++i) {
         delete packets[i];
@@ -186,6 +198,8 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
 
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_EQ(8U, message->grantIndex);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
 
     Protocol::Packet::BusyHeader* busyHdr =
         static_cast<Protocol::Packet::BusyHeader*>(mockPacket.payload);
@@ -199,6 +213,8 @@ TEST_F(SenderTest, handleGrantPacket_basic)
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     message->message.numPackets = 10;
     EXPECT_EQ(5, message->grantIndex);
+    EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
@@ -211,6 +227,8 @@ TEST_F(SenderTest, handleGrantPacket_basic)
     sender->handleGrantPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(7, message->grantIndex);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
 }
 
 TEST_F(SenderTest, handleGrantPacket_staleGrant)
@@ -220,6 +238,8 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     message->message.numPackets = 10;
     EXPECT_EQ(5, message->grantIndex);
+    EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
@@ -232,6 +252,8 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
     sender->handleGrantPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(5, message->grantIndex);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
 }
 
 TEST_F(SenderTest, handleGrantPacket_dropGrant)
@@ -289,6 +311,7 @@ TEST_F(SenderTest, handleUnknownPacket_no_message)
 TEST_F(SenderTest, handleUnknownPacket_done)
 {
     Protocol::MessageId id = {42, 1, 1};
+
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     message->sent = true;
@@ -359,33 +382,13 @@ TEST_F(SenderTest, sendMessage_basic)
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     EXPECT_EQ(message->id, header->common.messageId);
     EXPECT_EQ(destination, message->destination);
-    EXPECT_TRUE(message->acknowledged);
     EXPECT_EQ(message->message.messageLength, header->totalLength);
     EXPECT_TRUE(sender->outboundMessages.find(id) !=
                 sender->outboundMessages.end());
     EXPECT_EQ(message, sender->outboundMessages.find(id)->second);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
     EXPECT_EQ(1U, message->grantIndex);
-}
-
-TEST_F(SenderTest, sendMessage_expectAcknowledgement)
-{
-    Protocol::MessageId id = {42, 1, 1};
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
-    OutboundMessage* message = &op->outMessage;
-    message->message.setPacket(0, &mockPacket);
-    message->message.messageLength = 420;
-    mockPacket.length =
-        message->message.messageLength + message->message.PACKET_HEADER_LENGTH;
-    Driver::Address* destination = (Driver::Address*)22;
-
-    sender->sendMessage(id, destination, message, true);
-    EXPECT_FALSE(message->acknowledged);
-
-    // Remove the op so we can test adding it again.
-    sender->outboundMessages.erase(id);
-
-    sender->sendMessage(id, destination, message);
-    EXPECT_TRUE(message->acknowledged);
 }
 
 TEST_F(SenderTest, sendMessage_multipacket)
@@ -521,9 +524,13 @@ TEST_F(SenderTest, dropMessage)
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
     message->message.messageLength = 9000;
+    EXPECT_FALSE(sender->messageTimeouts.list.empty());
+    EXPECT_FALSE(sender->pingTimeouts.list.empty());
 
     sender->dropMessage(message);
 
+    EXPECT_TRUE(sender->messageTimeouts.list.empty());
+    EXPECT_TRUE(sender->pingTimeouts.list.empty());
     EXPECT_FALSE(sender->outboundMessages.find(id) !=
                  sender->outboundMessages.end());
 }
@@ -685,6 +692,64 @@ TEST_F(SenderTest, trySend_nothingToSend)
     EXPECT_TRUE(sender->outboundMessages.empty());
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
     sender->trySend();
+}
+
+TEST_F(SenderTest, checkTimeouts_basic)
+{
+    Transport::Op* op[5];
+    OutboundMessage* message[5];
+    for (uint64_t i = 0; i < 5; ++i) {
+        Protocol::MessageId id = {42, 10 + i, 1};
+        op[i] = transport->opPool.construct(transport, &mockDriver, id);
+        message[i] = SenderTest::addMessage(sender, id, op[i]);
+    }
+
+    // Message[0]: Acknowledged
+    message[0]->acknowledged = true;
+    message[0]->pingTimeout.expirationCycleTime = 10000 - 20;
+    // Message[1]: Failed
+    message[1]->failed = true;
+    message[1]->pingTimeout.expirationCycleTime = 10000 - 10;
+    // Message[2]: Normal timeout
+    message[2]->pingTimeout.expirationCycleTime = 10000;
+    // Message[3]: No timeout
+    message[3]->pingTimeout.expirationCycleTime = 10001;
+    // Message[4]: No timeout
+    message[4]->pingTimeout.expirationCycleTime = 10010;
+
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender->checkTimeouts();
+
+    // Message[0]: Acknowledged
+    EXPECT_EQ(10100, message[0]->pingTimeout.expirationCycleTime);
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op[0]));
+    // Message[1]: Failed
+    EXPECT_EQ(10100, message[1]->pingTimeout.expirationCycleTime);
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op[1]));
+    // Message[2]: Normal timeout
+    EXPECT_EQ(10100, message[2]->pingTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
+    Protocol::Packet::CommonHeader* header =
+        static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
+    EXPECT_EQ(Protocol::Packet::PING, header->opcode);
+    EXPECT_EQ(message[2]->id, header->messageId);
+    // Message[3]: No timeout
+    EXPECT_EQ(10001, message[3]->pingTimeout.expirationCycleTime);
+    // Message[4]: No timeout
+    EXPECT_EQ(10010, message[4]->pingTimeout.expirationCycleTime);
+}
+
+TEST_F(SenderTest, checkTimeouts_empty)
+{
+    // Nothing to test except to ensure the call doesn't loop infinitely.
+    EXPECT_TRUE(sender->pingTimeouts.list.empty());
+    sender->checkTimeouts();
 }
 
 }  // namespace

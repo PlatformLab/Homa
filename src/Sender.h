@@ -25,6 +25,7 @@
 #include "OutboundMessage.h"
 #include "Protocol.h"
 #include "SpinLock.h"
+#include "Timeout.h"
 
 namespace Homa {
 namespace Core {
@@ -40,7 +41,8 @@ class Transport;
  */
 class Sender {
   public:
-    explicit Sender(Transport* transport);
+    explicit Sender(Transport* transport, uint64_t messageTimeoutCycles,
+                    uint64_t pingIntervalCycles);
     virtual ~Sender();
 
     virtual void handleDonePacket(Driver::Packet* packet, Driver* driver);
@@ -50,8 +52,7 @@ class Sender {
     virtual void handleErrorPacket(Driver::Packet* packet, Driver* driver);
     virtual void sendMessage(Protocol::MessageId id,
                              Driver::Address* destination,
-                             OutboundMessage* message,
-                             bool expectAcknowledgement = false);
+                             OutboundMessage* message);
     virtual void dropMessage(OutboundMessage* message);
     virtual void poll();
 
@@ -67,11 +68,18 @@ class Sender {
                        Protocol::MessageId::Hasher>
         outboundMessages;
 
+    /// Maintains OutboundMessage objects in increasing order of timeout.
+    TimeoutManager<OutboundMessage> messageTimeouts;
+
+    /// Maintains OutboundMessage object in increase order of ping timeout.
+    TimeoutManager<OutboundMessage> pingTimeouts;
+
     /// True if the Sender is currently executing trySend(); false, otherwise.
     /// Use to prevent concurrent calls to trySend() from blocking on eachother.
     std::atomic_flag sending = ATOMIC_FLAG_INIT;
 
     void trySend();
+    void checkTimeouts();
 };
 
 }  // namespace Core

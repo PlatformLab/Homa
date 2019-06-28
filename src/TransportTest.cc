@@ -44,7 +44,7 @@ class TransportTest : public ::testing::Test {
     TransportTest()
         : mockDriver()
         , transport(new Transport(&mockDriver, 22))
-        , mockSender(new NiceMock<Homa::Mock::MockSender>(transport))
+        , mockSender(new NiceMock<Homa::Mock::MockSender>(transport, 0, 0))
         , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>(transport))
         , savedLogPolicy(Debug::getLogPolicy())
     {
@@ -154,7 +154,8 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone)
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     Protocol::OpId(0, 0), true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    EXPECT_FALSE(op->outMessage.isDone());
+    EXPECT_FALSE(op->outMessage.isAcked());
+    EXPECT_FALSE(op->outMessage.isSent());
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     {
@@ -167,6 +168,71 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone)
     EXPECT_FALSE(op->destroy);
 }
 
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone_reply)
+{
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
+    op->state.store(OpContext::State::IN_PROGRESS);
+    op->outMessage.sent = false;
+    op->outMessage.id.tag = Protocol::MessageId::ULTIMATE_RESPONSE_TAG;
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+    EXPECT_FALSE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_acked)
+{
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
+    op->state.store(OpContext::State::IN_PROGRESS);
+    op->outMessage.acknowledged = true;
+    InboundMessage inMessage(&mockDriver, 0, 0);
+    op->inMessage = &inMessage;
+    inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG;
+    EXPECT_TRUE(op->outMessage.isAcked());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_FALSE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_reply_sent)
+{
+    Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
+                                                    Protocol::OpId(0, 0), true);
+    op->state.store(OpContext::State::IN_PROGRESS);
+    op->outMessage.acknowledged = false;
+    op->outMessage.sent = true;
+    op->outMessage.id.tag = Protocol::MessageId::ULTIMATE_RESPONSE_TAG;
+    InboundMessage inMessage(&mockDriver, 0, 0);
+    op->inMessage = &inMessage;
+    inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG;
+    EXPECT_TRUE(op->outMessage.isSent());
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+    EXPECT_FALSE(op->destroy);
+}
+
 TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_noSendDone)
 {
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
@@ -176,7 +242,6 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_noSendDone)
     InboundMessage inMessage(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
     inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG;
-    EXPECT_TRUE(op->outMessage.isDone());
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     {
@@ -198,7 +263,6 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_sendDone)
     InboundMessage inMessage(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
     inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG + 1;
-    EXPECT_TRUE(op->outMessage.isDone());
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     char payload[1028];
@@ -482,7 +546,7 @@ TEST_F(TransportTest, sendRequest_ServerOp)
     Driver::Address* destination = (Driver::Address*)22;
 
     EXPECT_CALL(*mockSender, sendMessage(Eq(expectedId), Eq(destination),
-                                         Eq(&op->outMessage), Eq(true)));
+                                         Eq(&op->outMessage)));
 
     transport->sendRequest(op, destination);
 }
@@ -499,7 +563,7 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::INITIAL_REQUEST_TAG)),
-                            Eq(destination), Eq(&op->outMessage), Eq(true)));
+                            Eq(destination), Eq(&op->outMessage)));
 
     transport->sendRequest(op, destination);
 
@@ -529,7 +593,7 @@ TEST_F(TransportTest, sendReply)
                 sendMessage(Eq(Protocol::MessageId(
                                 expectedOpId,
                                 Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
-                            Eq(replyAddress), Eq(&op->outMessage), Eq(false)));
+                            Eq(replyAddress), Eq(&op->outMessage)));
 
     transport->sendReply(op);
 

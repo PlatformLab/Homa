@@ -19,12 +19,23 @@
 #include <memory>
 #include <utility>
 
+#include "Cycles.h"
+
 #include "Protocol.h"
 #include "Receiver.h"
 #include "Sender.h"
 
 namespace Homa {
 namespace Core {
+
+// Basic timeout unit.
+const uint64_t BASE_TIMEOUT_US = 2000;
+/// Microseconds to wait before timeout out and failing a message.
+const uint64_t MESSAGE_TIMEOUT_US = 40 * BASE_TIMEOUT_US;
+/// Microseconds to wait before pinging to check on outbound messages.
+const uint64_t PING_INTERVAL_US = 3 * BASE_TIMEOUT_US;
+/// Microseconds to wait before performing retires on inbound messages.
+const uint64_t RESEND_INTERVAL_US = BASE_TIMEOUT_US;
 
 /**
  * Check for any state changes and perform any necessary actions.
@@ -54,7 +65,10 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
                 state.store(State::IN_PROGRESS);
             }
         } else if (copyOfState == State::IN_PROGRESS) {
-            if (outMessage.isDone()) {
+            if ((outMessage.isAcked()) ||
+                (outMessage.getId().tag ==
+                     Protocol::MessageId::ULTIMATE_RESPONSE_TAG &&
+                 outMessage.isSent())) {
                 state.store(State::COMPLETED);
                 if (inMessage->getId().tag !=
                     Protocol::MessageId::INITIAL_REQUEST_TAG) {
@@ -109,7 +123,9 @@ Transport::Transport(Driver* driver, uint64_t transportId)
     : driver(driver)
     , transportId(transportId)
     , nextOpSequenceNumber(1)
-    , sender(new Sender(this))
+    , sender(new Sender(this,
+                        PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
+                        PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
     , receiver(new Receiver(this))
     , mutex()
     , opPool()
@@ -224,12 +240,12 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
         Protocol::MessageId requestId(op->inMessage->getId());
         Protocol::MessageId delegationId(Protocol::OpId(requestId),
                                          requestId.tag + 1);
-        sender->sendMessage(delegationId, destination, &op->outMessage, true);
+        sender->sendMessage(delegationId, destination, &op->outMessage);
     } else {
         op->state.store(OpContext::State::IN_PROGRESS);
         sender->sendMessage(
             {op->opId, Protocol::MessageId::INITIAL_REQUEST_TAG}, destination,
-            &op->outMessage, true);
+            &op->outMessage);
     }
 }
 
@@ -261,7 +277,7 @@ Transport::sendReply(OpContext* context)
 void
 Transport::poll()
 {
-    // Receive and dispatch incomming packets.
+    // Receive and dispatch incoming packets.
     processPackets();
 
     // Allow sender and receiver to make incremental progress.
