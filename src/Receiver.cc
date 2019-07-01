@@ -15,6 +15,8 @@
 
 #include "Receiver.h"
 
+#include <Cycles.h>
+
 namespace Homa {
 namespace Core {
 
@@ -27,13 +29,22 @@ const uint32_t RTT_TIME_US = 5;
  *
  * @param transport
  *      The Tranport object that owns this Receiver.
+ * @param messageTimeoutCycles
+ *      Number of cycles of inactivity to wait before this Receiver declares an
+ *      InboundMessage receive failure.
+ * @param resendIntervalCycles
+ *      Number of cycles of inactivity to wait between requesting retransmission
+ *      of un-received parts of a message.
  */
-Receiver::Receiver(Transport* transport)
+Receiver::Receiver(Transport* transport, uint64_t messageTimeoutCycles,
+                   uint64_t resendIntervalCycles)
     : mutex()
     , transport(transport)
     , inboundMessages()
     , receivedMessages()
     , messagePool()
+    , messageTimeouts(messageTimeoutCycles)
+    , resendTimeouts(resendIntervalCycles)
     , scheduling()
 {}
 
@@ -43,6 +54,8 @@ Receiver::Receiver(Transport* transport)
 Receiver::~Receiver()
 {
     mutex.lock();
+    messageTimeouts.list.clear();
+    resendTimeouts.list.clear();
     for (auto it = inboundMessages.begin(); it != inboundMessages.end(); ++it) {
         InboundMessage* message = it->second;
         messagePool.destroy(message);
@@ -61,7 +74,6 @@ void
 Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 {
     SpinLock::UniqueLock lock(mutex);
-    SpinLock::UniqueLock lock_message;
 
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(packet->payload);
@@ -74,22 +86,12 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     if (it != inboundMessages.end()) {
         // Existing message
         message = it->second;
-        // Lock handoff
-        lock_message = SpinLock::UniqueLock(message->mutex);
-        lock.unlock();
     } else {
         // New message
         uint32_t messageLength = header->totalLength;
         message =
             messagePool.construct(driver, dataHeaderLength, messageLength);
         message->id = id;
-        inboundMessages.insert(it, {id, message});
-        receivedMessages.push_back(message);
-
-        // Lock handoff
-        lock_message = SpinLock::UniqueLock(message->mutex);
-        lock.unlock();
-
         // Get an address pointer from the driver; the one in the packet
         // may disappear when the packet goes away.
         std::string addrStr = packet->address->toString();
@@ -98,7 +100,15 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             messageLength / message->message.PACKET_DATA_LENGTH;
         message->numExpectedPackets +=
             messageLength % message->message.PACKET_DATA_LENGTH ? 1 : 0;
+
+        inboundMessages.insert(it, {id, message});
+        receivedMessages.push_back(message);
     }
+
+    SpinLock::Lock lock_message(message->mutex);
+    messageTimeouts.setTimeout(&message->messageTimeout);
+    resendTimeouts.setTimeout(&message->resendTimeout);
+    lock.unlock();  // End Receiver critical section
 
     assert(id == message->id);
 
@@ -159,9 +169,11 @@ Receiver::handleBusyPacket(Driver::Packet* packet, Driver* driver)
     auto it = inboundMessages.find(id);
     if (it != inboundMessages.end()) {
         InboundMessage* message = it->second;
-        // Lock handoff
+
         SpinLock::Lock lock_message(message->mutex);
-        lock.unlock();
+        messageTimeouts.setTimeout(&message->messageTimeout);
+        resendTimeouts.setTimeout(&message->resendTimeout);
+        lock.unlock();  // End Receiver critical section
 
         // Sender has replied BUSY to our RESEND request; consider this message
         // still active.
@@ -190,9 +202,10 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
     auto it = inboundMessages.find(id);
     if (it != inboundMessages.end()) {
         InboundMessage* message = it->second;
-        // Lock handoff
+
         SpinLock::Lock lock_message(message->mutex);
-        lock.unlock();
+        messageTimeouts.setTimeout(&message->messageTimeout);
+        lock.unlock();  // End Receiver critical section
 
         // Sender is checking on this message; consider it still active.
         message->active = true;
@@ -251,6 +264,8 @@ Receiver::dropMessage(InboundMessage* message)
     SpinLock::Lock lock(mutex);
     message->mutex.lock();
     if (inboundMessages.erase(message->id) > 0) {
+        messageTimeouts.cancelTimeout(&message->messageTimeout);
+        resendTimeouts.cancelTimeout(&message->resendTimeout);
         messagePool.destroy(message);
     }
 }
@@ -262,6 +277,105 @@ void
 Receiver::poll()
 {
     schedule();
+    checkResendTimeouts();
+}
+
+/**
+ * Process any inbound messages that may need to issue resends.
+ *
+ * Pulled out of poll() fro ease of testing.
+ */
+void
+Receiver::checkResendTimeouts()
+{
+    while (true) {
+        SpinLock::UniqueLock lock(mutex);
+        // No remaining timeouts.
+        if (resendTimeouts.list.empty()) {
+            break;
+        }
+        InboundMessage* message = &resendTimeouts.list.front();
+        SpinLock::Lock lock_message(message->mutex);
+        // No remaining expired timeouts.
+        if (!message->resendTimeout.hasElapsed()) {
+            break;
+        }
+        // Found expired timeout.
+        if (message->fullMessageReceived || message->failed) {
+            resendTimeouts.cancelTimeout(&message->resendTimeout);
+            continue;
+        } else {
+            resendTimeouts.setTimeout(&message->resendTimeout);
+        }
+        lock.unlock();  // End Sender critical section.
+
+        // Sender is blocked on this Receiver; all granted packets have already
+        // been received.
+        if (message->message.getNumPackets() >= message->grantIndexLimit) {
+            continue;
+        }
+
+        // This Receiver expected to have heard from the Sender within the last
+        // timeout period but it didn't.  Request a resend of granted packets
+        // in case DATA packets got lost.
+        uint16_t index = 0;
+        uint16_t num = 0;
+        for (uint16_t i = 0; i < message->grantIndexLimit; ++i) {
+            if (message->message.getPacket(i) == nullptr) {
+                // Unreceived packet
+                if (num == 0) {
+                    // First unreceived packet
+                    index = i;
+                }
+                ++num;
+            } else {
+                // Received packet
+                if (num != 0) {
+                    // Send out the range of packets found so far.
+                    ControlPacket::send<Protocol::Packet::ResendHeader>(
+                        message->message.driver, message->source, message->id,
+                        index, num);
+                    num = 0;
+                }
+            }
+        }
+        if (num != 0) {
+            // Send out the last range of packets found.
+            ControlPacket::send<Protocol::Packet::ResendHeader>(
+                message->message.driver, message->source, message->id, index,
+                num);
+        }
+    }
+}
+
+/**
+ * Schedule incoming messages by sending GRANTs.
+ */
+void
+Receiver::schedule()
+{
+    // Skip scheduling if another poller is already working on it.
+    if (scheduling.test_and_set()) {
+        return;
+    }
+
+    SpinLock::UniqueLock lock(mutex);
+
+    auto it = inboundMessages.begin();
+    while (it != inboundMessages.end()) {
+        InboundMessage* message = it->second;
+        SpinLock::Lock lock_message(message->mutex);
+        if (message->newPacket) {
+            // found a message to grant.
+            lock.unlock();
+            sendGrantPacket(message, message->message.driver, lock_message);
+            message->newPacket = false;
+            break;
+        }
+        it++;
+    }
+
+    scheduling.clear();
 }
 
 /**
@@ -296,36 +410,6 @@ Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
 
     ControlPacket::send<Protocol::Packet::GrantHeader>(driver, message->source,
                                                        message->id, indexLimit);
-}
-
-/**
- * Schedule incoming messages by sending GRANTs.
- */
-void
-Receiver::schedule()
-{
-    // Skip scheduling if another poller is already working on it.
-    if (scheduling.test_and_set()) {
-        return;
-    }
-
-    SpinLock::UniqueLock lock(mutex);
-
-    auto it = inboundMessages.begin();
-    while (it != inboundMessages.end()) {
-        InboundMessage* message = it->second;
-        SpinLock::Lock lock_message(message->mutex);
-        if (message->newPacket) {
-            // found a message to grant.
-            lock.unlock();
-            sendGrantPacket(message, message->message.driver, lock_message);
-            message->newPacket = false;
-            break;
-        }
-        it++;
-    }
-
-    scheduling.clear();
 }
 
 }  // namespace Core

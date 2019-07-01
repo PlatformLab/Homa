@@ -27,6 +27,7 @@
 #include "ObjectPool.h"
 #include "Protocol.h"
 #include "SpinLock.h"
+#include "Timeout.h"
 #include "Transport.h"
 
 namespace Homa {
@@ -42,7 +43,8 @@ namespace Core {
  */
 class Receiver {
   public:
-    explicit Receiver(Transport* transport);
+    explicit Receiver(Transport* transport, uint64_t messageTimeoutCycles,
+                      uint64_t resendIntervalCycles);
     virtual ~Receiver();
     virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleBusyPacket(Driver::Packet* packet, Driver* driver);
@@ -67,6 +69,7 @@ class Receiver {
     }
 
   private:
+    void checkResendTimeouts();
     void schedule();
     void sendGrantPacket(InboundMessage* message, Driver* driver,
                          const SpinLock::Lock& lock_message);
@@ -87,6 +90,12 @@ class Receiver {
 
     /// Used to allocate InboundMessage objects.
     ObjectPool<InboundMessage> messagePool;
+
+    /// Maintains InboundMessage objects in increasing order of timeout.
+    TimeoutManager<InboundMessage> messageTimeouts;
+
+    /// Maintains InboundMessage object in increase order of resend timeout.
+    TimeoutManager<InboundMessage> resendTimeouts;
 
     /// True if the Receiver is executing schedule(); false, otherwise. Use to
     /// prevent concurrent calls to trySend() from blocking on eachother.

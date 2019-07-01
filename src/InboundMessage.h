@@ -21,6 +21,7 @@
 #include "Message.h"
 #include "Protocol.h"
 #include "SpinLock.h"
+#include "Timeout.h"
 
 namespace Homa {
 namespace Core {
@@ -46,8 +47,11 @@ class InboundMessage {
         , message(driver, packetHeaderLength, messageLength)
         , newPacket(false)
         , active(false)
+        , failed(false)
         , fullMessageReceived(false)
         , op(nullptr)
+        , messageTimeout(this)
+        , resendTimeout(this)
     {}
 
     /**
@@ -116,10 +120,18 @@ class InboundMessage {
     /// True if any packets (DATA, PING, BUSY) for this message has been
     /// received since the last timeout; false, otherwise.
     bool active;
+    /// True if this message has timed out.
+    bool failed;
     /// True if all packets of the message have been received.
     bool fullMessageReceived;
     /// Transport::Op associated with this message.
     void* op;
+    /// Intrusive structure used by the Receiver to keep track when the
+    /// receiving of this message should be considered failed.
+    Timeout<InboundMessage> messageTimeout;
+    /// Intrusive structure used by the Receiver to keep track when unreceived
+    /// parts of this message should be re-requested.
+    Timeout<InboundMessage> resendTimeout;
 
     friend class Receiver;
 };

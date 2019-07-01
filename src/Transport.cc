@@ -126,7 +126,9 @@ Transport::Transport(Driver* driver, uint64_t transportId)
     , sender(new Sender(this,
                         PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                         PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
-    , receiver(new Receiver(this))
+    , receiver(new Receiver(
+          this, PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
+          PerfUtils::Cycles::fromMicroseconds(RESEND_INTERVAL_US)))
     , mutex()
     , opPool()
     , activeOps()

@@ -19,6 +19,8 @@
 
 #include <mutex>
 
+#include <Cycles.h>
+
 #include <Homa/Debug.h>
 
 #include "Mock/MockDriver.h"
@@ -51,6 +53,9 @@ class ReceiverTest : public ::testing::Test {
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         transport = new Transport(&mockDriver, 1);
         receiver = transport->receiver.get();
+        receiver->messageTimeouts.timeoutIntervalCycles = 1000;
+        receiver->resendTimeouts.timeoutIntervalCycles = 100;
+        PerfUtils::Cycles::mockTscValue = 10000;
     }
 
     ~ReceiverTest()
@@ -58,6 +63,7 @@ class ReceiverTest : public ::testing::Test {
         Mock::VerifyAndClearExpectations(&mockDriver);
         delete transport;
         Debug::setLogPolicy(savedLogPolicy);
+        PerfUtils::Cycles::mockTscValue = 0;
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
@@ -113,6 +119,8 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_TRUE(message->newPacket);
     EXPECT_FALSE(message->fullMessageReceived);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
@@ -252,6 +260,8 @@ TEST_F(ReceiverTest, handleBusyPacket_basic)
 
     receiver->handleBusyPacket(&mockPacket, &mockDriver);
 
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
     EXPECT_TRUE(message->active);
 }
 
@@ -297,6 +307,8 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
 
     receiver->handlePingPacket(&pingPacket, &mockDriver);
 
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, message->resendTimeout.expirationCycleTime);
     EXPECT_TRUE(message->active);
 
     EXPECT_EQ(&mockAddress, mockPacket.address);
@@ -361,15 +373,22 @@ TEST_F(ReceiverTest, dropMessage)
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
     receiver->inboundMessages.insert({id, message});
+    receiver->messageTimeouts.list.push_back(&message->messageTimeout.node);
+    receiver->resendTimeouts.list.push_back(&message->resendTimeout.node);
     EXPECT_EQ(1U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(message, receiver->inboundMessages.find(id)->second);
+    EXPECT_FALSE(receiver->messageTimeouts.list.empty());
+    EXPECT_FALSE(receiver->resendTimeouts.list.empty());
 
     receiver->dropMessage(message);
 
     EXPECT_EQ(0U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(receiver->inboundMessages.end(),
               receiver->inboundMessages.find(id));
+    EXPECT_TRUE(receiver->messageTimeouts.list.empty());
+    EXPECT_TRUE(receiver->resendTimeouts.list.empty());
 }
+
 TEST_F(ReceiverTest, poll)
 {
     // Nothing to test.
@@ -398,6 +417,138 @@ TEST_F(ReceiverTest, sendDonePacket)
     EXPECT_EQ(id, header->messageId);
     EXPECT_EQ(sizeof(Protocol::Packet::DoneHeader), mockPacket.length);
     EXPECT_EQ(&mockAddress, mockPacket.address);
+}
+
+TEST_F(ReceiverTest, checkResendTimeouts)
+{
+    InboundMessage* message[5];
+    for (uint64_t i = 0; i < 5; ++i) {
+        Protocol::MessageId id = {42, 10 + i, 1};
+        message[i] = receiver->messagePool.construct(&mockDriver, 0, 0);
+        message[i]->id = id;
+        receiver->resendTimeouts.list.push_back(
+            &message[i]->resendTimeout.node);
+    }
+
+    // Message[0]: Fully received
+    message[0]->fullMessageReceived = true;
+    message[0]->resendTimeout.expirationCycleTime = 10000 - 20;
+    // Message[1]: Failed
+    message[1]->failed = true;
+    message[1]->resendTimeout.expirationCycleTime = 10000 - 10;
+    // Message[2]: Normal timeout: block on grants
+    message[2]->resendTimeout.expirationCycleTime = 10000 - 5;
+    // Message[3]: Normal timeout: Send Resends.
+    // Message Packets
+    //  0123456789
+    // [1100001100]
+    message[3]->resendTimeout.expirationCycleTime = 10000;
+    Homa::Mock::MockDriver::MockAddress mockAddress;
+    message[3]->source = &mockAddress;
+    message[3]->grantIndexLimit = 10;
+    for (uint16_t i = 0; i < 2; ++i) {
+        message[3]->message.setPacket(i, &mockPacket);
+    }
+    for (uint16_t i = 6; i < 8; ++i) {
+        message[3]->message.setPacket(i, &mockPacket);
+    }
+    // Message[4]: No timeout
+    message[4]->resendTimeout.expirationCycleTime = 10001;
+
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+
+    char buf1[1024];
+    char buf2[1024];
+    Homa::Mock::MockDriver::MockPacket mockResendPacket1(buf1);
+    Homa::Mock::MockDriver::MockPacket mockResendPacket2(buf2);
+
+    EXPECT_CALL(mockDriver, allocPacket())
+        .WillOnce(Return(&mockResendPacket1))
+        .WillOnce(Return(&mockResendPacket2));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockResendPacket1), Eq(1)))
+        .Times(1);
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockResendPacket2), Eq(1)))
+        .Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockResendPacket1), Eq(1)))
+        .Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockResendPacket2), Eq(1)))
+        .Times(1);
+
+    receiver->checkResendTimeouts();
+
+    // Message[0]: Fully received
+    EXPECT_EQ(10000 - 20, message[0]->resendTimeout.expirationCycleTime);
+    // Message[1]: Failed
+    EXPECT_EQ(10000 - 10, message[1]->resendTimeout.expirationCycleTime);
+    // Message[2]: Normal timeout: blocked
+    EXPECT_EQ(10100, message[2]->resendTimeout.expirationCycleTime);
+    // Message[3]: Normal timeout: resends
+    EXPECT_EQ(10100, message[3]->resendTimeout.expirationCycleTime);
+    Protocol::Packet::ResendHeader* header1 =
+        static_cast<Protocol::Packet::ResendHeader*>(mockResendPacket1.payload);
+    EXPECT_EQ(Protocol::Packet::RESEND, header1->common.opcode);
+    EXPECT_EQ(message[3]->getId(), header1->common.messageId);
+    EXPECT_EQ(2U, header1->index);
+    EXPECT_EQ(4U, header1->num);
+    EXPECT_EQ(sizeof(Protocol::Packet::ResendHeader), mockResendPacket1.length);
+    EXPECT_EQ(&mockAddress, mockResendPacket1.address);
+    Protocol::Packet::ResendHeader* header2 =
+        static_cast<Protocol::Packet::ResendHeader*>(mockResendPacket2.payload);
+    EXPECT_EQ(Protocol::Packet::RESEND, header2->common.opcode);
+    EXPECT_EQ(message[3]->getId(), header2->common.messageId);
+    EXPECT_EQ(8U, header2->index);
+    EXPECT_EQ(2U, header2->num);
+    EXPECT_EQ(sizeof(Protocol::Packet::ResendHeader), mockResendPacket2.length);
+    EXPECT_EQ(&mockAddress, mockResendPacket2.address);
+    // Message[4]: No timeout
+    EXPECT_EQ(10001, message[4]->resendTimeout.expirationCycleTime);
+}
+
+TEST_F(ReceiverTest, checkResendTimeouts_empty)
+{
+    // Nothing to test except to ensure the call doesn't loop infinitely.
+    EXPECT_TRUE(receiver->resendTimeouts.list.empty());
+    receiver->checkResendTimeouts();
+}
+
+TEST_F(ReceiverTest, schedule)
+{
+    Protocol::MessageId id(42, 32, 22);
+    Driver::Address* sourceAddr = (Driver::Address*)22;
+    uint32_t TOTAL_MESSAGE_LEN = 9000;
+
+    InboundMessage* message =
+        receiver->messagePool.construct(&mockDriver, 28, TOTAL_MESSAGE_LEN);
+    message->id = id;
+    message->source = sourceAddr;
+    message->message.numPackets = 1;
+    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(1U, message->message.getNumPackets());
+    EXPECT_FALSE(message->newPacket);
+
+    receiver->inboundMessages.insert({id, message});
+
+    EXPECT_CALL(mockDriver, allocPacket).Times(0);
+    EXPECT_CALL(mockDriver, sendPackets).Times(0);
+    EXPECT_CALL(mockDriver, releasePackets).Times(0);
+
+    receiver->schedule();
+
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    EXPECT_FALSE(message->newPacket);
+    message->newPacket = true;
+
+    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    receiver->schedule();
+
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    EXPECT_FALSE(message->newPacket);
 }
 
 TEST_F(ReceiverTest, sendGrantPacket)
@@ -461,46 +612,6 @@ TEST_F(ReceiverTest, sendGrantPacket)
 
         Mock::VerifyAndClearExpectations(&mockDriver);
     }
-}
-
-TEST_F(ReceiverTest, schedule)
-{
-    Protocol::MessageId id(42, 32, 22);
-    Driver::Address* sourceAddr = (Driver::Address*)22;
-    uint32_t TOTAL_MESSAGE_LEN = 9000;
-
-    InboundMessage* message =
-        receiver->messagePool.construct(&mockDriver, 28, TOTAL_MESSAGE_LEN);
-    message->id = id;
-    message->source = sourceAddr;
-    message->message.numPackets = 1;
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
-    EXPECT_EQ(1U, message->message.getNumPackets());
-    EXPECT_FALSE(message->newPacket);
-
-    receiver->inboundMessages.insert({id, message});
-
-    EXPECT_CALL(mockDriver, allocPacket).Times(0);
-    EXPECT_CALL(mockDriver, sendPackets).Times(0);
-    EXPECT_CALL(mockDriver, releasePackets).Times(0);
-
-    receiver->schedule();
-
-    Mock::VerifyAndClearExpectations(&mockDriver);
-
-    EXPECT_FALSE(message->newPacket);
-    message->newPacket = true;
-
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
-    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-        .Times(1);
-
-    receiver->schedule();
-
-    Mock::VerifyAndClearExpectations(&mockDriver);
-
-    EXPECT_FALSE(message->newPacket);
 }
 
 }  // namespace

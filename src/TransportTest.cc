@@ -45,7 +45,7 @@ class TransportTest : public ::testing::Test {
         : mockDriver()
         , transport(new Transport(&mockDriver, 22))
         , mockSender(new NiceMock<Homa::Mock::MockSender>(transport, 0, 0))
-        , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>(transport))
+        , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>(transport, 0, 0))
         , savedLogPolicy(Debug::getLogPolicy())
     {
         transport->sender.reset(mockSender);
