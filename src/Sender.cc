@@ -87,9 +87,10 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
 
     SpinLock::Lock lock_message(message->mutex);
     messageTimeouts.setTimeout(&message->messageTimeout);
+    pingTimeouts.cancelTimeout(&message->pingTimeout);
     lock.unlock();  // End Sender critical section
 
-    message->acknowledged = true;
+    message->state.store(OutboundMessage::State::COMPLETED);
     transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
 }
@@ -222,21 +223,17 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
         return;
     }
 
-    // Lock handoff
     SpinLock::Lock lock_message(message->mutex);
-    lock.unlock();
-
-    if (!message->acknowledged) {
-        message->sent = false;
-        message->sentIndex = 0;
-        // TODO(cstlee): May want to use the unscheduled-limit here instead of
-        // just granting a single packet.
-        message->grantIndex = 1;
+    if (message->state != OutboundMessage::State::COMPLETED) {
+        message->state.store(OutboundMessage::State::DROPPED);
+        pingTimeouts.cancelTimeout(&message->pingTimeout);
         transport->hintUpdatedOp(message->op);
     } else {
         // The message is already considered "done" so the UNKNOWN packet must
         // be a stale response to a ping.
     }
+    lock.unlock();  // End Sender critical section.
+
     driver->releasePackets(&packet, 1);
 }
 
@@ -269,9 +266,10 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
     }
 
     SpinLock::Lock lock_message(message->mutex);
+    pingTimeouts.cancelTimeout(&message->pingTimeout);
     lock.unlock();  // End Sender critical section
 
-    message->failed = true;
+    message->state.store(OutboundMessage::State::FAILED);
     transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
 }
@@ -310,6 +308,7 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
 
     lock.unlock();  // End sender critical section.
 
+    message->state.store(OutboundMessage::State::IN_PROGRESS);
     message->id = id;
     message->destination = destination;
     uint32_t unscheduledBytes =
@@ -375,7 +374,42 @@ void
 Sender::poll()
 {
     trySend();
-    checkTimeouts();
+    checkPingTimeouts();
+}
+
+/**
+ * Process any outbound messages that need to be pinged to ensure the message
+ * is kept alive by the receiver.
+ *
+ * Pulled out of poll() for ease of testing.
+ */
+void
+Sender::checkPingTimeouts()
+{
+    while (true) {
+        SpinLock::UniqueLock lock(mutex);
+        // No remaining timeouts.
+        if (pingTimeouts.list.empty()) {
+            break;
+        }
+        OutboundMessage* message = &pingTimeouts.list.front();
+        SpinLock::Lock lock_message(message->mutex);
+        // No remaining expired timeouts.
+        if (!message->pingTimeout.hasElapsed()) {
+            break;
+        }
+        // Found expired timeout.
+        pingTimeouts.setTimeout(&message->pingTimeout);
+        lock.unlock();  // End Sender critical section.
+
+        assert(message->state != OutboundMessage::State::COMPLETED &&
+               message->state != OutboundMessage::State::FAILED);
+
+        // Have not heard from the Receiver in the last timeout period. Ping
+        // the receiver to ensure it still knows about this Message.
+        ControlPacket::send<Protocol::Packet::PingHeader>(
+            message->message.driver, message->destination, message->id);
+    }
 }
 
 /**
@@ -422,50 +456,12 @@ Sender::trySend()
         message->sentIndex += numPkts;
         if (message->sentIndex >= message->message.getNumPackets()) {
             // We have finished sending the message.
-            message->sent = true;
+            message->state.store(OutboundMessage::State::SENT);
             transport->hintUpdatedOp(message->op);
         }
     }
 
     sending.clear();
-}
-
-/**
- * Process any outbound messages that have timed out.
- *
- * Pull out of poll() for ease of testing.
- */
-void
-Sender::checkTimeouts()
-{
-    while (true) {
-        SpinLock::UniqueLock lock(mutex);
-        // No remaining timeouts.
-        if (pingTimeouts.list.empty()) {
-            break;
-        }
-        OutboundMessage* message = &pingTimeouts.list.front();
-        SpinLock::Lock lock_message(message->mutex);
-        // No remaining expired timeouts.
-        if (!message->pingTimeout.hasElapsed()) {
-            break;
-        }
-        // Found expired timeout.
-        pingTimeouts.setTimeout(&message->pingTimeout);
-        lock.unlock();  // End Sender critical section.
-
-        // Message is done or has failed; Signal the Transport and wait for the
-        // message to be dropped.
-        if (message->acknowledged || message->failed) {
-            transport->hintUpdatedOp(message->op);
-            continue;
-        }
-
-        // Have not heard from the Receiver in the last timeout period.  Ping
-        // the receiver to ensure it still knows about this Message.
-        ControlPacket::send<Protocol::Packet::PingHeader>(
-            message->message.driver, message->destination, message->id);
-    }
 }
 
 }  // namespace Core

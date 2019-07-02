@@ -87,7 +87,7 @@ TEST_F(SenderTest, handleDonePacket)
     Protocol::MessageId id = {42, 1, 32};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     OutboundMessage* message = &op->outMessage;
-    message->acknowledged = false;
+    EXPECT_NE(OutboundMessage::State::COMPLETED, message->state);
 
     Protocol::Packet::DoneHeader* header =
         static_cast<Protocol::Packet::DoneHeader*>(mockPacket.payload);
@@ -98,14 +98,14 @@ TEST_F(SenderTest, handleDonePacket)
 
     sender->handleDonePacket(&mockPacket, &mockDriver);
 
-    EXPECT_FALSE(message->acknowledged);
+    EXPECT_NE(OutboundMessage::State::COMPLETED, message->state);
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
 
     sender->outboundMessages.insert({id, message});
 
     sender->handleDonePacket(&mockPacket, &mockDriver);
 
-    EXPECT_TRUE(message->acknowledged);
+    EXPECT_EQ(OutboundMessage::State::COMPLETED, message->state);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
 }
 
@@ -275,8 +275,7 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
     Protocol::MessageId id = {42, 1, 1};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
-    message->sent = true;
-    message->acknowledged = false;
+    message->state.store(OutboundMessage::State::SENT);
     message->sentIndex = 5;
     EXPECT_EQ(5, message->grantIndex);
 
@@ -289,9 +288,7 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
 
     sender->handleUnknownPacket(&mockPacket, &mockDriver);
 
-    EXPECT_FALSE(message->sent);
-    EXPECT_EQ(0U, message->sentIndex);
-    EXPECT_EQ(1U, message->grantIndex);
+    EXPECT_EQ(OutboundMessage::State::DROPPED, message->state);
 }
 
 TEST_F(SenderTest, handleUnknownPacket_no_message)
@@ -314,8 +311,7 @@ TEST_F(SenderTest, handleUnknownPacket_done)
 
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
-    message->sent = true;
-    message->acknowledged = true;
+    message->state.store(OutboundMessage::State::COMPLETED);
     message->sentIndex = 5;
     EXPECT_EQ(5, message->grantIndex);
 
@@ -328,8 +324,7 @@ TEST_F(SenderTest, handleUnknownPacket_done)
 
     sender->handleUnknownPacket(&mockPacket, &mockDriver);
 
-    EXPECT_TRUE(message->sent);
-    EXPECT_TRUE(message->acknowledged);
+    EXPECT_EQ(OutboundMessage::State::COMPLETED, message->state);
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_EQ(5U, message->grantIndex);
 }
@@ -339,7 +334,7 @@ TEST_F(SenderTest, handleErrorPacket)
     Protocol::MessageId id = {42, 1, 32};
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
     OutboundMessage* message = &op->outMessage;
-    message->failed = false;
+    message->state.store(OutboundMessage::State::IN_PROGRESS);
 
     Protocol::Packet::ErrorHeader* header =
         static_cast<Protocol::Packet::ErrorHeader*>(mockPacket.payload);
@@ -350,13 +345,13 @@ TEST_F(SenderTest, handleErrorPacket)
 
     sender->handleErrorPacket(&mockPacket, &mockDriver);
 
-    EXPECT_FALSE(message->failed);
+    EXPECT_NE(OutboundMessage::State::FAILED, message->state);
 
     sender->outboundMessages.insert({id, message});
 
     sender->handleErrorPacket(&mockPacket, &mockDriver);
 
-    EXPECT_TRUE(message->failed);
+    EXPECT_EQ(OutboundMessage::State::FAILED, message->state);
 }
 
 TEST_F(SenderTest, sendMessage_basic)
@@ -389,6 +384,7 @@ TEST_F(SenderTest, sendMessage_basic)
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
     EXPECT_EQ(1U, message->grantIndex);
+    EXPECT_EQ(OutboundMessage::State::IN_PROGRESS, message->state);
 }
 
 TEST_F(SenderTest, sendMessage_multipacket)
@@ -555,7 +551,7 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_EQ(5U, message->message.getNumPackets());
     EXPECT_EQ(2U, message->grantIndex);
     EXPECT_EQ(0U, message->sentIndex);
-    EXPECT_FALSE(message->sent);
+    EXPECT_NE(OutboundMessage::State::SENT, message->state);
 
     // 2 granted packets to be sent; won't be finished.
     EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[0]), Eq(1)));
@@ -563,7 +559,7 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_EQ(2U, message->grantIndex);
     EXPECT_EQ(2U, message->sentIndex);
-    EXPECT_FALSE(message->sent);
+    EXPECT_NE(OutboundMessage::State::SENT, message->state);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // No additional grants; no packets sent; won't be finished.
@@ -571,7 +567,7 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_EQ(2U, message->grantIndex);
     EXPECT_EQ(2U, message->sentIndex);
-    EXPECT_FALSE(message->sent);
+    EXPECT_NE(OutboundMessage::State::SENT, message->state);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // 3 more granted packets; will finish.
@@ -582,7 +578,7 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_EQ(5U, message->grantIndex);
     EXPECT_EQ(5U, message->sentIndex);
-    EXPECT_TRUE(message->sent);
+    EXPECT_EQ(OutboundMessage::State::SENT, message->state);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // Message already finished.
@@ -590,7 +586,7 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_CALL(mockDriver, sendPackets).Times(0);
     sender->trySend();  // < test call
     EXPECT_EQ(5U, message->sentIndex);
-    EXPECT_TRUE(message->sent);
+    EXPECT_EQ(OutboundMessage::State::SENT, message->state);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     for (int i = 0; i < 5; ++i) {
@@ -612,7 +608,7 @@ TEST_F(SenderTest, trySend_multipleMessages)
     message[0]->message.messageLength = 5000;
     EXPECT_EQ(5, message[0]->grantIndex);
     message[0]->sentIndex = 5;
-    message[0]->sent = true;
+    message[0]->state.store(OutboundMessage::State::SENT);
     for (int i = 0; i < 5; ++i) {
         message[0]->message.setPacket(i, nullptr);
     }
@@ -646,16 +642,16 @@ TEST_F(SenderTest, trySend_multipleMessages)
     sender->trySend();
 
     EXPECT_EQ(5U, message[0]->sentIndex);
-    EXPECT_TRUE(message[0]->sent);
+    EXPECT_EQ(OutboundMessage::State::SENT, message[0]->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[0]));
     EXPECT_EQ(5U, message[1]->sentIndex);
-    EXPECT_FALSE(message[1]->sent);
+    EXPECT_NE(OutboundMessage::State::SENT, message[1]->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[1]));
     EXPECT_EQ(5U, message[2]->sentIndex);
-    EXPECT_FALSE(message[2]->sent);
+    EXPECT_NE(OutboundMessage::State::SENT, message[2]->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
     EXPECT_EQ(0U, message[3]->sentIndex);
-    EXPECT_FALSE(message[3]->sent);
+    EXPECT_NE(OutboundMessage::State::SENT, message[3]->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[3]));
 
     EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(5);
@@ -663,7 +659,7 @@ TEST_F(SenderTest, trySend_multipleMessages)
     sender->trySend();
 
     EXPECT_EQ(5U, message[3]->sentIndex);
-    EXPECT_TRUE(message[3]->sent);
+    EXPECT_EQ(OutboundMessage::State::SENT, message[3]->state);
     EXPECT_EQ(1U, transport->updateHints.ops.count(op[3]));
 }
 
@@ -694,28 +690,20 @@ TEST_F(SenderTest, trySend_nothingToSend)
     sender->trySend();
 }
 
-TEST_F(SenderTest, checkTimeouts_basic)
+TEST_F(SenderTest, checkPingTimeouts_basic)
 {
-    Transport::Op* op[5];
-    OutboundMessage* message[5];
-    for (uint64_t i = 0; i < 5; ++i) {
+    Transport::Op* op[2];
+    OutboundMessage* message[2];
+    for (uint64_t i = 0; i < 2; ++i) {
         Protocol::MessageId id = {42, 10 + i, 1};
         op[i] = transport->opPool.construct(transport, &mockDriver, id);
         message[i] = SenderTest::addMessage(sender, id, op[i]);
     }
 
-    // Message[0]: Acknowledged
-    message[0]->acknowledged = true;
-    message[0]->pingTimeout.expirationCycleTime = 10000 - 20;
-    // Message[1]: Failed
-    message[1]->failed = true;
-    message[1]->pingTimeout.expirationCycleTime = 10000 - 10;
-    // Message[2]: Normal timeout
-    message[2]->pingTimeout.expirationCycleTime = 10000;
-    // Message[3]: No timeout
-    message[3]->pingTimeout.expirationCycleTime = 10001;
-    // Message[4]: No timeout
-    message[4]->pingTimeout.expirationCycleTime = 10010;
+    // Message[0]: Normal timeout
+    message[0]->pingTimeout.expirationCycleTime = 10000;
+    // Message[1]: No timeout
+    message[1]->pingTimeout.expirationCycleTime = 10001;
 
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
 
@@ -724,32 +712,24 @@ TEST_F(SenderTest, checkTimeouts_basic)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    sender->checkTimeouts();
+    sender->checkPingTimeouts();
 
-    // Message[0]: Acknowledged
+    // Message[0]: Normal timeout
     EXPECT_EQ(10100, message[0]->pingTimeout.expirationCycleTime);
-    EXPECT_EQ(1U, transport->updateHints.ops.count(op[0]));
-    // Message[1]: Failed
-    EXPECT_EQ(10100, message[1]->pingTimeout.expirationCycleTime);
-    EXPECT_EQ(1U, transport->updateHints.ops.count(op[1]));
-    // Message[2]: Normal timeout
-    EXPECT_EQ(10100, message[2]->pingTimeout.expirationCycleTime);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[0]));
     Protocol::Packet::CommonHeader* header =
         static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
     EXPECT_EQ(Protocol::Packet::PING, header->opcode);
-    EXPECT_EQ(message[2]->id, header->messageId);
-    // Message[3]: No timeout
-    EXPECT_EQ(10001, message[3]->pingTimeout.expirationCycleTime);
-    // Message[4]: No timeout
-    EXPECT_EQ(10010, message[4]->pingTimeout.expirationCycleTime);
+    EXPECT_EQ(message[0]->id, header->messageId);
+    // Message[1]: No timeout
+    EXPECT_EQ(10001, message[1]->pingTimeout.expirationCycleTime);
 }
 
-TEST_F(SenderTest, checkTimeouts_empty)
+TEST_F(SenderTest, checkPingTimeouts_empty)
 {
     // Nothing to test except to ensure the call doesn't loop infinitely.
     EXPECT_TRUE(sender->pingTimeouts.list.empty());
-    sender->checkTimeouts();
+    sender->checkPingTimeouts();
 }
 
 }  // namespace

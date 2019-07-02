@@ -53,6 +53,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
     }
 
     State copyOfState = state.load();
+    OutboundMessage::State outState = outMessage.getState();
 
     if (isServerOp) {
         if (copyOfState == State::NOT_STARTED) {
@@ -65,10 +66,10 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
                 state.store(State::IN_PROGRESS);
             }
         } else if (copyOfState == State::IN_PROGRESS) {
-            if ((outMessage.isAcked()) ||
+            if ((outState == OutboundMessage::State::COMPLETED) ||
                 (outMessage.getId().tag ==
                      Protocol::MessageId::ULTIMATE_RESPONSE_TAG &&
-                 outMessage.isSent())) {
+                 outState == OutboundMessage::State::SENT)) {
                 state.store(State::COMPLETED);
                 if (inMessage->getId().tag !=
                     Protocol::MessageId::INITIAL_REQUEST_TAG) {

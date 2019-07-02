@@ -36,6 +36,18 @@ class Sender;
 class OutboundMessage {
   public:
     /**
+     * Defines the possible states of this OutboundMessage.
+     */
+    enum class State {
+        NOT_STARTED,  //< This message has not yet been passed to Sender.
+        IN_PROGRESS,  //< Sender is in the processing of sending this message.
+        SENT,         //< Sender has sent out every packet of the message.
+        COMPLETED,    //< Receiver has acknowledged receipt of this message.
+        DROPPED,      //< Receiver is unaware of this message.
+        FAILED,       //< Sender failed to send out this message.
+    };
+
+    /**
      * Construct an OutboundMessage.
      */
     explicit OutboundMessage(Driver* driver, void* op)
@@ -43,11 +55,9 @@ class OutboundMessage {
         , id(0, 0, 0)
         , destination(nullptr)
         , message(driver, sizeof(Protocol::Packet::DataHeader), 0)
+        , state(OutboundMessage::State::NOT_STARTED)
         , grantIndex(0)
         , sentIndex(0)
-        , sent(false)
-        , acknowledged(false)
-        , failed(false)
         , op(op)
         , messageTimeout(this)
         , pingTimeout(this)
@@ -74,29 +84,12 @@ class OutboundMessage {
         return id;
     }
 
-    bool isSent() const
-    {
-        SpinLock::Lock lock(mutex);
-        return sent;
-    }
-
     /**
-     * True if this Message has finished processing; false, otherwise.
+     * Return the current state of this message.
      */
-    bool isAcked() const
+    State getState() const
     {
-        SpinLock::Lock lock(mutex);
-        return acknowledged;
-    }
-
-    /**
-     * True if this Message (or related delegated Message) has failed to send;
-     * false, otherwise.
-     */
-    bool hasFailed() const
-    {
-        SpinLock::Lock lock(mutex);
-        return failed;
+        return state.load();
     }
 
   private:
@@ -108,18 +101,12 @@ class OutboundMessage {
     Driver::Address* destination;
     /// Collection of packets to be sent.
     Message message;
+    /// This message's current state.
+    std::atomic<State> state;
     /// Packets up to (but excluding) this index can be sent.
     uint16_t grantIndex;
     /// Packets up to (but excluding) this index have been sent.
     uint16_t sentIndex;
-    /// True if this message has been fully sent; false, otherwise.
-    bool sent;
-    /// True if this message is no longer waiting for a DONE acknowledgement;
-    /// false, otherwise.
-    bool acknowledged;
-    /// True if this message (or some delegated message down the line) has
-    /// failed to send.
-    bool failed;
     /// Transport::Op associated with this message.
     void* const op;
     /// Intrusive structure used by the Sender to keep track when the sending of

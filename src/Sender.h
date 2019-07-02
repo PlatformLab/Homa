@@ -57,6 +57,9 @@ class Sender {
     virtual void poll();
 
   private:
+    void checkPingTimeouts();
+    void trySend();
+
     /// Protects the top-level
     SpinLock mutex;
 
@@ -77,9 +80,6 @@ class Sender {
     /// True if the Sender is currently executing trySend(); false, otherwise.
     /// Use to prevent concurrent calls to trySend() from blocking on eachother.
     std::atomic_flag sending = ATOMIC_FLAG_INIT;
-
-    void trySend();
-    void checkTimeouts();
 };
 
 }  // namespace Core
