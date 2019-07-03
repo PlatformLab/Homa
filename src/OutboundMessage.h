@@ -40,7 +40,7 @@ class OutboundMessage {
      */
     enum class State {
         NOT_STARTED,  //< This message has not yet been passed to Sender.
-        IN_PROGRESS,  //< Sender is in the processing of sending this message.
+        IN_PROGRESS,  //< Sender is in the process of sending this message.
         SENT,         //< Sender has sent out every packet of the message.
         COMPLETED,    //< Receiver has acknowledged receipt of this message.
         DROPPED,      //< Receiver is unaware of this message.

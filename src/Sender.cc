@@ -378,6 +378,39 @@ Sender::poll()
 }
 
 /**
+ * Process any outbound messages that have timed out due to lack of activity
+ * from the Receiver.
+ *
+ * Pulled out of poll() for ease of testing.
+ */
+void
+Sender::checkMessageTimeouts()
+{
+    while (true) {
+        SpinLock::Lock lock(mutex);
+        // No remaining timeouts.
+        if (messageTimeouts.list.empty()) {
+            break;
+        }
+        OutboundMessage* message = &messageTimeouts.list.front();
+        SpinLock::Lock lock_message(message->mutex);
+        // No remaining expired timeouts.
+        if (!message->messageTimeout.hasElapsed()) {
+            break;
+        }
+        // Found expired timeout.
+        messageTimeouts.setTimeout(&message->messageTimeout);
+
+        if (message->state == OutboundMessage::State::IN_PROGRESS ||
+            message->state == OutboundMessage::State::SENT) {
+            message->state.store(OutboundMessage::State::FAILED);
+        }
+
+        transport->hintUpdatedOp(message->op);
+    }
+}
+
+/**
  * Process any outbound messages that need to be pinged to ensure the message
  * is kept alive by the receiver.
  *

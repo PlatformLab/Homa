@@ -537,6 +537,56 @@ TEST_F(SenderTest, poll)
     sender->poll();
 }
 
+TEST_F(SenderTest, checkMessageTimeouts_basic)
+{
+    Transport::Op* op[4];
+    OutboundMessage* message[4];
+    for (uint64_t i = 0; i < 4; ++i) {
+        Protocol::MessageId id = {42, 10 + i, 1};
+        op[i] = transport->opPool.construct(transport, &mockDriver, id);
+        message[i] = SenderTest::addMessage(sender, id, op[i]);
+    }
+
+    // Message[0]: Normal timeout: IN_PROGRESS
+    message[0]->messageTimeout.expirationCycleTime = 9998;
+    message[0]->state = OutboundMessage::State::IN_PROGRESS;
+    // Message[1]: Normal timeout: SENT
+    message[1]->messageTimeout.expirationCycleTime = 9999;
+    message[1]->state = OutboundMessage::State::SENT;
+    // Message[2]: Normal timeout: COMPLETED
+    message[2]->messageTimeout.expirationCycleTime = 10000;
+    message[2]->state = OutboundMessage::State::COMPLETED;
+    // Message[1]: No timeout
+    message[3]->messageTimeout.expirationCycleTime = 10001;
+
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+
+    sender->checkMessageTimeouts();
+
+    // Message[0]: Normal timeout: IN_PROGRESS
+    EXPECT_EQ(11000, message[0]->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(OutboundMessage::State::FAILED, message[0]->getState());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op[0]));
+    // Message[1]: Normal timeout: SENT
+    EXPECT_EQ(11000, message[1]->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(OutboundMessage::State::FAILED, message[1]->getState());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op[1]));
+    // Message[2]: Normal timeout: COMPLETED
+    EXPECT_EQ(11000, message[2]->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(OutboundMessage::State::COMPLETED, message[2]->getState());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op[2]));
+    // Message[3]: No timeout
+    EXPECT_EQ(10001, message[3]->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[3]));
+}
+
+TEST_F(SenderTest, checkMessageTimeouts_empty)
+{
+    // Nothing to test except to ensure the call doesn't loop infinitely.
+    EXPECT_TRUE(sender->messageTimeouts.list.empty());
+    sender->checkMessageTimeouts();
+}
+
 TEST_F(SenderTest, trySend_basic)
 {
     Protocol::MessageId id = {42, 10, 1};

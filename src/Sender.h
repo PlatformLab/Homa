@@ -57,6 +57,7 @@ class Sender {
     virtual void poll();
 
   private:
+    void checkMessageTimeouts();
     void checkPingTimeouts();
     void trySend();
 
