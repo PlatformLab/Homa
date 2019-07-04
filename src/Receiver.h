@@ -69,6 +69,7 @@ class Receiver {
     }
 
   private:
+    void checkMessageTimeouts();
     void checkResendTimeouts();
     void schedule();
     void sendGrantPacket(InboundMessage* message, Driver* driver,

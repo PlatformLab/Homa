@@ -271,6 +271,39 @@ Receiver::poll()
 {
     schedule();
     checkResendTimeouts();
+    checkMessageTimeouts();
+}
+
+/**
+ * Process any inbound messages that have timed out due to lack of activity from
+ * the Sender.
+ *
+ * Pulled out of poll() for ease of testing.
+ */
+void
+Receiver::checkMessageTimeouts()
+{
+    while (true) {
+        SpinLock::Lock lock(mutex);
+        // No remaining timeouts.
+        if (messageTimeouts.list.empty()) {
+            break;
+        }
+        InboundMessage* message = &messageTimeouts.list.front();
+        SpinLock::Lock lock_message(message->mutex);
+        // No remaining expired timeouts.
+        if (!message->messageTimeout.hasElapsed()) {
+            break;
+        }
+        // Found expired timeout.
+        messageTimeouts.setTimeout(&message->messageTimeout);
+
+        if (message->state == InboundMessage::State::IN_PROGRESS) {
+            message->state.store(InboundMessage::State::FAILED);
+        }
+
+        transport->hintUpdatedOp(message->op);
+    }
 }
 
 /**

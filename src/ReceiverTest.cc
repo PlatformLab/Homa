@@ -414,6 +414,53 @@ TEST_F(ReceiverTest, sendDonePacket)
     EXPECT_EQ(&mockAddress, mockPacket.address);
 }
 
+TEST_F(ReceiverTest, checkMessageTimeouts_basic)
+{
+    void* op[3];
+    InboundMessage* message[3];
+    for (uint64_t i = 0; i < 3; ++i) {
+        Protocol::MessageId id = {42, 10 + i, 1};
+        op[i] = reinterpret_cast<void*>(i);
+        message[i] = receiver->messagePool.construct(&mockDriver, 0, 0);
+        message[i]->id = id;
+        message[i]->registerOp(op[i]);
+        receiver->messageTimeouts.list.push_back(
+            &message[i]->messageTimeout.node);
+    }
+
+    // Message[0]: Normal timeout: IN_PROGRESS
+    message[0]->messageTimeout.expirationCycleTime = 9998;
+    message[0]->state = InboundMessage::State::IN_PROGRESS;
+    // Message[1]: Normal timeout: COMPLETED
+    message[1]->messageTimeout.expirationCycleTime = 10000;
+    message[1]->state = InboundMessage::State::COMPLETED;
+    // Message[2]: No timeout
+    message[2]->messageTimeout.expirationCycleTime = 10001;
+
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+
+    receiver->checkMessageTimeouts();
+
+    // Message[0]: Normal timeout: IN_PROGRESS
+    EXPECT_EQ(11000, message[0]->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(InboundMessage::State::FAILED, message[0]->getState());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op[0]));
+    // Message[1]: Normal timeout: COMPLETED
+    EXPECT_EQ(11000, message[1]->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(InboundMessage::State::COMPLETED, message[1]->getState());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op[1]));
+    // Message[2]: No timeout
+    EXPECT_EQ(10001, message[2]->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
+}
+
+TEST_F(ReceiverTest, checkMessageTimeouts_empty)
+{
+    // Nothing to test except to ensure the call doesn't loop infinitely.
+    EXPECT_TRUE(receiver->messageTimeouts.list.empty());
+    receiver->checkMessageTimeouts();
+}
+
 TEST_F(ReceiverTest, checkResendTimeouts)
 {
     InboundMessage* message[5];
