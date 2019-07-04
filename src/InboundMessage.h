@@ -37,6 +37,16 @@ class Receiver;
  */
 class InboundMessage {
   public:
+    /**
+     * Defines the possible states of this InboundMessage.
+     */
+    enum class State {
+        NOT_STARTED,  //< Receiver has not received any part of this message.
+        IN_PROGRESS,  //< Receiver is in the process of receiving this message.
+        COMPLETED,    //< Receiver has received the entire message.
+        FAILED,       //< Receiver has lost communication with the Sender.
+    };
+
     explicit InboundMessage(Driver* driver, uint16_t packetHeaderLength,
                             uint32_t messageLength)
         : mutex()
@@ -45,10 +55,8 @@ class InboundMessage {
         , numExpectedPackets(0)
         , grantIndexLimit(0)
         , message(driver, packetHeaderLength, messageLength)
+        , state(InboundMessage::State::IN_PROGRESS)
         , newPacket(false)
-        , active(false)
-        , failed(false)
-        , fullMessageReceived(false)
         , op(nullptr)
         , messageTimeout(this)
         , resendTimeout(this)
@@ -84,22 +92,11 @@ class InboundMessage {
     }
 
     /**
-     * Return true if the InboundMessage has received any packets since the last
-     * timeout; false, otherwise.
+     * Return the current state of this message.
      */
-    bool isActive() const
+    State getState() const
     {
-        SpinLock::Lock lock(mutex);
-        return active;
-    }
-
-    /**
-     * Return true if the InboundMessage has been received; false otherwise.
-     */
-    bool isReady() const
-    {
-        SpinLock::Lock lock(mutex);
-        return fullMessageReceived;
+        return state.load();
     }
 
   private:
@@ -115,15 +112,10 @@ class InboundMessage {
     uint16_t grantIndexLimit;
     /// Collection of packets being received.
     Message message;
+    /// This message's current state.
+    std::atomic<State> state;
     /// Marked true when a new data packet arrives; cleared by the scheduler.
     bool newPacket;
-    /// True if any packets (DATA, PING, BUSY) for this message has been
-    /// received since the last timeout; false, otherwise.
-    bool active;
-    /// True if this message has timed out.
-    bool failed;
-    /// True if all packets of the message have been received.
-    bool fullMessageReceived;
     /// Transport::Op associated with this message.
     void* op;
     /// Intrusive structure used by the Receiver to keep track when the

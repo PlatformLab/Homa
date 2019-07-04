@@ -117,7 +117,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
     InboundMessage inMessage(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
     EXPECT_EQ(OpContext::State::NOT_STARTED, op->state.load());
-    EXPECT_FALSE(op->inMessage->isReady());
+    EXPECT_NE(InboundMessage::State::COMPLETED, op->inMessage->getState());
     EXPECT_EQ(0U, op->inMessage->get()->MESSAGE_HEADER_LENGTH);
     EXPECT_TRUE(transport->pendingServerOps.queue.empty());
 
@@ -131,7 +131,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
     EXPECT_TRUE(transport->pendingServerOps.queue.empty());
     EXPECT_FALSE(op->destroy);
 
-    inMessage.fullMessageReceived = true;
+    inMessage.state.store(InboundMessage::State::COMPLETED);
 
     char payload[1028];
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket(payload);
@@ -383,7 +383,7 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
     op->inMessage = &inMessage;
     op->state.store(OpContext::State::IN_PROGRESS);
     op->retained = true;
-    EXPECT_FALSE(op->inMessage->isReady());
+    EXPECT_NE(InboundMessage::State::COMPLETED, op->inMessage->getState());
     EXPECT_EQ(0U, op->inMessage->get()->MESSAGE_HEADER_LENGTH);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
@@ -397,7 +397,7 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
     EXPECT_FALSE(op->destroy);
 
-    inMessage.fullMessageReceived = true;
+    inMessage.state.store(InboundMessage::State::COMPLETED);
 
     char payload[1028];
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket(payload);

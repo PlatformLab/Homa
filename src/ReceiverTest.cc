@@ -115,9 +115,8 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(1420U, message->message.messageLength);
     EXPECT_EQ(1U, message->message.getNumPackets());
     EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
-    EXPECT_TRUE(message->active);
     EXPECT_TRUE(message->newPacket);
-    EXPECT_FALSE(message->fullMessageReceived);
+    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
@@ -145,7 +144,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(1U, message->message.getNumPackets());
     EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
     EXPECT_FALSE(message->newPacket);
-    EXPECT_FALSE(message->fullMessageReceived);
+    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -171,7 +170,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(2U, message->message.getNumPackets());
     EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
     EXPECT_TRUE(message->newPacket);
-    EXPECT_TRUE(message->fullMessageReceived);
+    EXPECT_EQ(InboundMessage::State::COMPLETED, message->state);
     EXPECT_EQ(1U, transport->updateHints.ops.count(op));
 
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -247,7 +246,6 @@ TEST_F(ReceiverTest, handleBusyPacket_basic)
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
-    message->active = false;
     message->newPacket = false;
     receiver->inboundMessages.insert({id, message});
 
@@ -262,7 +260,6 @@ TEST_F(ReceiverTest, handleBusyPacket_basic)
 
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
-    EXPECT_TRUE(message->active);
 }
 
 TEST_F(ReceiverTest, handleBusyPacket_unknown)
@@ -288,7 +285,6 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
     message->id = id;
     message->grantIndexLimit = 11;
     message->source = &mockAddress;
-    message->active = false;
     receiver->inboundMessages.insert({id, message});
 
     char pingPayload[1028];
@@ -309,7 +305,6 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
 
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->resendTimeout.expirationCycleTime);
-    EXPECT_TRUE(message->active);
 
     EXPECT_EQ(&mockAddress, mockPacket.address);
     Protocol::Packet::GrantHeader* header =
@@ -431,10 +426,10 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     }
 
     // Message[0]: Fully received
-    message[0]->fullMessageReceived = true;
+    message[0]->state.store(InboundMessage::State::COMPLETED);
     message[0]->resendTimeout.expirationCycleTime = 10000 - 20;
     // Message[1]: Failed
-    message[1]->failed = true;
+    message[1]->state.store(InboundMessage::State::FAILED);
     message[1]->resendTimeout.expirationCycleTime = 10000 - 10;
     // Message[2]: Normal timeout: block on grants
     message[2]->resendTimeout.expirationCycleTime = 10000 - 5;

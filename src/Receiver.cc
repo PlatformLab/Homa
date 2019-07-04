@@ -112,11 +112,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 
     assert(id == message->id);
 
-    // Sender is still sending; consider this message active.
-    message->active = true;
-
     // All packets already received; must be a duplicate.
-    if (message->fullMessageReceived) {
+    if (message->state == InboundMessage::State::COMPLETED) {
         // drop packet
         driver->releasePackets(&packet, 1);
         return;
@@ -137,7 +134,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
                                       message->message.getNumPackets();
         message->newPacket = true;
         if (totalReceivedBytes >= message->message.rawLength()) {
-            message->fullMessageReceived = true;
+            message->state.store(InboundMessage::State::COMPLETED);
             if (message->op != nullptr) {
                 transport->hintUpdatedOp(message->op);
             }
@@ -171,13 +168,11 @@ Receiver::handleBusyPacket(Driver::Packet* packet, Driver* driver)
         InboundMessage* message = it->second;
 
         SpinLock::Lock lock_message(message->mutex);
+        // Sender has replied BUSY to our RESEND request; consider this message
+        // still active.
         messageTimeouts.setTimeout(&message->messageTimeout);
         resendTimeouts.setTimeout(&message->resendTimeout);
         lock.unlock();  // End Receiver critical section
-
-        // Sender has replied BUSY to our RESEND request; consider this message
-        // still active.
-        message->active = true;
     }
     driver->releasePackets(&packet, 1);
 }
@@ -204,11 +199,9 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
         InboundMessage* message = it->second;
 
         SpinLock::Lock lock_message(message->mutex);
+        // Sender is checking on this message; consider it still active.
         messageTimeouts.setTimeout(&message->messageTimeout);
         lock.unlock();  // End Receiver critical section
-
-        // Sender is checking on this message; consider it still active.
-        message->active = true;
 
         // We are here either because a GRANT got lost, or we haven't issued
         // a GRANT in along time.  In either case, resend the latest GRANT so
@@ -301,7 +294,7 @@ Receiver::checkResendTimeouts()
             break;
         }
         // Found expired timeout.
-        if (message->fullMessageReceived || message->failed) {
+        if (message->state != InboundMessage::State::IN_PROGRESS) {
             resendTimeouts.cancelTimeout(&message->resendTimeout);
             continue;
         } else {
