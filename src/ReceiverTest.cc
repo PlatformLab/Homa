@@ -414,6 +414,30 @@ TEST_F(ReceiverTest, sendDonePacket)
     EXPECT_EQ(&mockAddress, mockPacket.address);
 }
 
+TEST_F(ReceiverTest, sendErrorPacket)
+{
+    Protocol::MessageId id = {42, 32, 1};
+    Homa::Mock::MockDriver::MockAddress mockAddress;
+    InboundMessage* message =
+        receiver->messagePool.construct(&mockDriver, 0, 0);
+    message->source = &mockAddress;
+    message->id = id;
+
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    Receiver::sendErrorPacket(message, &mockDriver);
+
+    Protocol::Packet::CommonHeader* header =
+        static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
+    EXPECT_EQ(Protocol::Packet::ERROR, header->opcode);
+    EXPECT_EQ(id, header->messageId);
+    EXPECT_EQ(sizeof(Protocol::Packet::ErrorHeader), mockPacket.length);
+    EXPECT_EQ(&mockAddress, mockPacket.address);
+}
+
 TEST_F(ReceiverTest, checkMessageTimeouts_basic)
 {
     void* op[3];

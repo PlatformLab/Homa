@@ -68,6 +68,21 @@ class Receiver {
             driver, message->source, message->getId());
     }
 
+    /**
+     * Send an ERROR packet to the Sender of an incoming request message.
+     *
+     * @param message
+     *      Incoming request (message) that should be failed.
+     * @param driver
+     *      Driver with which the ERROR packet should be sent.
+     */
+    static inline void sendErrorPacket(InboundMessage* message, Driver* driver)
+    {
+        SpinLock::Lock lock_message(message->mutex);
+        ControlPacket::send<Protocol::Packet::ErrorHeader>(
+            driver, message->source, message->getId());
+    }
+
   private:
     void checkMessageTimeouts();
     void checkResendTimeouts();
