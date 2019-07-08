@@ -65,7 +65,7 @@ class Receiver {
     {
         SpinLock::Lock lock_message(message->mutex);
         ControlPacket::send<Protocol::Packet::DoneHeader>(
-            driver, message->source, message->getId());
+            driver, message->source, message->id);
     }
 
     /**
@@ -80,7 +80,7 @@ class Receiver {
     {
         SpinLock::Lock lock_message(message->mutex);
         ControlPacket::send<Protocol::Packet::ErrorHeader>(
-            driver, message->source, message->getId());
+            driver, message->source, message->id);
     }
 
   private:

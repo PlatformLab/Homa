@@ -36,7 +36,7 @@ class HomaTest : public ::testing::Test {
         , mockAddress()
         , transport(new Transport(&mockDriver, 22))
         , mockSender(new NiceMock<Homa::Mock::MockSender>(
-              transport->internal.get(), 0, 0))
+              transport->internal.get(), 22, 0, 0))
         , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>(
               transport->internal.get(), 0, 0))
         , buf()
@@ -149,7 +149,7 @@ TEST_F(HomaTest, RemoteOp_isReady_COMPLETED)
     op.request = nullptr;
     op.response = nullptr;
     Core::InboundMessage inMessage(&mockDriver, 28, 0);
-    inMessage.id = Protocol::MessageId(42, 32, 22);
+    inMessage.id = Protocol::MessageId(42, 32);
     static_cast<Core::Transport::Op*>(op.op)->inMessage = &inMessage;
 
     op.op->state = Core::OpContext::State::COMPLETED;
@@ -222,12 +222,13 @@ TEST_F(HomaTest, Transport_receiveServerOp)
 {
     char payload[1024];
     Homa::Mock::MockDriver::MockPacket packet(payload);
-    Protocol::MessageId id(42, 1, 1);
+    Protocol::OpId opId(42, 1);
+    Protocol::MessageId msgId(42, 1);
     Core::Transport::Op* op = transport->internal->opPool.construct(
-        transport->internal.get(), transport->internal->driver, id);
+        transport->internal.get(), transport->internal->driver, opId);
     Core::InboundMessage inMessage(&mockDriver,
                                    sizeof(Protocol::Packet::DataHeader), 0);
-    inMessage.id = id;
+    inMessage.id = msgId;
     op->inMessage = &inMessage;
     transport->internal->pendingServerOps.queue.push_back(op);
 

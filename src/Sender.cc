@@ -35,6 +35,8 @@ const uint32_t RTT_TIME_US = 5;
  *
  * @param transport
  *      The Tranport object that owns this Sender.
+ * @param transportId
+ *      Unique identifier for the Transport that owns this Sender.
  * @param messageTimeoutCycles
  *      Number of cycles of inactivity to wait before this Sender declares an
  *      OutboundMessage send failure.
@@ -42,10 +44,12 @@ const uint32_t RTT_TIME_US = 5;
  *      Number of cycles of inactivity to wait between checking on the liveness
  *      of an OutboundMessage.
  */
-Sender::Sender(Transport* transport, uint64_t messageTimeoutCycles,
-               uint64_t pingIntervalCycles)
+Sender::Sender(Transport* transport, uint64_t transportId,
+               uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles)
     : mutex()
     , transport(transport)
+    , transportId(transportId)
+    , nextMessageSequenceNumber(1)
     , outboundMessages()
     , messageTimeouts(messageTimeoutCycles)
     , pingTimeouts(pingIntervalCycles)
@@ -277,34 +281,23 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
 /**
  * Queue a message to be sent.
  *
- * @param id
- *      Unique identifier for this message.
- * @param destination
- *      Destination address for this message.
  * @param message
  *      OutboundMessage to be sent.
+ * @param destination
+ *      Destination address for this message.
  *
  * @sa dropMessage()
  */
 void
-Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
-                    OutboundMessage* message)
+Sender::sendMessage(OutboundMessage* message, Driver::Address* destination)
 {
     SpinLock::UniqueLock lock(mutex);
     SpinLock::Lock lock_message(message->mutex);
 
-    if (outboundMessages.find(id) != outboundMessages.end()) {
-        // message already sending, drop the send request.
-        WARNING(
-            "Duplicate call to sendMessage for msgId (%lu:%lu:%u); send "
-            "request dropped.",
-            id.transportId, id.sequence, id.tag);
-        return;
-    } else {
-        outboundMessages.insert({id, message});
-        messageTimeouts.setTimeout(&message->messageTimeout);
-        pingTimeouts.setTimeout(&message->pingTimeout);
-    }
+    Protocol::MessageId id(transportId, nextMessageSequenceNumber++);
+    outboundMessages.insert({id, message});
+    messageTimeouts.setTimeout(&message->messageTimeout);
+    pingTimeouts.setTimeout(&message->pingTimeout);
 
     lock.unlock();  // End sender critical section.
 
@@ -320,9 +313,9 @@ Sender::sendMessage(Protocol::MessageId id, Driver::Address* destination,
         Driver::Packet* packet = message->message.getPacket(i);
         if (packet == nullptr) {
             PANIC(
-                "Incomplete message with id (%lu:%lu:%u); missing packet "
+                "Incomplete message with id (%lu:%lu); missing packet "
                 "at offset %d; this shouldn't happen.",
-                message->id.transportId, message->id.sequence, message->id.tag,
+                message->id.transportId, message->id.sequence,
                 i * message->message.PACKET_DATA_LENGTH);
         }
 

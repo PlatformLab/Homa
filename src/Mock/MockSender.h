@@ -31,9 +31,10 @@ namespace Mock {
  */
 class MockSender : public Core::Sender {
   public:
-    MockSender(Core::Transport* transport, uint64_t messageTimeoutCycles,
-               uint64_t pingIntervalCycles)
-        : Sender(transport, messageTimeoutCycles, pingIntervalCycles)
+    MockSender(Core::Transport* transport, uint64_t transportId,
+               uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles)
+        : Sender(transport, transportId, messageTimeoutCycles,
+                 pingIntervalCycles)
     {}
 
     MOCK_METHOD2(handleDonePacket,
@@ -46,9 +47,8 @@ class MockSender : public Core::Sender {
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD2(handleErrorPacket,
                  void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD3(sendMessage,
-                 void(Protocol::MessageId id, Driver::Address* destination,
-                      Core::OutboundMessage* message));
+    MOCK_METHOD2(sendMessage, void(Core::OutboundMessage* message,
+                                   Driver::Address* destination));
     MOCK_METHOD1(dropMessage, void(Core::OutboundMessage* message));
     MOCK_METHOD0(poll, void());
 };

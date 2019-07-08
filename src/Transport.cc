@@ -71,12 +71,10 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
             }
         } else if (copyOfState == State::IN_PROGRESS) {
             if ((outState == OutboundMessage::State::COMPLETED) ||
-                (outMessage.getId().tag ==
-                     Protocol::MessageId::ULTIMATE_RESPONSE_TAG &&
+                (outboundTag == Protocol::Message::ULTIMATE_RESPONSE_TAG &&
                  outState == OutboundMessage::State::SENT)) {
                 state.store(State::COMPLETED);
-                if (inMessage->getId().tag !=
-                    Protocol::MessageId::INITIAL_REQUEST_TAG) {
+                if (inboundTag != Protocol::Message::INITIAL_REQUEST_TAG) {
                     Receiver::sendDonePacket(inMessage, transport->driver);
                 }
                 transport->hintUpdatedOp(this);
@@ -128,7 +126,7 @@ Transport::Transport(Driver* driver, uint64_t transportId)
     : driver(driver)
     , transportId(transportId)
     , nextOpSequenceNumber(1)
-    , sender(new Sender(this,
+    , sender(new Sender(this, transportId,
                         PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                         PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
     , receiver(new Receiver(
@@ -178,7 +176,9 @@ Transport::allocOp()
 
     Protocol::Message::Header* header =
         op->outMessage.get()->defineHeader<Protocol::Message::Header>();
+    new (header) Protocol::Message::Header(opId);
     driver->getLocalAddress()->toRaw(&header->replyAddress);
+    op->outboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
     op->retained.store(true);
     return op;
 }
@@ -200,6 +200,7 @@ Transport::receiveOp()
         SpinLock::Lock lock_op(op->mutex);
         Protocol::Message::Header* header =
             op->outMessage.get()->defineHeader<Protocol::Message::Header>();
+        new (header) Protocol::Message::Header(op->opId);
         assert(op->inMessage != nullptr);
         assert(op->inMessage->get() != nullptr);
         header->replyAddress = op->inMessage->get()
@@ -229,7 +230,7 @@ Transport::releaseOp(OpContext* context)
 }
 
 /**
- * Signal that the outbound Message should be sent as a request.
+ * Signal that the Outbound Message should be sent as a request.
  *
  * @param context
  *      OpContext that contains the request Message to be sent.
@@ -243,17 +244,17 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
 {
     Op* op = static_cast<Op*>(context);
     SpinLock::Lock lock_op(op->mutex);
+    Protocol::Message::Header* outboundHeader =
+        op->outMessage.get()->getHeader<Protocol::Message::Header>();
     if (op->isServerOp) {
-        Protocol::MessageId requestId(op->inMessage->getId());
-        Protocol::MessageId delegationId(Protocol::OpId(requestId),
-                                         requestId.tag + 1);
-        sender->sendMessage(delegationId, destination, &op->outMessage);
+        op->outboundTag = op->inboundTag + 1;
+        outboundHeader->tag = op->outboundTag;
     } else {
         op->state.store(OpContext::State::IN_PROGRESS);
-        sender->sendMessage(
-            {op->opId, Protocol::MessageId::INITIAL_REQUEST_TAG}, destination,
-            &op->outMessage);
+        op->outboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
+        outboundHeader->tag = op->outboundTag;
     }
+    sender->sendMessage(&op->outMessage, destination);
 }
 
 /**
@@ -270,14 +271,15 @@ Transport::sendReply(OpContext* context)
     Op* op = static_cast<Op*>(context);
     SpinLock::Lock lock_op(op->mutex);
     assert(op->isServerOp);
-    Protocol::OpId opId(op->inMessage->getId());
     Driver::Address* replyAddress =
         driver->getAddress(&op->inMessage->get()
                                 ->getHeader<Protocol::Message::Header>()
                                 ->replyAddress);
     op->state.store(OpContext::State::IN_PROGRESS);
-    sender->sendMessage({opId, Protocol::MessageId::ULTIMATE_RESPONSE_TAG},
-                        replyAddress, &op->outMessage);
+    op->outboundTag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
+    op->outMessage.get()->getHeader<Protocol::Message::Header>()->tag =
+        op->outboundTag;
+    sender->sendMessage(&op->outMessage, replyAddress);
 }
 
 /// See Homa::Transport::poll()
@@ -349,15 +351,17 @@ Transport::processInboundMessages()
 {
     for (InboundMessage* message = receiver->receiveMessage();
          message != nullptr; message = receiver->receiveMessage()) {
-        Protocol::MessageId id = message->getId();
-        if (id.tag == Protocol::MessageId::ULTIMATE_RESPONSE_TAG) {
+        Protocol::Message::Header* header =
+            message->get()->getHeader<Protocol::Message::Header>();
+        if (header->tag == Protocol::Message::ULTIMATE_RESPONSE_TAG) {
             // Incoming message is a response.
-            auto it = remoteOps.find(id);
+            auto it = remoteOps.find(header->opId);
             if (it != remoteOps.end()) {
                 Op* op = it->second;
                 SpinLock::Lock lock_op(op->mutex);
                 message->registerOp(op);
                 op->inMessage = message;
+                op->inboundTag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
                 hintUpdatedOp(op);
             } else {
                 // There is no RemoteOp waiting for this message; Drop it.
@@ -366,7 +370,7 @@ Transport::processInboundMessages()
         } else {
             // Incoming message is a request.
             SpinLock::UniqueLock lock(mutex);
-            Op* op = opPool.construct(this, driver, message->getId(), true);
+            Op* op = opPool.construct(this, driver, header->opId, true);
             activeOps.insert(op);
 
             // Lock handoff
@@ -375,6 +379,7 @@ Transport::processInboundMessages()
 
             message->registerOp(op);
             op->inMessage = message;
+            op->inboundTag = header->tag;
             hintUpdatedOp(op);
         }
     }

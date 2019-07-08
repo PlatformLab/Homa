@@ -36,6 +36,55 @@ namespace Homa {
 namespace Protocol {
 
 /**
+ * A unique identifier for a Message sent or received by the transport.
+ */
+struct MessageId {
+    uint64_t transportId;  ///< Uniquely identifies the sending transport for
+                           ///< this message.
+    uint64_t sequence;     ///< Sequence number for this message (unique for
+                           ///< transportId, monotonically increasing).
+
+    /// MessageId constructor.
+    MessageId(uint64_t transportId, uint64_t sequence)
+        : transportId(transportId)
+        , sequence(sequence)
+    {}
+
+    /**
+     * Comparison function for MessageId, for use in std::maps etc.
+     */
+    bool operator<(MessageId other) const
+    {
+        return (transportId < other.transportId) ||
+               ((transportId == other.transportId) &&
+                (sequence < other.sequence));
+    }
+
+    /**
+     * Equality function for MessageId, for use in std::unordered_maps etc.
+     */
+    bool operator==(MessageId other) const
+    {
+        return ((transportId == other.transportId) &&
+                (sequence == other.sequence));
+    }
+
+    /**
+     * This class computes a hash of an MessageId, so that MessageId can be used
+     * as keys in unordered_maps.
+     */
+    struct Hasher {
+        /// Return a "hash" of the given MessageId.
+        std::size_t operator()(const MessageId& messageId) const
+        {
+            std::size_t h1 = std::hash<uint64_t>()(messageId.transportId);
+            std::size_t h2 = std::hash<uint64_t>()(messageId.sequence);
+            return h1 ^ (h2 << 1);
+        }
+    };
+} __attribute__((packed));
+
+/**
  * A unique identifier for the operation.
  */
 struct OpId {
@@ -44,7 +93,7 @@ struct OpId {
     uint64_t sequence;     ///< Sequence number for this RemoteOp (unique for
                            ///< transportId, monotonically increasing).
 
-    /// MessageId constructor.
+    /// OpId constructor.
     OpId(uint64_t transportId, uint64_t sequence)
         : transportId(transportId)
         , sequence(sequence)
@@ -79,64 +128,6 @@ struct OpId {
         {
             std::size_t h1 = std::hash<uint64_t>()(opId.transportId);
             std::size_t h2 = std::hash<uint64_t>()(opId.sequence);
-            return h1 ^ (h2 << 1);
-        }
-    };
-} __attribute__((packed));
-
-/**
- * A unique identifier for a Message within an Operation.
- */
-struct MessageId : public OpId {
-    uint32_t tag;  ///< Uniquely identifies this Message within the set of
-                   ///< messages that belong to the RemoteOp.
-
-    /// sequence number for the Message that contains a RemoteOp's initiating
-    /// request RemoteOp (sent by the client).
-    static const uint32_t INITIAL_REQUEST_TAG = 1;
-    /// sequence number for the Message that contains the final reply to the
-    /// initial request (sent to the client).
-    static const uint32_t ULTIMATE_RESPONSE_TAG = 0;
-
-    /// MessageId constructor.
-    MessageId(uint64_t transportId, uint64_t sequence, uint32_t tag)
-        : OpId(transportId, sequence)
-        , tag(tag)
-    {}
-
-    /// MessageId constructor.
-    MessageId(OpId opId, uint32_t tag)
-        : OpId(opId)
-        , tag(tag)
-    {}
-
-    /**
-     * Comparison function for OpId, for use in std::maps etc.
-     */
-    bool operator<(MessageId other) const
-    {
-        return OpId::operator<(other) ||
-               ((OpId::operator==(other)) && (tag < other.tag));
-    }
-
-    /**
-     * Equality function for OpId, for use in std::unordered_maps etc.
-     */
-    bool operator==(MessageId other) const
-    {
-        return (OpId::operator==(other)) && (tag == other.tag);
-    }
-
-    /**
-     * This class computes a hash of an MessageId, so that MessageId can be used
-     * as keys in unordered_maps.
-     */
-    struct Hasher : public OpId::Hasher {
-        /// Return a "hash" of the given MessageId.
-        std::size_t operator()(const MessageId& msgId) const
-        {
-            std::size_t h1 = OpId::Hasher::operator()(msgId);
-            std::size_t h2 = std::hash<uint64_t>()(msgId.tag);
             return h1 ^ (h2 << 1);
         }
     };
@@ -328,9 +319,17 @@ struct ErrorHeader {
 }  // namespace Packet
 
 /**
- * Contains the header definitions for Homa Messages.
+ * Contains the header definitions for a Homa Message; one Op will involve
+ * the sending and receiving of two or more messages.
  */
 namespace Message {
+
+/// Identifier for the Message that contains a RemoteOp's initiating request
+/// RemoteOp (sent by the client).
+static const uint32_t INITIAL_REQUEST_TAG = 1;
+/// Identifier for the Message that contains the final reply to the
+/// initial request (sent to the client).
+static const uint32_t ULTIMATE_RESPONSE_TAG = 0;
 
 /**
  * This is the first part of the Homa packet header and is common to all
@@ -355,12 +354,17 @@ struct HeaderPrefix {
  */
 struct Header {
     HeaderPrefix prefix;  ///< Common to all versions of the protocol.
+    OpId opId;            ///< Id of the Op to which this message belongs.
+    uint32_t tag;  ///< Uniquely identifies this Message within the set of
+                   ///< messages that belong to the RemoteOp.
     Driver::Address::Raw replyAddress;  ///< Replies to this Message should be
                                         ///< sent to this address.
 
     /// CommonHeader constructor.
-    Header()
+    explicit Header(OpId opId)
         : prefix(1)
+        , opId(opId)
+        , tag()
         , replyAddress()
     {}
 } __attribute__((packed));

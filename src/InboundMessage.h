@@ -50,7 +50,7 @@ class InboundMessage {
     explicit InboundMessage(Driver* driver, uint16_t packetHeaderLength,
                             uint32_t messageLength)
         : mutex()
-        , id(0, 0, 0)
+        , id(0, 0)
         , source(nullptr)
         , numExpectedPackets(0)
         , grantIndexLimit(0)
@@ -71,14 +71,6 @@ class InboundMessage {
     {
         SpinLock::Lock lock(mutex);
         return &message;
-    }
-
-    /**
-     * Return the unique identifier for this Message.
-     */
-    Protocol::MessageId getId()
-    {
-        return id;
     }
 
     /**

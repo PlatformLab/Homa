@@ -42,9 +42,11 @@ using ::testing::SetArrayArgument;
 class TransportTest : public ::testing::Test {
   public:
     TransportTest()
-        : mockDriver()
+        : packet_buf()
+        , mockDriver()
+        , mockPacket(packet_buf)
         , transport(new Transport(&mockDriver, 22))
-        , mockSender(new NiceMock<Homa::Mock::MockSender>(transport, 0, 0))
+        , mockSender(new NiceMock<Homa::Mock::MockSender>(transport, 22, 0, 0))
         , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>(transport, 0, 0))
         , savedLogPolicy(Debug::getLogPolicy())
     {
@@ -62,7 +64,9 @@ class TransportTest : public ::testing::Test {
         Debug::setLogPolicy(savedLogPolicy);
     }
 
+    char packet_buf[1024];
     NiceMock<Homa::Mock::MockDriver> mockDriver;
+    Homa::Mock::MockDriver::MockPacket mockPacket;
     Transport* transport;
     NiceMock<Homa::Mock::MockSender>* mockSender;
     NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
@@ -174,7 +178,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone_reply)
                                                     Protocol::OpId(0, 0), true);
     op->state.store(OpContext::State::IN_PROGRESS);
     op->outMessage.state.store(OutboundMessage::State::IN_PROGRESS);
-    op->outMessage.id.tag = Protocol::MessageId::ULTIMATE_RESPONSE_TAG;
+    op->outboundTag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     {
@@ -195,7 +199,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_acked)
     op->outMessage.state.store(OutboundMessage::State::COMPLETED);
     InboundMessage inMessage(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
-    inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG;
+    op->inboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
     EXPECT_TRUE(op->outMessage.state == OutboundMessage::State::COMPLETED);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
@@ -215,10 +219,10 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_reply_sent)
                                                     Protocol::OpId(0, 0), true);
     op->state.store(OpContext::State::IN_PROGRESS);
     op->outMessage.state.store(OutboundMessage::State::SENT);
-    op->outMessage.id.tag = Protocol::MessageId::ULTIMATE_RESPONSE_TAG;
+    op->outboundTag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
     InboundMessage inMessage(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
-    inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG;
+    op->inboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
     EXPECT_TRUE(op->outMessage.state == OutboundMessage::State::SENT);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
@@ -240,7 +244,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_noSendDone)
     op->outMessage.state.store(OutboundMessage::State::SENT);
     InboundMessage inMessage(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
-    inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG;
+    op->inboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     {
@@ -261,7 +265,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_sendDone)
     op->outMessage.state.store(OutboundMessage::State::SENT);
     InboundMessage inMessage(&mockDriver, 0, 0);
     op->inMessage = &inMessage;
-    inMessage.id.tag = Protocol::MessageId::INITIAL_REQUEST_TAG + 1;
+    op->inboundTag = Protocol::Message::INITIAL_REQUEST_TAG + 1;
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     char payload[1028];
@@ -466,6 +470,7 @@ TEST_F(TransportTest, allocOp)
     EXPECT_EQ(1U, transport->activeOps.count(op));
     EXPECT_EQ(sizeof(Protocol::Message::Header),
               op->outMessage.message.rawLength());
+    EXPECT_EQ(Protocol::Message::INITIAL_REQUEST_TAG, op->outboundTag);
     EXPECT_TRUE(op->retained.load());
 }
 
@@ -537,17 +542,20 @@ TEST_F(TransportTest, sendRequest_ServerOp)
 {
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     Protocol::OpId(0, 0), true);
+    op->outMessage.get()->setPacket(0, &mockPacket);
     InboundMessage message(&mockDriver, 0, 0);
-    Protocol::MessageId expectedId = {transport->transportId, 42, 3};
     op->inMessage = &message;
-    op->inMessage->id = expectedId;
-    op->inMessage->id.tag--;
+    op->inboundTag = 2;
     Driver::Address* destination = (Driver::Address*)22;
 
-    EXPECT_CALL(*mockSender, sendMessage(Eq(expectedId), Eq(destination),
-                                         Eq(&op->outMessage)));
+    EXPECT_CALL(*mockSender, sendMessage(Eq(&op->outMessage), Eq(destination)));
 
     transport->sendRequest(op, destination);
+
+    Protocol::Message::Header* outboundHeader =
+        op->outMessage.get()->getHeader<Protocol::Message::Header>();
+    EXPECT_EQ(3U, op->outboundTag);
+    EXPECT_EQ(3U, outboundHeader->tag);
 }
 
 TEST_F(TransportTest, sendRequest_RemoteOp)
@@ -557,15 +565,16 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
     Driver::Address* destination = (Driver::Address*)22;
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     expectedOpId, false);
+    op->outMessage.get()->setPacket(0, &mockPacket);
 
-    EXPECT_CALL(*mockSender,
-                sendMessage(Eq(Protocol::MessageId(
-                                expectedOpId,
-                                Protocol::MessageId::INITIAL_REQUEST_TAG)),
-                            Eq(destination), Eq(&op->outMessage)));
+    EXPECT_CALL(*mockSender, sendMessage(Eq(&op->outMessage), Eq(destination)));
 
     transport->sendRequest(op, destination);
 
+    Protocol::Message::Header* outboundHeader =
+        op->outMessage.get()->getHeader<Protocol::Message::Header>();
+    EXPECT_EQ(Protocol::Message::INITIAL_REQUEST_TAG, outboundHeader->tag);
+    EXPECT_EQ(Protocol::Message::INITIAL_REQUEST_TAG, op->outboundTag);
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
 }
 
@@ -576,10 +585,11 @@ TEST_F(TransportTest, sendReply)
     Driver::Address* replyAddress = (Driver::Address*)22;
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     Protocol::OpId(0, 0), true);
+    op->outMessage.get()->setPacket(0, &mockPacket);
     Protocol::OpId expectedOpId = {42, 32};
     InboundMessage message(transport->driver,
                            sizeof(Protocol::Packet::DataHeader), 0);
-    message.id = Protocol::MessageId(expectedOpId, 2);
+    message.id = Protocol::MessageId(22, 2);
     message.message.setPacket(0, &packet);
     Protocol::Message::Header* header =
         message.message.defineHeader<Protocol::Message::Header>();
@@ -589,13 +599,14 @@ TEST_F(TransportTest, sendReply)
                                 Eq(&header->replyAddress))))
         .WillOnce(Return(replyAddress));
     EXPECT_CALL(*mockSender,
-                sendMessage(Eq(Protocol::MessageId(
-                                expectedOpId,
-                                Protocol::MessageId::ULTIMATE_RESPONSE_TAG)),
-                            Eq(replyAddress), Eq(&op->outMessage)));
+                sendMessage(Eq(&op->outMessage), Eq(replyAddress)));
 
     transport->sendReply(op);
 
+    Protocol::Message::Header* outboundHeader =
+        op->outMessage.get()->getHeader<Protocol::Message::Header>();
+    EXPECT_EQ(Protocol::Message::ULTIMATE_RESPONSE_TAG, outboundHeader->tag);
+    EXPECT_EQ(Protocol::Message::ULTIMATE_RESPONSE_TAG, op->outboundTag);
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
 }
 
@@ -707,14 +718,20 @@ TEST_F(TransportTest, processPackets)
 
 TEST_F(TransportTest, processInboundMessages_response)
 {
-    Protocol::MessageId id(42, 32, Protocol::MessageId::ULTIMATE_RESPONSE_TAG);
+    Protocol::OpId opId(42, 32);
+    Protocol::MessageId msgId(22, 1);
     Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, id, false);
-    transport->remoteOps.insert({id, op});
+        transport->opPool.construct(transport, &mockDriver, opId, false);
+    transport->remoteOps.insert({opId, op});
     InboundMessage message(&mockDriver, 0, 0);
-    message.id = id;
+    message.id = msgId;
+    message.message.setPacket(0, &mockPacket);
+    Protocol::Message::Header* header =
+        message.get()->getHeader<Protocol::Message::Header>();
+    header->opId = opId;
+    header->tag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
 
-    EXPECT_EQ(1U, transport->remoteOps.count(id));
+    EXPECT_EQ(1U, transport->remoteOps.count(opId));
     EXPECT_EQ(nullptr, message.op);
     EXPECT_EQ(nullptr, op->inMessage);
     EXPECT_EQ(0U, transport->updateHints.ops.size());
@@ -728,14 +745,21 @@ TEST_F(TransportTest, processInboundMessages_response)
 
     EXPECT_EQ(op, message.op);
     EXPECT_EQ(&message, op->inMessage);
+    EXPECT_EQ(Protocol::Message::ULTIMATE_RESPONSE_TAG, op->inboundTag);
     EXPECT_EQ(1U, transport->updateHints.ops.size());
 }
 
 TEST_F(TransportTest, processInboundMessages_responseDrop)
 {
-    Protocol::MessageId id(42, 32, Protocol::MessageId::ULTIMATE_RESPONSE_TAG);
+    Protocol::OpId opId(42, 32);
+    Protocol::MessageId msgId(22, 1);
     InboundMessage message(&mockDriver, 0, 0);
-    message.id = id;
+    message.id = msgId;
+    message.message.setPacket(0, &mockPacket);
+    Protocol::Message::Header* header =
+        message.get()->getHeader<Protocol::Message::Header>();
+    header->opId = opId;
+    header->tag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
 
     EXPECT_CALL(*mockReceiver, receiveMessage)
         .WillOnce(Return(&message))
@@ -747,9 +771,15 @@ TEST_F(TransportTest, processInboundMessages_responseDrop)
 
 TEST_F(TransportTest, processInboundMessages_request)
 {
-    Protocol::MessageId id(42, 32, Protocol::MessageId::INITIAL_REQUEST_TAG);
+    Protocol::OpId opId(42, 32);
+    Protocol::MessageId msgId(22, 1);
     InboundMessage message(&mockDriver, 0, 0);
-    message.id = id;
+    message.id = msgId;
+    message.message.setPacket(0, &mockPacket);
+    Protocol::Message::Header* header =
+        message.get()->getHeader<Protocol::Message::Header>();
+    header->opId = opId;
+    header->tag = Protocol::Message::INITIAL_REQUEST_TAG;
 
     EXPECT_EQ(nullptr, message.op);
     EXPECT_EQ(0U, transport->opPool.outstandingObjects);
@@ -767,6 +797,8 @@ TEST_F(TransportTest, processInboundMessages_request)
     EXPECT_EQ(&message, static_cast<Transport::Op*>(message.op)->inMessage);
     EXPECT_EQ(1U, transport->opPool.outstandingObjects);
     EXPECT_FALSE(transport->activeOps.empty());
+    EXPECT_EQ(Protocol::Message::INITIAL_REQUEST_TAG,
+              ((Transport::Op*)message.op)->inboundTag);
     EXPECT_EQ(1U, transport->updateHints.ops.size());
 
     Mock::VerifyAndClearExpectations(mockReceiver);
@@ -806,14 +838,14 @@ TEST_F(TransportTest, cleanupOps)
     // Server Op
     Transport::Op* serverOp = transport->opPool.construct(
         transport, &mockDriver, Protocol::OpId(2, 1));
-    serverOp->outMessage.id = {42, 32, 2};
+    serverOp->outMessage.id = {22, 2};
     transport->activeOps.insert(serverOp);
     InboundMessage message(&mockDriver, 0, 0);
     serverOp->inMessage = &message;
     // Remote Op
     Transport::Op* remoteOp = transport->opPool.construct(
         transport, &mockDriver, Protocol::OpId(1, 2), false);
-    remoteOp->outMessage.id = {42, 32, 1};
+    remoteOp->outMessage.id = {22, 1};
     transport->activeOps.insert(remoteOp);
     transport->remoteOps.insert({remoteOp->opId, remoteOp});
 

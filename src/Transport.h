@@ -63,6 +63,8 @@ class Transport {
             : OpContext(transport)
             , mutex()
             , opId(opId)
+            , outboundTag(0)
+            , inboundTag(0)
             , outMessage(driver, this)
             , inMessage(nullptr)
             , retained(false)
@@ -96,6 +98,14 @@ class Transport {
 
         /// Identifier for the operation with which this Op is associated.
         const Protocol::OpId opId;
+
+        /// Identifier for the outbound message within this Op.
+        /// @sa Protocol::Message
+        uint32_t outboundTag;
+
+        /// Identifier for the inbound message within this Op.
+        /// @sa Protocol::Message
+        uint32_t inboundTag;
 
         /// Message to be sent out as part of this Op.  Processed by the Sender.
         OutboundMessage outMessage;

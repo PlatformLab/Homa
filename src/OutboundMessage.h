@@ -52,7 +52,7 @@ class OutboundMessage {
      */
     explicit OutboundMessage(Driver* driver, void* op)
         : mutex()
-        , id(0, 0, 0)
+        , id(0, 0)
         , destination(nullptr)
         , message(driver, sizeof(Protocol::Packet::DataHeader), 0)
         , state(OutboundMessage::State::NOT_STARTED)
@@ -73,15 +73,6 @@ class OutboundMessage {
     {
         SpinLock::Lock lock(mutex);
         return &message;
-    }
-
-    /**
-     * Return the unique identifier for this Message.
-     */
-    Protocol::MessageId getId()
-    {
-        SpinLock::Lock lock(mutex);
-        return id;
     }
 
     /**

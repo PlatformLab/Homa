@@ -53,9 +53,9 @@ class Message : public Homa::Message {
     uint32_t rawLength() const;
 
     /**
-     * Define this Message to have a header of type MessageHeader.  Used by
-     * senders to construct outbound messages.  This method should only be
-     * called once.
+     * Define this Message to have a header of type MessageHeader.  Used by the
+     * Transport set the header for outbound messages.  This method should only
+     * be called once per message.
      *
      * @return
      *      Return a pointer to a contiguous memory region where the defined
@@ -74,7 +74,7 @@ class Message : public Homa::Message {
 
     /**
      * Return a pointer to a contiguous memory region where the header of type
-     * MessageHeader is assumed to be stored.  Used by receivers to read the
+     * MessageHeader is assumed to be stored.  Used by the Transport to read the
      * header of inbound messages.
      */
     template <typename MessageHeader>

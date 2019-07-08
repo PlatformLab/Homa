@@ -41,8 +41,8 @@ class Transport;
  */
 class Sender {
   public:
-    explicit Sender(Transport* transport, uint64_t messageTimeoutCycles,
-                    uint64_t pingIntervalCycles);
+    explicit Sender(Transport* transport, uint64_t transportId,
+                    uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
     virtual ~Sender();
 
     virtual void handleDonePacket(Driver::Packet* packet, Driver* driver);
@@ -50,9 +50,8 @@ class Sender {
     virtual void handleResendPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleUnknownPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleErrorPacket(Driver::Packet* packet, Driver* driver);
-    virtual void sendMessage(Protocol::MessageId id,
-                             Driver::Address* destination,
-                             OutboundMessage* message);
+    virtual void sendMessage(OutboundMessage* message,
+                             Driver::Address* destination);
     virtual void dropMessage(OutboundMessage* message);
     virtual void poll();
 
@@ -66,6 +65,12 @@ class Sender {
 
     /// Transport of which this Sender is a part.
     Transport* transport;
+
+    /// Transport identifier.
+    const uint64_t transportId;
+
+    /// The sequence number to be used for the next OutboundMessage.
+    uint64_t nextMessageSequenceNumber;
 
     /// Tracks the set of outbound messages being sent by the Sender.
     std::unordered_map<Protocol::MessageId, OutboundMessage*,

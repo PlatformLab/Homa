@@ -48,7 +48,7 @@ class ReceiverTest : public ::testing::Test {
         , savedLogPolicy(Debug::getLogPolicy())
     {
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
-        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1028));
+        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         transport = new Transport(&mockDriver, 1);
@@ -77,8 +77,10 @@ class ReceiverTest : public ::testing::Test {
 TEST_F(ReceiverTest, handleDataPacket_basic)
 {
     // Setup registered op
-    Protocol::MessageId id(42, 32, 22);
-    Transport::Op* op = transport->opPool.construct(transport, &mockDriver, id);
+    Protocol::MessageId id(42, 32);
+    Protocol::OpId opId = {0, 0};
+    Transport::Op* op =
+        transport->opPool.construct(transport, &mockDriver, opId);
     InboundMessage* message = nullptr;
 
     EXPECT_TRUE(receiver->inboundMessages.empty());
@@ -195,7 +197,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 
 TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 {
-    Protocol::MessageId id(42, 32, 22);
+    Protocol::MessageId id(42, 32);
     InboundMessage* message = nullptr;
 
     Protocol::Packet::DataHeader* header =
@@ -242,7 +244,7 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 
 TEST_F(ReceiverTest, handleBusyPacket_basic)
 {
-    Protocol::MessageId id(42, 32, 22);
+    Protocol::MessageId id(42, 32);
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
@@ -264,7 +266,7 @@ TEST_F(ReceiverTest, handleBusyPacket_basic)
 
 TEST_F(ReceiverTest, handleBusyPacket_unknown)
 {
-    Protocol::MessageId id(42, 32, 22);
+    Protocol::MessageId id(42, 32);
 
     Protocol::Packet::BusyHeader* busyHeader =
         (Protocol::Packet::BusyHeader*)mockPacket.payload;
@@ -278,7 +280,7 @@ TEST_F(ReceiverTest, handleBusyPacket_unknown)
 
 TEST_F(ReceiverTest, handlePingPacket_basic)
 {
-    Protocol::MessageId id(42, 32, 22);
+    Protocol::MessageId id(42, 32);
     Homa::Mock::MockDriver::MockAddress mockAddress;
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
@@ -316,7 +318,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
 
 TEST_F(ReceiverTest, handlePingPacket_unknown)
 {
-    Protocol::MessageId id(42, 32, 22);
+    Protocol::MessageId id(42, 32);
     Homa::Mock::MockDriver::MockAddress mockAddress;
 
     char pingPayload[1028];
@@ -363,7 +365,7 @@ TEST_F(ReceiverTest, receiveMessage)
 
 TEST_F(ReceiverTest, dropMessage)
 {
-    Protocol::MessageId id = {42, 32, 0};
+    Protocol::MessageId id = {42, 32};
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
@@ -392,7 +394,7 @@ TEST_F(ReceiverTest, poll)
 
 TEST_F(ReceiverTest, sendDonePacket)
 {
-    Protocol::MessageId id = {42, 32, 1};
+    Protocol::MessageId id = {42, 32};
     Homa::Mock::MockDriver::MockAddress mockAddress;
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
@@ -416,7 +418,7 @@ TEST_F(ReceiverTest, sendDonePacket)
 
 TEST_F(ReceiverTest, sendErrorPacket)
 {
-    Protocol::MessageId id = {42, 32, 1};
+    Protocol::MessageId id = {42, 32};
     Homa::Mock::MockDriver::MockAddress mockAddress;
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
@@ -443,7 +445,7 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     void* op[3];
     InboundMessage* message[3];
     for (uint64_t i = 0; i < 3; ++i) {
-        Protocol::MessageId id = {42, 10 + i, 1};
+        Protocol::MessageId id = {42, 10 + i};
         op[i] = reinterpret_cast<void*>(i);
         message[i] = receiver->messagePool.construct(&mockDriver, 0, 0);
         message[i]->id = id;
@@ -489,7 +491,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
 {
     InboundMessage* message[5];
     for (uint64_t i = 0; i < 5; ++i) {
-        Protocol::MessageId id = {42, 10 + i, 1};
+        Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messagePool.construct(&mockDriver, 0, 0);
         message[i]->id = id;
         receiver->resendTimeouts.list.push_back(
@@ -553,7 +555,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     Protocol::Packet::ResendHeader* header1 =
         static_cast<Protocol::Packet::ResendHeader*>(mockResendPacket1.payload);
     EXPECT_EQ(Protocol::Packet::RESEND, header1->common.opcode);
-    EXPECT_EQ(message[3]->getId(), header1->common.messageId);
+    EXPECT_EQ(message[3]->id, header1->common.messageId);
     EXPECT_EQ(2U, header1->index);
     EXPECT_EQ(4U, header1->num);
     EXPECT_EQ(sizeof(Protocol::Packet::ResendHeader), mockResendPacket1.length);
@@ -561,7 +563,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     Protocol::Packet::ResendHeader* header2 =
         static_cast<Protocol::Packet::ResendHeader*>(mockResendPacket2.payload);
     EXPECT_EQ(Protocol::Packet::RESEND, header2->common.opcode);
-    EXPECT_EQ(message[3]->getId(), header2->common.messageId);
+    EXPECT_EQ(message[3]->id, header2->common.messageId);
     EXPECT_EQ(8U, header2->index);
     EXPECT_EQ(2U, header2->num);
     EXPECT_EQ(sizeof(Protocol::Packet::ResendHeader), mockResendPacket2.length);
@@ -579,12 +581,12 @@ TEST_F(ReceiverTest, checkResendTimeouts_empty)
 
 TEST_F(ReceiverTest, schedule)
 {
-    Protocol::MessageId id(42, 32, 22);
+    Protocol::MessageId id(42, 32);
     Driver::Address* sourceAddr = (Driver::Address*)22;
     uint32_t TOTAL_MESSAGE_LEN = 9000;
 
     InboundMessage* message =
-        receiver->messagePool.construct(&mockDriver, 28, TOTAL_MESSAGE_LEN);
+        receiver->messagePool.construct(&mockDriver, 24, TOTAL_MESSAGE_LEN);
     message->id = id;
     message->source = sourceAddr;
     message->message.numPackets = 1;
@@ -619,11 +621,11 @@ TEST_F(ReceiverTest, schedule)
 
 TEST_F(ReceiverTest, sendGrantPacket)
 {
-    Protocol::MessageId msgId(42, 32, 22);
+    Protocol::MessageId msgId(42, 32);
     Driver::Address* sourceAddr = (Driver::Address*)22;
     uint32_t TOTAL_MESSAGE_LEN = 9000;
 
-    InboundMessage message(&mockDriver, 28, TOTAL_MESSAGE_LEN);
+    InboundMessage message(&mockDriver, 24, TOTAL_MESSAGE_LEN);
     message.id = msgId;
     message.source = sourceAddr;
     message.numExpectedPackets = 9;
