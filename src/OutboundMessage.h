@@ -33,7 +33,7 @@ class Sender;
  * OutboundMessage objects are contained in the Transport::Op but should only
  * be accessed by the Sender.
  */
-class OutboundMessage {
+class OutboundMessage : public Message {
   public:
     /**
      * Defines the possible states of this OutboundMessage.
@@ -51,10 +51,10 @@ class OutboundMessage {
      * Construct an OutboundMessage.
      */
     explicit OutboundMessage(Driver* driver, void* op)
-        : mutex()
+        : Message(driver, sizeof(Protocol::Packet::DataHeader), 0)
+        , mutex()
         , id(0, 0)
         , destination(nullptr)
-        , message(driver, sizeof(Protocol::Packet::DataHeader), 0)
         , state(OutboundMessage::State::NOT_STARTED)
         , grantIndex(0)
         , sentIndex(0)
@@ -62,18 +62,6 @@ class OutboundMessage {
         , messageTimeout(this)
         , pingTimeout(this)
     {}
-
-    /**
-     * Return a pointer to a Message object that can be populated by
-     * applications of the Transport.  Caller should take care not
-     * to provide access to the returned Message while the Sender is
-     * processing the Message.
-     */
-    Message* get()
-    {
-        SpinLock::Lock lock(mutex);
-        return &message;
-    }
 
     /**
      * Return the current state of this message.
@@ -90,8 +78,6 @@ class OutboundMessage {
     Protocol::MessageId id;
     /// Contains destination address this message.
     Driver::Address* destination;
-    /// Collection of packets to be sent.
-    Message message;
     /// This message's current state.
     std::atomic<State> state;
     /// Packets up to (but excluding) this index can be sent.

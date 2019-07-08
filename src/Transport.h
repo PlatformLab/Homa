@@ -78,7 +78,7 @@ class Transport {
         virtual Message* getOutMessage()
         {
             SpinLock::Lock lock(mutex);
-            return outMessage.get();
+            return static_cast<Message*>(&outMessage);
         }
 
         /**

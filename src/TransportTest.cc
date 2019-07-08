@@ -468,8 +468,7 @@ TEST_F(TransportTest, allocOp)
     Transport::Op* op = static_cast<Transport::Op*>(context);
     EXPECT_EQ(1U, transport->opPool.outstandingObjects);
     EXPECT_EQ(1U, transport->activeOps.count(op));
-    EXPECT_EQ(sizeof(Protocol::Message::Header),
-              op->outMessage.message.rawLength());
+    EXPECT_EQ(sizeof(Protocol::Message::Header), op->outMessage.rawLength());
     EXPECT_EQ(Protocol::Message::INITIAL_REQUEST_TAG, op->outboundTag);
     EXPECT_TRUE(op->retained.load());
 }
@@ -504,12 +503,11 @@ TEST_F(TransportTest, receiveOp)
 
     Transport::Op* op = static_cast<Transport::Op*>(context);
     EXPECT_EQ(serverOp, op);
-    EXPECT_EQ(sizeof(Protocol::Message::Header),
-              op->outMessage.message.rawLength());
+    EXPECT_EQ(sizeof(Protocol::Message::Header), op->outMessage.rawLength());
     EXPECT_TRUE(transport->pendingServerOps.queue.empty());
-    EXPECT_EQ(rawAddress.bytes[0], op->outMessage.get()
-                                       ->getHeader<Protocol::Message::Header>()
-                                       ->replyAddress.bytes[0]);
+    EXPECT_EQ(rawAddress.bytes[0],
+              op->outMessage.getHeader<Protocol::Message::Header>()
+                  ->replyAddress.bytes[0]);
     EXPECT_TRUE(op->retained.load());
     EXPECT_EQ(0U, transport->pendingServerOps.queue.size());
 }
@@ -542,7 +540,7 @@ TEST_F(TransportTest, sendRequest_ServerOp)
 {
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     Protocol::OpId(0, 0), true);
-    op->outMessage.get()->setPacket(0, &mockPacket);
+    op->outMessage.setPacket(0, &mockPacket);
     InboundMessage message(&mockDriver, 0, 0);
     op->inMessage = &message;
     op->inboundTag = 2;
@@ -553,7 +551,7 @@ TEST_F(TransportTest, sendRequest_ServerOp)
     transport->sendRequest(op, destination);
 
     Protocol::Message::Header* outboundHeader =
-        op->outMessage.get()->getHeader<Protocol::Message::Header>();
+        op->outMessage.getHeader<Protocol::Message::Header>();
     EXPECT_EQ(3U, op->outboundTag);
     EXPECT_EQ(3U, outboundHeader->tag);
 }
@@ -565,14 +563,14 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
     Driver::Address* destination = (Driver::Address*)22;
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     expectedOpId, false);
-    op->outMessage.get()->setPacket(0, &mockPacket);
+    op->outMessage.setPacket(0, &mockPacket);
 
     EXPECT_CALL(*mockSender, sendMessage(Eq(&op->outMessage), Eq(destination)));
 
     transport->sendRequest(op, destination);
 
     Protocol::Message::Header* outboundHeader =
-        op->outMessage.get()->getHeader<Protocol::Message::Header>();
+        op->outMessage.getHeader<Protocol::Message::Header>();
     EXPECT_EQ(Protocol::Message::INITIAL_REQUEST_TAG, outboundHeader->tag);
     EXPECT_EQ(Protocol::Message::INITIAL_REQUEST_TAG, op->outboundTag);
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
@@ -585,7 +583,7 @@ TEST_F(TransportTest, sendReply)
     Driver::Address* replyAddress = (Driver::Address*)22;
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     Protocol::OpId(0, 0), true);
-    op->outMessage.get()->setPacket(0, &mockPacket);
+    op->outMessage.setPacket(0, &mockPacket);
     Protocol::OpId expectedOpId = {42, 32};
     InboundMessage message(transport->driver,
                            sizeof(Protocol::Packet::DataHeader), 0);
@@ -604,7 +602,7 @@ TEST_F(TransportTest, sendReply)
     transport->sendReply(op);
 
     Protocol::Message::Header* outboundHeader =
-        op->outMessage.get()->getHeader<Protocol::Message::Header>();
+        op->outMessage.getHeader<Protocol::Message::Header>();
     EXPECT_EQ(Protocol::Message::ULTIMATE_RESPONSE_TAG, outboundHeader->tag);
     EXPECT_EQ(Protocol::Message::ULTIMATE_RESPONSE_TAG, op->outboundTag);
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());

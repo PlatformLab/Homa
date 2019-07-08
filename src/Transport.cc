@@ -175,7 +175,7 @@ Transport::allocOp()
     lock.unlock();
 
     Protocol::Message::Header* header =
-        op->outMessage.get()->defineHeader<Protocol::Message::Header>();
+        op->outMessage.defineHeader<Protocol::Message::Header>();
     new (header) Protocol::Message::Header(opId);
     driver->getLocalAddress()->toRaw(&header->replyAddress);
     op->outboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
@@ -199,7 +199,7 @@ Transport::receiveOp()
 
         SpinLock::Lock lock_op(op->mutex);
         Protocol::Message::Header* header =
-            op->outMessage.get()->defineHeader<Protocol::Message::Header>();
+            op->outMessage.defineHeader<Protocol::Message::Header>();
         new (header) Protocol::Message::Header(op->opId);
         assert(op->inMessage != nullptr);
         assert(op->inMessage->get() != nullptr);
@@ -245,7 +245,7 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
     Op* op = static_cast<Op*>(context);
     SpinLock::Lock lock_op(op->mutex);
     Protocol::Message::Header* outboundHeader =
-        op->outMessage.get()->getHeader<Protocol::Message::Header>();
+        op->outMessage.getHeader<Protocol::Message::Header>();
     if (op->isServerOp) {
         op->outboundTag = op->inboundTag + 1;
         outboundHeader->tag = op->outboundTag;
@@ -277,7 +277,7 @@ Transport::sendReply(OpContext* context)
                                 ->replyAddress);
     op->state.store(OpContext::State::IN_PROGRESS);
     op->outboundTag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
-    op->outMessage.get()->getHeader<Protocol::Message::Header>()->tag =
+    op->outMessage.getHeader<Protocol::Message::Header>()->tag =
         op->outboundTag;
     sender->sendMessage(&op->outMessage, replyAddress);
 }

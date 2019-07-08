@@ -137,7 +137,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     uint16_t resendEnd = index + header->num;
 
     // In case a GRANT may have been lost, consider the RESEND a GRANT.
-    assert(resendEnd <= message->message.getNumPackets());
+    assert(resendEnd <= message->getNumPackets());
     message->grantIndex = std::max(message->grantIndex, resendEnd);
 
     if (index >= message->sentIndex) {
@@ -152,8 +152,8 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         // already been sent.
         resendEnd = std::min(resendEnd, message->sentIndex);
         for (uint16_t i = index; i < resendEnd; ++i) {
-            Driver::Packet* packet = message->message.getPacket(index++);
-            message->message.driver->sendPackets(&packet, 1);
+            Driver::Packet* packet = message->getPacket(index++);
+            message->driver->sendPackets(&packet, 1);
         }
     }
 
@@ -193,7 +193,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     pingTimeouts.setTimeout(&message->pingTimeout);
     lock.unlock();  // End Sender critical section
 
-    assert(header->indexLimit <= message->message.getNumPackets());
+    assert(header->indexLimit <= message->getNumPackets());
     message->grantIndex = std::max(message->grantIndex, header->indexLimit);
 
     driver->releasePackets(&packet, 1);
@@ -305,37 +305,35 @@ Sender::sendMessage(OutboundMessage* message, Driver::Address* destination)
     message->id = id;
     message->destination = destination;
     uint32_t unscheduledBytes =
-        RTT_TIME_US * (message->message.driver->getBandwidth() / 8);
+        RTT_TIME_US * (message->driver->getBandwidth() / 8);
 
     uint32_t actualMessageLen = 0;
     // fill out metadata.
-    for (uint16_t i = 0; i < message->message.getNumPackets(); ++i) {
-        Driver::Packet* packet = message->message.getPacket(i);
+    for (uint16_t i = 0; i < message->getNumPackets(); ++i) {
+        Driver::Packet* packet = message->getPacket(i);
         if (packet == nullptr) {
             PANIC(
                 "Incomplete message with id (%lu:%lu); missing packet "
                 "at offset %d; this shouldn't happen.",
                 message->id.transportId, message->id.sequence,
-                i * message->message.PACKET_DATA_LENGTH);
+                i * message->PACKET_DATA_LENGTH);
         }
 
         packet->address = message->destination;
         packet->priority = 0;
-        new (packet->payload) Protocol::Packet::DataHeader(
-            message->id, message->message.rawLength(), i);
-        actualMessageLen +=
-            (packet->length - message->message.PACKET_HEADER_LENGTH);
+        new (packet->payload)
+            Protocol::Packet::DataHeader(message->id, message->rawLength(), i);
+        actualMessageLen += (packet->length - message->PACKET_HEADER_LENGTH);
     }
 
     // perform sanity checks.
-    assert(message->message.rawLength() == actualMessageLen);
-    assert(message->message.PACKET_HEADER_LENGTH ==
+    assert(message->rawLength() == actualMessageLen);
+    assert(message->PACKET_HEADER_LENGTH ==
            sizeof(Protocol::Packet::DataHeader));
 
+    message->grantIndex = unscheduledBytes / message->PACKET_DATA_LENGTH;
     message->grantIndex =
-        unscheduledBytes / message->message.PACKET_DATA_LENGTH;
-    message->grantIndex =
-        std::min(message->grantIndex, message->message.getNumPackets());
+        std::min(message->grantIndex, message->getNumPackets());
     // TODO(cstlee): handle case when unscheduledBytes is less than 1 packet.
     assert(message->grantIndex != 0);
 }
@@ -434,7 +432,7 @@ Sender::checkPingTimeouts()
         // Have not heard from the Receiver in the last timeout period. Ping
         // the receiver to ensure it still knows about this Message.
         ControlPacket::send<Protocol::Packet::PingHeader>(
-            message->message.driver, message->destination, message->id);
+            message->driver, message->destination, message->id);
     }
 }
 
@@ -457,7 +455,7 @@ Sender::trySend()
     while (it != outboundMessages.end()) {
         message = it->second;
         message->mutex.lock();
-        if (message->sentIndex < message->message.getNumPackets() &&
+        if (message->sentIndex < message->getNumPackets() &&
             message->sentIndex < message->grantIndex) {
             // found a message to send.
             break;
@@ -470,17 +468,16 @@ Sender::trySend()
     // If there is a message to send; send the next packets.
     if (message != nullptr) {
         SpinLock::Lock lock_message(message->mutex, std::adopt_lock);
-        assert(message->grantIndex <= message->message.getNumPackets());
+        assert(message->grantIndex <= message->getNumPackets());
         assert(message->grantIndex >= message->sentIndex);
         uint16_t numPkts = message->grantIndex - message->sentIndex;
         for (uint16_t i = 0; i < numPkts; ++i) {
-            Driver::Packet* packet =
-                message->message.getPacket(message->sentIndex + i);
+            Driver::Packet* packet = message->getPacket(message->sentIndex + i);
             assert(packet != nullptr);
-            message->message.driver->sendPackets(&packet, 1);
+            message->driver->sendPackets(&packet, 1);
         }
         message->sentIndex += numPkts;
-        if (message->sentIndex >= message->message.getNumPackets()) {
+        if (message->sentIndex >= message->getNumPackets()) {
             // We have finished sending the message.
             message->state.store(OutboundMessage::State::SENT);
             transport->hintUpdatedOp(message->op);

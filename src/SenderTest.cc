@@ -121,11 +121,11 @@ TEST_F(SenderTest, handleResendPacket_basic)
     std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
     for (int i = 0; i < 10; ++i) {
         packets.push_back(new Homa::Mock::MockDriver::MockPacket(payload));
-        message->message.setPacket(i, packets[i]);
+        message->setPacket(i, packets[i]);
     }
     message->sentIndex = 5;
     message->grantIndex = 5;
-    EXPECT_EQ(10U, message->message.getNumPackets());
+    EXPECT_EQ(10U, message->getNumPackets());
 
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
@@ -175,11 +175,11 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
     char data[1028];
     Homa::Mock::MockDriver::MockPacket dataPacket(data);
     for (int i = 0; i < 10; ++i) {
-        message->message.setPacket(i, &dataPacket);
+        message->setPacket(i, &dataPacket);
     }
     message->sentIndex = 5;
     message->grantIndex = 5;
-    EXPECT_EQ(10U, message->message.getNumPackets());
+    EXPECT_EQ(10U, message->getNumPackets());
 
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
@@ -219,7 +219,7 @@ TEST_F(SenderTest, handleGrantPacket_basic)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
-    message->message.numPackets = 10;
+    message->numPackets = 10;
     EXPECT_EQ(5, message->grantIndex);
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
@@ -246,7 +246,7 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
-    message->message.numPackets = 10;
+    message->numPackets = 10;
     EXPECT_EQ(5, message->grantIndex);
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
@@ -378,10 +378,9 @@ TEST_F(SenderTest, sendMessage_basic)
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = &op->outMessage;
 
-    message->message.setPacket(0, &mockPacket);
-    message->message.messageLength = 420;
-    mockPacket.length =
-        message->message.messageLength + message->message.PACKET_HEADER_LENGTH;
+    message->setPacket(0, &mockPacket);
+    message->messageLength = 420;
+    mockPacket.length = message->messageLength + message->PACKET_HEADER_LENGTH;
     Driver::Address* destination = (Driver::Address*)22;
 
     EXPECT_FALSE(sender->outboundMessages.find(id) !=
@@ -395,7 +394,7 @@ TEST_F(SenderTest, sendMessage_basic)
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     EXPECT_EQ(id, header->common.messageId);
     EXPECT_EQ(destination, message->destination);
-    EXPECT_EQ(message->message.messageLength, header->totalLength);
+    EXPECT_EQ(message->messageLength, header->totalLength);
     EXPECT_TRUE(sender->outboundMessages.find(id) !=
                 sender->outboundMessages.end());
     EXPECT_EQ(message, sender->outboundMessages.find(id)->second);
@@ -418,15 +417,15 @@ TEST_F(SenderTest, sendMessage_multipacket)
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = &op->outMessage;
 
-    message->message.setPacket(0, &packet0);
-    message->message.setPacket(1, &packet1);
-    message->message.messageLength = 1420;
+    message->setPacket(0, &packet0);
+    message->setPacket(1, &packet1);
+    message->messageLength = 1420;
     packet0.length = 1000 + 24;
     packet1.length = 420 + 24;
     Driver::Address* destination = (Driver::Address*)22;
 
     EXPECT_EQ(24U, sizeof(Protocol::Packet::DataHeader));
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
 
     sender->sendMessage(message, destination);
 
@@ -438,7 +437,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
     EXPECT_EQ(0U, packet0.priority);
     header = static_cast<Protocol::Packet::DataHeader*>(packet0.payload);
     EXPECT_EQ(message->id, header->common.messageId);
-    EXPECT_EQ(message->message.messageLength, header->totalLength);
+    EXPECT_EQ(message->messageLength, header->totalLength);
 
     // Packet1
     EXPECT_EQ(22U, (uint64_t)packet1.address);
@@ -446,7 +445,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
     header = static_cast<Protocol::Packet::DataHeader*>(packet1.payload);
     EXPECT_EQ(message->id, header->common.messageId);
     EXPECT_EQ(destination, message->destination);
-    EXPECT_EQ(message->message.messageLength, header->totalLength);
+    EXPECT_EQ(message->messageLength, header->totalLength);
 }
 
 // Used to capture log output.
@@ -469,7 +468,7 @@ TEST_F(SenderTest, sendMessage_missingPacket)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = &op->outMessage;
-    message->message.setPacket(1, &mockPacket);
+    message->setPacket(1, &mockPacket);
 
     EXPECT_DEATH(sender->sendMessage(message, nullptr),
                  ".*Incomplete message with id \\(22:1\\); missing packet at "
@@ -485,13 +484,13 @@ TEST_F(SenderTest, sendMessage_unscheduledLimit)
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = &op->outMessage;
     for (int i = 0; i < 9; ++i) {
-        message->message.setPacket(i, &mockPacket);
+        message->setPacket(i, &mockPacket);
     }
-    message->message.messageLength = 9000;
+    message->messageLength = 9000;
     mockPacket.length = 1000 + sizeof(Protocol::Packet::DataHeader);
     Driver::Address* destination = (Driver::Address*)22;
-    EXPECT_EQ(9U, message->message.getNumPackets());
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(9U, message->getNumPackets());
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
 
     EXPECT_CALL(mockDriver, getBandwidth).WillOnce(Return(8000));
 
@@ -512,7 +511,7 @@ TEST_F(SenderTest, dropMessage)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 5);
-    message->message.messageLength = 9000;
+    message->messageLength = 9000;
     EXPECT_FALSE(sender->messageTimeouts.list.empty());
     EXPECT_FALSE(sender->pingTimeouts.list.empty());
 
@@ -591,10 +590,10 @@ TEST_F(SenderTest, trySend_basic)
     Homa::Mock::MockDriver::MockPacket* packet[5];
     for (int i = 0; i < 5; ++i) {
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
-        message->message.setPacket(i, packet[i]);
+        message->setPacket(i, packet[i]);
     }
-    message->message.messageLength = 4000;
-    EXPECT_EQ(5U, message->message.getNumPackets());
+    message->messageLength = 4000;
+    EXPECT_EQ(5U, message->getNumPackets());
     EXPECT_EQ(2U, message->grantIndex);
     EXPECT_EQ(0U, message->sentIndex);
     EXPECT_NE(OutboundMessage::State::SENT, message->state);
@@ -652,36 +651,36 @@ TEST_F(SenderTest, trySend_multipleMessages)
     }
 
     // Message 0: All packets sent
-    message[0]->message.messageLength = 5000;
+    message[0]->messageLength = 5000;
     EXPECT_EQ(5, message[0]->grantIndex);
     message[0]->sentIndex = 5;
     message[0]->state.store(OutboundMessage::State::SENT);
     for (int i = 0; i < 5; ++i) {
-        message[0]->message.setPacket(i, nullptr);
+        message[0]->setPacket(i, nullptr);
     }
 
     // Message 1: Waiting for more grants
-    message[1]->message.messageLength = 9000;
+    message[1]->messageLength = 9000;
     EXPECT_EQ(5, message[1]->grantIndex);
     message[1]->sentIndex = 5;
     for (int i = 0; i < 9; ++i) {
-        message[1]->message.setPacket(i, nullptr);
+        message[1]->setPacket(i, nullptr);
     }
 
     // Message 2: New message, send 5 packets
-    message[2]->message.messageLength = 9000;
+    message[2]->messageLength = 9000;
     EXPECT_EQ(5, message[2]->grantIndex);
     EXPECT_EQ(0, message[2]->sentIndex);
     for (int i = 0; i < 9; ++i) {
-        message[2]->message.setPacket(i, &mockPacket);
+        message[2]->setPacket(i, &mockPacket);
     }
 
     // Message 3: Send 3 packets to complete send.
-    message[3]->message.messageLength = 5000;
+    message[3]->messageLength = 5000;
     EXPECT_EQ(5, message[3]->grantIndex);
     EXPECT_EQ(0, message[3]->sentIndex);
     for (int i = 0; i < 5; ++i) {
-        message[3]->message.setPacket(i, &mockPacket);
+        message[3]->setPacket(i, &mockPacket);
     }
 
     EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(5);
@@ -717,9 +716,9 @@ TEST_F(SenderTest, trySend_alreadyRunning)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 1);
-    message->message.setPacket(0, &mockPacket);
-    message->message.messageLength = 1000;
-    EXPECT_EQ(1U, message->message.getNumPackets());
+    message->setPacket(0, &mockPacket);
+    message->messageLength = 1000;
+    EXPECT_EQ(1U, message->getNumPackets());
     EXPECT_EQ(1, message->grantIndex);
     EXPECT_EQ(0, message->sentIndex);
 
