@@ -64,7 +64,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
             assert(inMessage != nullptr);
             if (inState == InboundMessage::State::COMPLETED) {
                 // Strip-off the Message::Header.
-                inMessage->get()->defineHeader<Protocol::Message::Header>();
+                inMessage->defineHeader<Protocol::Message::Header>();
                 SpinLock::Lock lock_queue(transport->pendingServerOps.mutex);
                 transport->pendingServerOps.queue.push_back(this);
                 state.store(State::IN_PROGRESS);
@@ -99,7 +99,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
         } else if (copyOfState == State::IN_PROGRESS) {
             if (inState == InboundMessage::State::COMPLETED) {
                 // Strip-off the Message::Header.
-                inMessage->get()->defineHeader<Protocol::Message::Header>();
+                inMessage->defineHeader<Protocol::Message::Header>();
                 state.store(State::COMPLETED);
                 transport->hintUpdatedOp(this);
             }
@@ -202,10 +202,8 @@ Transport::receiveOp()
             op->outMessage.defineHeader<Protocol::Message::Header>();
         new (header) Protocol::Message::Header(op->opId);
         assert(op->inMessage != nullptr);
-        assert(op->inMessage->get() != nullptr);
-        header->replyAddress = op->inMessage->get()
-                                   ->getHeader<Protocol::Message::Header>()
-                                   ->replyAddress;
+        header->replyAddress =
+            op->inMessage->getHeader<Protocol::Message::Header>()->replyAddress;
         op->retained.store(true);
     }
     return op;
@@ -271,10 +269,8 @@ Transport::sendReply(OpContext* context)
     Op* op = static_cast<Op*>(context);
     SpinLock::Lock lock_op(op->mutex);
     assert(op->isServerOp);
-    Driver::Address* replyAddress =
-        driver->getAddress(&op->inMessage->get()
-                                ->getHeader<Protocol::Message::Header>()
-                                ->replyAddress);
+    Driver::Address* replyAddress = driver->getAddress(
+        &op->inMessage->getHeader<Protocol::Message::Header>()->replyAddress);
     op->state.store(OpContext::State::IN_PROGRESS);
     op->outboundTag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
     op->outMessage.getHeader<Protocol::Message::Header>()->tag =
@@ -352,7 +348,7 @@ Transport::processInboundMessages()
     for (InboundMessage* message = receiver->receiveMessage();
          message != nullptr; message = receiver->receiveMessage()) {
         Protocol::Message::Header* header =
-            message->get()->getHeader<Protocol::Message::Header>();
+            message->getHeader<Protocol::Message::Header>();
         if (header->tag == Protocol::Message::ULTIMATE_RESPONSE_TAG) {
             // Incoming message is a response.
             auto it = remoteOps.find(header->opId);

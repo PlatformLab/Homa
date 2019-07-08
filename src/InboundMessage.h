@@ -35,7 +35,7 @@ class Receiver;
  * InboundMessage objects are held in the Transport::Op but should only be
  * accessed by the Receiver.
  */
-class InboundMessage {
+class InboundMessage : public Message {
   public:
     /**
      * Defines the possible states of this InboundMessage.
@@ -49,29 +49,18 @@ class InboundMessage {
 
     explicit InboundMessage(Driver* driver, uint16_t packetHeaderLength,
                             uint32_t messageLength)
-        : mutex()
+        : Message(driver, packetHeaderLength, messageLength)
+        , mutex()
         , id(0, 0)
         , source(nullptr)
         , numExpectedPackets(0)
         , grantIndexLimit(0)
-        , message(driver, packetHeaderLength, messageLength)
         , state(InboundMessage::State::IN_PROGRESS)
         , newPacket(false)
         , op(nullptr)
         , messageTimeout(this)
         , resendTimeout(this)
     {}
-
-    /**
-     * Return a pointer to a Message object that can be read by applications
-     * of the Transport.  Otherwise, nullptr will be returned when no
-     * Message is available.
-     */
-    Message* get()
-    {
-        SpinLock::Lock lock(mutex);
-        return &message;
-    }
 
     /**
      * Associate a particular Transport::Op with this Message.  Allows the
@@ -102,8 +91,6 @@ class InboundMessage {
     uint16_t numExpectedPackets;
     /// The packet index up to which the Receiver as granted.
     uint16_t grantIndexLimit;
-    /// Collection of packets being received.
-    Message message;
     /// This message's current state.
     std::atomic<State> state;
     /// Marked true when a new data packet arrives; cleared by the scheduler.

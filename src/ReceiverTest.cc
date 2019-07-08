@@ -114,9 +114,9 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     message->registerOp(op);
     EXPECT_EQ(&mockAddress, message->source);
     EXPECT_EQ(2U, message->numExpectedPackets);
-    EXPECT_EQ(1420U, message->message.messageLength);
-    EXPECT_EQ(1U, message->message.getNumPackets());
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(1420U, message->messageLength);
+    EXPECT_EQ(1U, message->getNumPackets());
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     EXPECT_TRUE(message->newPacket);
     EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
@@ -142,9 +142,9 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(receiver->receivedMessages.empty());
-    EXPECT_TRUE(message->message.occupied.test(1));
-    EXPECT_EQ(1U, message->message.getNumPackets());
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_TRUE(message->occupied.test(1));
+    EXPECT_EQ(1U, message->getNumPackets());
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     EXPECT_FALSE(message->newPacket);
     EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
@@ -169,8 +169,8 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_TRUE(receiver->receivedMessages.empty());
-    EXPECT_EQ(2U, message->message.getNumPackets());
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(2U, message->getNumPackets());
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     EXPECT_TRUE(message->newPacket);
     EXPECT_EQ(InboundMessage::State::COMPLETED, message->state);
     EXPECT_EQ(1U, transport->updateHints.ops.count(op));
@@ -218,8 +218,8 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     message = receiver->inboundMessages.find(id)->second;
     EXPECT_EQ(1U, message->numExpectedPackets);
-    EXPECT_EQ(450, message->message.messageLength);
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(450, message->messageLength);
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
 
     receiver->inboundMessages.erase(id);
 
@@ -228,8 +228,8 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     message = receiver->inboundMessages.find(id)->second;
     EXPECT_EQ(1U, message->numExpectedPackets);
-    EXPECT_EQ(1000U, message->message.messageLength);
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(1000U, message->messageLength);
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
 
     receiver->inboundMessages.erase(id);
 
@@ -238,8 +238,8 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     message = receiver->inboundMessages.find(id)->second;
     EXPECT_EQ(2U, message->numExpectedPackets);
-    EXPECT_EQ(1450U, message->message.messageLength);
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(1450U, message->messageLength);
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
 }
 
 TEST_F(ReceiverTest, handleBusyPacket_basic)
@@ -515,10 +515,10 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     message[3]->source = &mockAddress;
     message[3]->grantIndexLimit = 10;
     for (uint16_t i = 0; i < 2; ++i) {
-        message[3]->message.setPacket(i, &mockPacket);
+        message[3]->setPacket(i, &mockPacket);
     }
     for (uint16_t i = 6; i < 8; ++i) {
-        message[3]->message.setPacket(i, &mockPacket);
+        message[3]->setPacket(i, &mockPacket);
     }
     // Message[4]: No timeout
     message[4]->resendTimeout.expirationCycleTime = 10001;
@@ -589,9 +589,9 @@ TEST_F(ReceiverTest, schedule)
         receiver->messagePool.construct(&mockDriver, 24, TOTAL_MESSAGE_LEN);
     message->id = id;
     message->source = sourceAddr;
-    message->message.numPackets = 1;
-    EXPECT_EQ(1000U, message->message.PACKET_DATA_LENGTH);
-    EXPECT_EQ(1U, message->message.getNumPackets());
+    message->numPackets = 1;
+    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
+    EXPECT_EQ(1U, message->getNumPackets());
     EXPECT_FALSE(message->newPacket);
 
     receiver->inboundMessages.insert({id, message});
@@ -629,13 +629,13 @@ TEST_F(ReceiverTest, sendGrantPacket)
     message.id = msgId;
     message.source = sourceAddr;
     message.numExpectedPackets = 9;
-    EXPECT_EQ(1000U, message.message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(1000U, message.PACKET_DATA_LENGTH);
 
     InSequence _seq;
 
     {
         // GRANT 5 more packets (up to index 6)
-        message.message.numPackets = 1;
+        message.numPackets = 1;
 
         EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
         EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1)))
@@ -659,7 +659,7 @@ TEST_F(ReceiverTest, sendGrantPacket)
 
     {
         // GRANT 1 more packet; MAX packet index 9.
-        message.message.numPackets = 8;
+        message.numPackets = 8;
 
         EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
         EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1)))

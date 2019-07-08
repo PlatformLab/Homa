@@ -97,9 +97,9 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         std::string addrStr = packet->address->toString();
         message->source = driver->getAddress(&addrStr);
         message->numExpectedPackets =
-            messageLength / message->message.PACKET_DATA_LENGTH;
+            messageLength / message->PACKET_DATA_LENGTH;
         message->numExpectedPackets +=
-            messageLength % message->message.PACKET_DATA_LENGTH ? 1 : 0;
+            messageLength % message->PACKET_DATA_LENGTH ? 1 : 0;
 
         inboundMessages.insert(it, {id, message});
         receivedMessages.push_back(message);
@@ -121,19 +121,19 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
 
     // Things that must be true (sanity check)
     assert(message->source->toString() == packet->address->toString());
-    assert(message->message.rawLength() == header->totalLength);
+    assert(message->rawLength() == header->totalLength);
 
     // Add the packet
-    bool packetAdded = message->message.setPacket(header->index, packet);
+    bool packetAdded = message->setPacket(header->index, packet);
     if (packetAdded) {
         // This value is technically sloppy since last packet of the message
         // which may not be a full packet. However, this should be fine since
         // receiving the last packet means we don't need the scheduler to GRANT
         // more packets anyway.
-        uint32_t totalReceivedBytes = message->message.PACKET_DATA_LENGTH *
-                                      message->message.getNumPackets();
+        uint32_t totalReceivedBytes =
+            message->PACKET_DATA_LENGTH * message->getNumPackets();
         message->newPacket = true;
-        if (totalReceivedBytes >= message->message.rawLength()) {
+        if (totalReceivedBytes >= message->rawLength()) {
             message->state.store(InboundMessage::State::COMPLETED);
             if (message->op != nullptr) {
                 transport->hintUpdatedOp(message->op);
@@ -337,7 +337,7 @@ Receiver::checkResendTimeouts()
 
         // Sender is blocked on this Receiver; all granted packets have already
         // been received.
-        if (message->message.getNumPackets() >= message->grantIndexLimit) {
+        if (message->getNumPackets() >= message->grantIndexLimit) {
             continue;
         }
 
@@ -347,7 +347,7 @@ Receiver::checkResendTimeouts()
         uint16_t index = 0;
         uint16_t num = 0;
         for (uint16_t i = 0; i < message->grantIndexLimit; ++i) {
-            if (message->message.getPacket(i) == nullptr) {
+            if (message->getPacket(i) == nullptr) {
                 // Unreceived packet
                 if (num == 0) {
                     // First unreceived packet
@@ -359,8 +359,8 @@ Receiver::checkResendTimeouts()
                 if (num != 0) {
                     // Send out the range of packets found so far.
                     ControlPacket::send<Protocol::Packet::ResendHeader>(
-                        message->message.driver, message->source, message->id,
-                        index, num);
+                        message->driver, message->source, message->id, index,
+                        num);
                     num = 0;
                 }
             }
@@ -368,8 +368,7 @@ Receiver::checkResendTimeouts()
         if (num != 0) {
             // Send out the last range of packets found.
             ControlPacket::send<Protocol::Packet::ResendHeader>(
-                message->message.driver, message->source, message->id, index,
-                num);
+                message->driver, message->source, message->id, index, num);
         }
     }
 }
@@ -394,7 +393,7 @@ Receiver::schedule()
         if (message->newPacket) {
             // found a message to grant.
             lock.unlock();
-            sendGrantPacket(message, message->message.driver, lock_message);
+            sendGrantPacket(message, message->driver, lock_message);
             message->newPacket = false;
             break;
         }
@@ -427,11 +426,10 @@ Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
     //               a single packet length. The sender might get stuck if the
     //               grants are smaller than a single packet.
     uint32_t RTT_BYTES = RTT_TIME_US * (driver->getBandwidth() / 8);
-    uint32_t RTT_PACKETS = RTT_BYTES / message->message.PACKET_DATA_LENGTH;
-    uint16_t indexLimit =
-        std::min(Util::downCast<uint16_t>(message->message.getNumPackets() +
-                                          RTT_PACKETS),
-                 message->numExpectedPackets);
+    uint32_t RTT_PACKETS = RTT_BYTES / message->PACKET_DATA_LENGTH;
+    uint16_t indexLimit = std::min(
+        Util::downCast<uint16_t>(message->getNumPackets() + RTT_PACKETS),
+        message->numExpectedPackets);
     message->grantIndexLimit = indexLimit;
 
     ControlPacket::send<Protocol::Packet::GrantHeader>(driver, message->source,

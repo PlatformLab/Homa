@@ -88,7 +88,7 @@ class Transport {
         {
             SpinLock::Lock lock(mutex);
             if (inMessage != nullptr) {
-                return inMessage->get();
+                return static_cast<Message*>(inMessage);
             }
             return nullptr;
         }
