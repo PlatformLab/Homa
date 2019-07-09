@@ -53,23 +53,61 @@ class Message : public Homa::Message {
     uint32_t rawLength() const;
 
     /**
-     * Define this Message to have a header of type MessageHeader.  Used by the
-     * Transport set the header for outbound messages.  This method should only
-     * be called once per message.
+     * Reserve space for the message header.
      *
-     * @return
-     *      Return a pointer to a contiguous memory region where the defined
-     *      header can be stored.
+     * This method must be called before any other data appended to the Message
+     * and should be only called once per Message.
+     *
+     * @tparam MessageHeader
+     *    The type of the message header for which space should be reserved.
      */
     template <typename MessageHeader>
-    MessageHeader* defineHeader()
+    void allocHeader()
     {
-        MESSAGE_HEADER_LENGTH = sizeof(MessageHeader);
+        assert(MESSAGE_HEADER_LENGTH == 0);
         // As an optimization, assume the header fits within the first packet of
         // the message.
         assert(MESSAGE_HEADER_LENGTH <= PACKET_DATA_LENGTH);
-        messageLength = std::max(messageLength, MESSAGE_HEADER_LENGTH);
-        return getHeader<MessageHeader>();
+        MESSAGE_HEADER_LENGTH = sizeof(MessageHeader);
+        if (!occupied.test(0)) {
+            assert(messageLength == 0);
+            packets[0] = driver->allocPacket();
+            occupied.set(0);
+            numPackets++;
+            messageLength = MESSAGE_HEADER_LENGTH;
+            assert(packets[0]->length == 0);
+            // TODO(cstlee): A Message probably shouldn't be in charge of
+            //               setting the packet length.
+            packets[0]->length = Util::downCast<uint16_t>(
+                PACKET_HEADER_LENGTH + MESSAGE_HEADER_LENGTH);
+        } else {
+            assert(messageLength >= MESSAGE_HEADER_LENGTH);
+            assert(packets[0]->length >=
+                   Util::downCast<uint16_t>(PACKET_HEADER_LENGTH +
+                                            MESSAGE_HEADER_LENGTH));
+        }
+    }
+
+    /**
+     * Construct the message header in the previously reserved region within
+     * this Message.
+     *
+     * The allocHeader() method should have been called prior to calling this
+     * method.
+     *
+     * @tparam MessageHeader
+     *      The type of the message header that should be constructed.
+     * @param args
+     *      Arguments to the MessageHeader's constructor.
+     *
+     * @sa allocHeader()
+     */
+    template <typename MessageHeader, typename... Args>
+    void setHeader(Args&&... args)
+    {
+        assert(MESSAGE_HEADER_LENGTH == sizeof(MessageHeader));
+        assert(occupied.test(0));
+        new (getHeader()) MessageHeader(static_cast<Args&&>(args)...);
     }
 
     /**
@@ -78,12 +116,13 @@ class Message : public Homa::Message {
      * header of inbound messages.
      */
     template <typename MessageHeader>
-    MessageHeader* getHeader()
+    const MessageHeader* getHeader()
     {
         // As an optimization, assume the header fits within the first packet of
         // the message.
         assert(sizeof(MessageHeader) <= PACKET_DATA_LENGTH);
-        return reinterpret_cast<MessageHeader*>(getHeader());
+        assert(sizeof(MessageHeader) <= messageLength);
+        return reinterpret_cast<const MessageHeader*>(getHeader());
     }
 
     /// Driver from which packets were allocated and to which they should be

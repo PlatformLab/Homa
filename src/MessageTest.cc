@@ -43,7 +43,7 @@ class MessageTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        msg = new Message(&mockDriver, 28, 0);
+        msg = new Message(&mockDriver, 24, 0);
     }
 
     ~MessageTest()
@@ -103,20 +103,20 @@ TEST_F(MessageTest, append_basic)
 {
     char source[] = "Hello, world!";
     msg->setPacket(0, &packet0);
-    packet0.length = 28 + 20 + 2000 - 7;
-    msg->messageLength = 20 + 2000 - 7;
+    packet0.length = 24 + 24 + 2000 - 7;
+    msg->messageLength = 24 + 2000 - 7;
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet1));
 
     msg->append(source, 14);
 
-    EXPECT_EQ(20 + 2000 + 7, msg->messageLength);
+    EXPECT_EQ(24 + 2000 + 7, msg->messageLength);
     EXPECT_EQ(2U, msg->numPackets);
     EXPECT_TRUE(msg->packets[1] == &packet1);
-    EXPECT_EQ(28 + 20 + 2000, packet0.length);
-    EXPECT_EQ(28 + 7, packet1.length);
-    EXPECT_TRUE(std::memcmp(buf + 28 + 20 + 2000 - 7, source, 7) == 0);
-    EXPECT_TRUE(std::memcmp(buf + 28 + 20 + 2000 + 28, source + 7, 7) == 0);
+    EXPECT_EQ(24 + 24 + 2000, packet0.length);
+    EXPECT_EQ(24 + 7, packet1.length);
+    EXPECT_TRUE(std::memcmp(buf + 24 + 24 + 2000 - 7, source, 7) == 0);
+    EXPECT_TRUE(std::memcmp(buf + 24 + 24 + 2000 + 24, source + 7, 7) == 0);
 }
 
 TEST_F(MessageTest, append_truncated)
@@ -137,7 +137,7 @@ TEST_F(MessageTest, append_truncated)
     EXPECT_EQ(1U, msg->numPackets);
     EXPECT_EQ(msg->PACKET_HEADER_LENGTH + msg->PACKET_DATA_LENGTH,
               packet0.length);
-    EXPECT_TRUE(std::memcmp(buf + 28 + 20 + 2000 - 7, source, 7) == 0);
+    EXPECT_TRUE(std::memcmp(buf + 24 + 24 + 2000 - 7, source, 7) == 0);
 
     EXPECT_EQ(1U, handler.messages.size());
     const Debug::DebugMessage& m = handler.messages.at(0);
@@ -145,7 +145,7 @@ TEST_F(MessageTest, append_truncated)
     EXPECT_STREQ("append", m.function);
     EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
     EXPECT_EQ(
-        "Max message size limit (2068480B) reached; 7 of 14 bytes appended",
+        "Max message size limit (2072576B) reached; 7 of 14 bytes appended",
         m.message);
 
     Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
@@ -156,13 +156,13 @@ TEST_F(MessageTest, get_basic)
     char source[] = "Hello, world!";
     msg->setPacket(0, &packet0);
     msg->setPacket(1, &packet1);
-    msg->messageLength = 20 + 2007;
-    std::memcpy(buf + 28 + 20 + 2000 - 7, source, 7);
-    std::memcpy(buf + 28 + 20 + 2000 + 28, source + 7, 7);
-    packet0.length = 28 + 20 + 2000;
-    packet1.length = 28 + 7;
-    msg->MESSAGE_HEADER_LENGTH = 20;
-    EXPECT_EQ(28U, msg->PACKET_HEADER_LENGTH);
+    msg->messageLength = 24 + 2007;
+    std::memcpy(buf + 24 + 24 + 2000 - 7, source, 7);
+    std::memcpy(buf + 24 + 24 + 2000 + 24, source + 7, 7);
+    packet0.length = 24 + 24 + 2000;
+    packet1.length = 24 + 7;
+    msg->MESSAGE_HEADER_LENGTH = 24;
+    EXPECT_EQ(24U, msg->PACKET_HEADER_LENGTH);
 
     char dest[4096];
     uint32_t bytes = msg->get(2000 - 7, dest, 20);
@@ -175,11 +175,11 @@ TEST_F(MessageTest, get_offsetTooLarge)
 {
     msg->setPacket(0, &packet0);
     msg->setPacket(1, &packet1);
-    msg->messageLength = 20 + 2007;
-    packet0.length = 28 + 20 + 2000;
-    packet1.length = 28 + 7;
+    msg->messageLength = 24 + 2007;
+    packet0.length = 24 + 24 + 2000;
+    packet1.length = 24 + 7;
     msg->MESSAGE_HEADER_LENGTH = 20;
-    EXPECT_EQ(28U, msg->PACKET_HEADER_LENGTH);
+    EXPECT_EQ(24U, msg->PACKET_HEADER_LENGTH);
 
     char dest[4096];
     uint32_t bytes = msg->get(4000, dest, 20);
@@ -194,11 +194,11 @@ TEST_F(MessageTest, get_missingPacket)
 
     char source[] = "Hello,";
     msg->setPacket(0, &packet0);
-    msg->messageLength = 20 + 2007;
-    std::memcpy(buf + 28 + 20 + 2000 - 7, source, 7);
-    packet0.length = 28 + 20 + 2000;
-    msg->MESSAGE_HEADER_LENGTH = 20;
-    EXPECT_EQ(28U, msg->PACKET_HEADER_LENGTH);
+    msg->messageLength = 24 + 2007;
+    std::memcpy(buf + 24 + 24 + 2000 - 7, source, 7);
+    packet0.length = 24 + 24 + 2000;
+    msg->MESSAGE_HEADER_LENGTH = 24;
+    EXPECT_EQ(24U, msg->PACKET_HEADER_LENGTH);
 
     char dest[4096];
     uint32_t bytes = msg->get(2000 - 7, dest, 20);
@@ -264,26 +264,68 @@ TEST_F(MessageTest, rawLength)
     EXPECT_EQ(200U, msg->rawLength());
 }
 
-TEST_F(MessageTest, defineHeader)
+// Used in tests of the alloc/set/getHeader
+struct FooHeader {
+    FooHeader(uint64_t a, uint64_t b)
+        : a(a)
+        , b(b)
+    {}
+    uint64_t a;
+    uint64_t b;
+};
+
+TEST_F(MessageTest, allocHeader_emptyMessage)
 {
-    msg->setPacket(0, &packet0);
-    msg->messageLength = 20;
+    EXPECT_EQ(16U, sizeof(FooHeader));
+    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
 
-    msg->defineHeader<char[10]>();
+    msg->allocHeader<FooHeader>();
 
-    EXPECT_EQ(10U, msg->MESSAGE_HEADER_LENGTH);
-    EXPECT_EQ(20U, msg->messageLength);
+    EXPECT_EQ(16U, msg->MESSAGE_HEADER_LENGTH);
+    EXPECT_EQ(&packet0, msg->packets[0]);
+    EXPECT_TRUE(msg->occupied.test(0));
+    EXPECT_EQ(1U, msg->numPackets);
+    EXPECT_EQ(16U, msg->messageLength);
+    EXPECT_EQ(24U + 16U, msg->packets[0]->length);
 }
 
-TEST_F(MessageTest, defineHeader_emptyMessage)
+TEST_F(MessageTest, allocHeader_receivedMessage)
 {
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
-    EXPECT_EQ(0U, msg->messageLength);
+    EXPECT_EQ(16U, sizeof(FooHeader));
+    msg->setPacket(0, &packet0);
+    msg->messageLength = 16;
+    msg->packets[0]->length = 24 + 16;
 
-    msg->defineHeader<char[10]>();
+    msg->allocHeader<FooHeader>();
 
-    EXPECT_EQ(10U, msg->MESSAGE_HEADER_LENGTH);
-    EXPECT_EQ(10U, msg->messageLength);
+    EXPECT_EQ(16U, msg->MESSAGE_HEADER_LENGTH);
+}
+
+TEST_F(MessageTest, setHeader)
+{
+    msg->setPacket(0, &packet0);
+    msg->MESSAGE_HEADER_LENGTH = sizeof(FooHeader);
+
+    msg->setHeader<FooHeader>(42, 88);
+
+    FooHeader* header = reinterpret_cast<FooHeader*>(
+        static_cast<char*>(packet0.payload) + msg->PACKET_HEADER_LENGTH);
+    EXPECT_EQ(42U, header->a);
+    EXPECT_EQ(88U, header->b);
+}
+
+TEST_F(MessageTest, getHeader)
+{
+    msg->setPacket(0, &packet0);
+    msg->MESSAGE_HEADER_LENGTH = sizeof(FooHeader);
+    msg->messageLength = sizeof(FooHeader);
+    new (static_cast<char*>(packet0.payload) + msg->PACKET_HEADER_LENGTH)
+        FooHeader(42, 88);
+
+    const FooHeader* header = msg->getHeader<FooHeader>();
+
+    EXPECT_EQ(42U, header->a);
+    EXPECT_EQ(88U, header->b);
 }
 
 TEST_F(MessageTest, getOrAllocPacket)
@@ -303,7 +345,7 @@ TEST_F(MessageTest, getOrAllocPacket)
     EXPECT_EQ(1U, msg->numPackets);
 }
 
-TEST_F(MessageTest, getHeader)
+TEST_F(MessageTest, getHeader_internal)
 {
     msg->setPacket(0, &packet0);
     packet0.length = 42;
@@ -312,24 +354,6 @@ TEST_F(MessageTest, getHeader)
     EXPECT_TRUE(static_cast<char*>(packet0.payload) +
                     msg->PACKET_HEADER_LENGTH ==
                 msg->getHeader());
-
-    EXPECT_EQ(28U, msg->PACKET_HEADER_LENGTH);
-    EXPECT_EQ(10U, msg->MESSAGE_HEADER_LENGTH);
-    EXPECT_EQ(42U, packet0.length);
-}
-
-TEST_F(MessageTest, getHeader_newPacket)
-{
-    msg->MESSAGE_HEADER_LENGTH = 10;
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
-
-    EXPECT_TRUE(static_cast<char*>(packet0.payload) +
-                    msg->PACKET_HEADER_LENGTH ==
-                msg->getHeader());
-
-    EXPECT_EQ(28U, msg->PACKET_HEADER_LENGTH);
-    EXPECT_EQ(10U, msg->MESSAGE_HEADER_LENGTH);
-    EXPECT_EQ(38U, packet0.length);
 }
 
 }  // namespace

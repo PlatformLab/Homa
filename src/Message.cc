@@ -242,12 +242,8 @@ Message::getOrAllocPacket(uint16_t index)
 void*
 Message::getHeader()
 {
-    Driver::Packet* packet = getOrAllocPacket(0);
-    // TODO(cstlee): A Message probably shouldn't be in charge of setting
-    //               the packet length.
-    packet->length = std::max(
-        packet->length,
-        Util::downCast<uint16_t>(PACKET_HEADER_LENGTH + MESSAGE_HEADER_LENGTH));
+    assert(occupied.test(0));
+    Driver::Packet* packet = getPacket(0);
     return static_cast<char*>(packet->payload) + PACKET_HEADER_LENGTH;
 }
 

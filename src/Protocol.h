@@ -361,12 +361,14 @@ struct Header {
                                         ///< sent to this address.
 
     /// CommonHeader constructor.
-    explicit Header(OpId opId)
+    explicit Header(OpId opId, uint32_t tag, Driver::Address* address)
         : prefix(1)
         , opId(opId)
-        , tag()
+        , tag(tag)
         , replyAddress()
-    {}
+    {
+        address->toRaw(&replyAddress);
+    }
 } __attribute__((packed));
 
 }  // namespace Message
