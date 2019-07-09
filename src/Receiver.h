@@ -102,7 +102,12 @@ class Receiver {
         inboundMessages;
 
     /// InboundMessage objects to be processed by the transport.
-    std::deque<InboundMessage*> receivedMessages;
+    struct {
+        /// Monitor style lock.
+        SpinLock mutex;
+        /// List of completely received messages.
+        Intrusive::List<InboundMessage> queue;
+    } receivedMessages;
 
     /// Used to allocate InboundMessage objects.
     ObjectPool<InboundMessage> messagePool;

@@ -54,25 +54,15 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
 
     State copyOfState = state.load();
     OutboundMessage::State outState = outMessage.getState();
-    InboundMessage::State inState = InboundMessage::State::NOT_STARTED;
-    if (inMessage != nullptr) {
-        inState = inMessage->getState();
-    }
 
     if (isServerOp) {
         if (copyOfState == State::NOT_STARTED) {
-            assert(inMessage != nullptr);
-            if (inState == InboundMessage::State::COMPLETED) {
-                // Strip-off the Message::Header.
-                inMessage->defineHeader<Protocol::Message::Header>();
-                SpinLock::Lock lock_queue(transport->pendingServerOps.mutex);
-                transport->pendingServerOps.queue.push_back(this);
-                state.store(State::IN_PROGRESS);
-            }
+            // Nothing to do.
         } else if (copyOfState == State::IN_PROGRESS) {
             if ((outState == OutboundMessage::State::COMPLETED) ||
                 (outboundTag == Protocol::Message::ULTIMATE_RESPONSE_TAG &&
                  outState == OutboundMessage::State::SENT)) {
+                assert(inMessage != nullptr);
                 state.store(State::COMPLETED);
                 if (inboundTag != Protocol::Message::INITIAL_REQUEST_TAG) {
                     Receiver::sendDonePacket(inMessage, transport->driver);
@@ -97,7 +87,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
         } else if (copyOfState == State::NOT_STARTED) {
             // Nothing to do.
         } else if (copyOfState == State::IN_PROGRESS) {
-            if (inState == InboundMessage::State::COMPLETED) {
+            if (inMessage != nullptr) {
                 // Strip-off the Message::Header.
                 inMessage->defineHeader<Protocol::Message::Header>();
                 state.store(State::COMPLETED);
@@ -248,10 +238,10 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
         op->outboundTag = op->inboundTag + 1;
         outboundHeader->tag = op->outboundTag;
     } else {
-        op->state.store(OpContext::State::IN_PROGRESS);
         op->outboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
         outboundHeader->tag = op->outboundTag;
     }
+    op->state.store(Op::State::IN_PROGRESS);
     sender->sendMessage(&op->outMessage, destination);
 }
 
@@ -376,6 +366,8 @@ Transport::processInboundMessages()
             message->registerOp(op);
             op->inMessage = message;
             op->inboundTag = header->tag;
+            SpinLock::Lock lock_queue(pendingServerOps.mutex);
+            pendingServerOps.queue.push_back(op);
             hintUpdatedOp(op);
         }
     }

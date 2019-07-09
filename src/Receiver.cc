@@ -54,6 +54,8 @@ Receiver::Receiver(Transport* transport, uint64_t messageTimeoutCycles,
 Receiver::~Receiver()
 {
     mutex.lock();
+    receivedMessages.mutex.lock();
+    receivedMessages.queue.clear();
     messageTimeouts.list.clear();
     resendTimeouts.list.clear();
     for (auto it = inboundMessages.begin(); it != inboundMessages.end(); ++it) {
@@ -102,7 +104,6 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             messageLength % message->PACKET_DATA_LENGTH ? 1 : 0;
 
         inboundMessages.insert(it, {id, message});
-        receivedMessages.push_back(message);
     }
 
     SpinLock::Lock lock_message(message->mutex);
@@ -135,9 +136,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         message->newPacket = true;
         if (totalReceivedBytes >= message->rawLength()) {
             message->state.store(InboundMessage::State::COMPLETED);
-            if (message->op != nullptr) {
-                transport->hintUpdatedOp(message->op);
-            }
+            SpinLock::Lock lock_received_messages(receivedMessages.mutex);
+            receivedMessages.queue.push_back(&message->receivedMessageNode);
         }
     } else {
         // must be a duplicate packet; drop packet.
@@ -219,9 +219,7 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
 }
 
 /**
- * Return a handle to a new (partially) received InboundMessage.  If the message
- * is only partially received when returned; the Receiver will continue to
- * proceesing incoming packets for the InboundMessage.
+ * Return a handle to a new received InboundMessage.
  *
  * The Transport should regularly call this method to insure incoming messages
  * are processed.
@@ -235,11 +233,11 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
 InboundMessage*
 Receiver::receiveMessage()
 {
-    SpinLock::Lock lock(mutex);
+    SpinLock::Lock lock_received_messages(receivedMessages.mutex);
     InboundMessage* message = nullptr;
-    if (!receivedMessages.empty()) {
-        message = receivedMessages.front();
-        receivedMessages.pop_front();
+    if (!receivedMessages.queue.empty()) {
+        message = &receivedMessages.queue.front();
+        receivedMessages.queue.pop_front();
     }
     return message;
 }
@@ -290,19 +288,26 @@ Receiver::checkMessageTimeouts()
             break;
         }
         InboundMessage* message = &messageTimeouts.list.front();
-        SpinLock::Lock lock_message(message->mutex);
+        SpinLock::UniqueLock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->messageTimeout.hasElapsed()) {
             break;
         }
         // Found expired timeout.
-        messageTimeouts.setTimeout(&message->messageTimeout);
-
+        messageTimeouts.cancelTimeout(&message->messageTimeout);
+        resendTimeouts.cancelTimeout(&message->resendTimeout);
         if (message->state == InboundMessage::State::IN_PROGRESS) {
-            message->state.store(InboundMessage::State::FAILED);
+            // Message timed out before being fully received; drop the message.
+            lock_message.release();
+            if (inboundMessages.erase(message->id) > 0) {
+                messagePool.destroy(message);
+            }
+        } else {
+            // Message timed out but we already made it available to the
+            // Transport; let the Transport know.
+            message->state.store(InboundMessage::State::DROPPED);
+            transport->hintUpdatedOp(message->op);
         }
-
-        transport->hintUpdatedOp(message->op);
     }
 }
 
@@ -327,11 +332,11 @@ Receiver::checkResendTimeouts()
             break;
         }
         // Found expired timeout.
-        if (message->state != InboundMessage::State::IN_PROGRESS) {
+        if (message->state == InboundMessage::State::IN_PROGRESS) {
+            resendTimeouts.setTimeout(&message->resendTimeout);
+        } else {
             resendTimeouts.cancelTimeout(&message->resendTimeout);
             continue;
-        } else {
-            resendTimeouts.setTimeout(&message->resendTimeout);
         }
         lock.unlock();  // End Sender critical section.
 

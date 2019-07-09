@@ -84,7 +84,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     InboundMessage* message = nullptr;
 
     EXPECT_TRUE(receiver->inboundMessages.empty());
-    EXPECT_TRUE(receiver->receivedMessages.empty());
+    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 
     // receive packet 1
     Protocol::Packet::DataHeader* header =
@@ -109,9 +109,10 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_FALSE(receiver->inboundMessages.empty());
-    EXPECT_FALSE(receiver->receivedMessages.empty());
-    message = receiver->receiveMessage();
-    message->registerOp(op);
+    auto it = receiver->inboundMessages.find(id);
+    EXPECT_NE(receiver->inboundMessages.end(), it);
+    message = it->second;
+    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
     EXPECT_EQ(&mockAddress, message->source);
     EXPECT_EQ(2U, message->numExpectedPackets);
     EXPECT_EQ(1420U, message->messageLength);
@@ -119,7 +120,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     EXPECT_TRUE(message->newPacket);
     EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
 
@@ -141,13 +141,12 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
-    EXPECT_TRUE(receiver->receivedMessages.empty());
+    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
     EXPECT_TRUE(message->occupied.test(1));
     EXPECT_EQ(1U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     EXPECT_FALSE(message->newPacket);
     EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
@@ -168,18 +167,19 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
-    EXPECT_TRUE(receiver->receivedMessages.empty());
+    EXPECT_FALSE(receiver->receivedMessages.queue.empty());
+    EXPECT_EQ(message, &receiver->receivedMessages.queue.back());
     EXPECT_EQ(2U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     EXPECT_TRUE(message->newPacket);
     EXPECT_EQ(InboundMessage::State::COMPLETED, message->state);
-    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
 
     Mock::VerifyAndClearExpectations(&mockDriver);
     Mock::VerifyAndClearExpectations(&mockAddress);
 
     // receive packet 0 again on a complete message
     message->newPacket = false;
+    receiver->receivedMessages.queue.clear();
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
@@ -191,7 +191,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
     EXPECT_FALSE(message->newPacket);
-    EXPECT_TRUE(receiver->receivedMessages.empty());
+    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
     Mock::VerifyAndClearExpectations(&mockDriver);
 }
 
@@ -349,18 +349,18 @@ TEST_F(ReceiverTest, receiveMessage)
     InboundMessage* msg0 = receiver->messagePool.construct(&mockDriver, 0, 0);
     InboundMessage* msg1 = receiver->messagePool.construct(&mockDriver, 0, 0);
 
-    receiver->receivedMessages.push_back(msg0);
-    receiver->receivedMessages.push_back(msg1);
-    EXPECT_EQ(2U, receiver->receivedMessages.size());
+    receiver->receivedMessages.queue.push_back(&msg0->receivedMessageNode);
+    receiver->receivedMessages.queue.push_back(&msg1->receivedMessageNode);
+    EXPECT_FALSE(receiver->receivedMessages.queue.empty());
 
     EXPECT_EQ(msg0, receiver->receiveMessage());
-    EXPECT_EQ(1U, receiver->receivedMessages.size());
+    EXPECT_FALSE(receiver->receivedMessages.queue.empty());
 
     EXPECT_EQ(msg1, receiver->receiveMessage());
-    EXPECT_EQ(0U, receiver->receivedMessages.size());
+    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 
     EXPECT_EQ(nullptr, receiver->receiveMessage());
-    EXPECT_EQ(0U, receiver->receivedMessages.size());
+    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 }
 
 TEST_F(ReceiverTest, dropMessage)
@@ -449,10 +449,15 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
         op[i] = reinterpret_cast<void*>(i);
         message[i] = receiver->messagePool.construct(&mockDriver, 0, 0);
         message[i]->id = id;
+        receiver->inboundMessages.insert({id, message[i]});
         message[i]->registerOp(op[i]);
         receiver->messageTimeouts.list.push_back(
             &message[i]->messageTimeout.node);
+        receiver->resendTimeouts.list.push_back(
+            &message[i]->resendTimeout.node);
     }
+    EXPECT_EQ(3U, receiver->inboundMessages.size());
+    EXPECT_EQ(3U, receiver->messagePool.outstandingObjects);
 
     // Message[0]: Normal timeout: IN_PROGRESS
     message[0]->messageTimeout.expirationCycleTime = 9998;
@@ -468,15 +473,25 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     receiver->checkMessageTimeouts();
 
     // Message[0]: Normal timeout: IN_PROGRESS
-    EXPECT_EQ(11000, message[0]->messageTimeout.expirationCycleTime);
-    EXPECT_EQ(InboundMessage::State::FAILED, message[0]->getState());
-    EXPECT_EQ(1U, transport->updateHints.ops.count(op[0]));
+    EXPECT_EQ(nullptr, message[0]->messageTimeout.node.list);
+    EXPECT_EQ(nullptr, message[0]->resendTimeout.node.list);
+    EXPECT_EQ(0U, receiver->inboundMessages.count(message[0]->id));
+    EXPECT_EQ(2U, receiver->messagePool.outstandingObjects);
+    EXPECT_EQ(0U, transport->updateHints.ops.count(op[0]));
     // Message[1]: Normal timeout: COMPLETED
-    EXPECT_EQ(11000, message[1]->messageTimeout.expirationCycleTime);
-    EXPECT_EQ(InboundMessage::State::COMPLETED, message[1]->getState());
+    EXPECT_EQ(nullptr, message[1]->messageTimeout.node.list);
+    EXPECT_EQ(nullptr, message[1]->resendTimeout.node.list);
+    EXPECT_EQ(InboundMessage::State::DROPPED, message[1]->getState());
+    EXPECT_EQ(1U, receiver->inboundMessages.count(message[1]->id));
+    EXPECT_EQ(2U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(1U, transport->updateHints.ops.count(op[1]));
     // Message[2]: No timeout
-    EXPECT_EQ(10001, message[2]->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(&receiver->messageTimeouts.list,
+              message[2]->messageTimeout.node.list);
+    EXPECT_EQ(&receiver->resendTimeouts.list,
+              message[2]->resendTimeout.node.list);
+    EXPECT_EQ(1U, receiver->inboundMessages.count(message[2]->id));
+    EXPECT_EQ(2U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
 }
 
@@ -501,15 +516,17 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     // Message[0]: Fully received
     message[0]->state.store(InboundMessage::State::COMPLETED);
     message[0]->resendTimeout.expirationCycleTime = 10000 - 20;
-    // Message[1]: Failed
-    message[1]->state.store(InboundMessage::State::FAILED);
+    // Message[1]: DROPPED
+    message[1]->state.store(InboundMessage::State::DROPPED);
     message[1]->resendTimeout.expirationCycleTime = 10000 - 10;
     // Message[2]: Normal timeout: block on grants
+    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message[2]->state);
     message[2]->resendTimeout.expirationCycleTime = 10000 - 5;
     // Message[3]: Normal timeout: Send Resends.
     // Message Packets
     //  0123456789
     // [1100001100]
+    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message[3]->state);
     message[3]->resendTimeout.expirationCycleTime = 10000;
     Homa::Mock::MockDriver::MockAddress mockAddress;
     message[3]->source = &mockAddress;
@@ -521,6 +538,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
         message[3]->setPacket(i, &mockPacket);
     }
     // Message[4]: No timeout
+    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message[4]->state);
     message[4]->resendTimeout.expirationCycleTime = 10001;
 
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
@@ -545,8 +563,10 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     receiver->checkResendTimeouts();
 
     // Message[0]: Fully received
+    EXPECT_EQ(nullptr, message[0]->resendTimeout.node.list);
     EXPECT_EQ(10000 - 20, message[0]->resendTimeout.expirationCycleTime);
-    // Message[1]: Failed
+    // Message[1]: DROPPED
+    EXPECT_EQ(nullptr, message[1]->resendTimeout.node.list);
     EXPECT_EQ(10000 - 10, message[1]->resendTimeout.expirationCycleTime);
     // Message[2]: Normal timeout: blocked
     EXPECT_EQ(10100, message[2]->resendTimeout.expirationCycleTime);

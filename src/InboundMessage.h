@@ -18,6 +18,7 @@
 
 #include <Homa/Driver.h>
 
+#include "Intrusive.h"
 #include "Message.h"
 #include "Protocol.h"
 #include "SpinLock.h"
@@ -41,10 +42,10 @@ class InboundMessage : public Message {
      * Defines the possible states of this InboundMessage.
      */
     enum class State {
-        NOT_STARTED,  //< Receiver has not received any part of this message.
         IN_PROGRESS,  //< Receiver is in the process of receiving this message.
         COMPLETED,    //< Receiver has received the entire message.
-        FAILED,       //< Receiver has lost communication with the Sender.
+        DROPPED,      //< Message was COMPLETED but the Receiver has lost
+                      //< communication with the Sender.
     };
 
     explicit InboundMessage(Driver* driver, uint16_t packetHeaderLength,
@@ -58,6 +59,7 @@ class InboundMessage : public Message {
         , state(InboundMessage::State::IN_PROGRESS)
         , newPacket(false)
         , op(nullptr)
+        , receivedMessageNode(this)
         , messageTimeout(this)
         , resendTimeout(this)
     {}
@@ -97,6 +99,9 @@ class InboundMessage : public Message {
     bool newPacket;
     /// Transport::Op associated with this message.
     void* op;
+    /// Intrusive structure used by the Receiver to keep track of this message
+    /// when it has been completely received.
+    Intrusive::List<InboundMessage>::Node receivedMessageNode;
     /// Intrusive structure used by the Receiver to keep track when the
     /// receiving of this message should be considered failed.
     Timeout<InboundMessage> messageTimeout;
