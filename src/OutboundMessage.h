@@ -43,7 +43,6 @@ class OutboundMessage : public Message {
         IN_PROGRESS,  //< Sender is in the process of sending this message.
         SENT,         //< Sender has sent out every packet of the message.
         COMPLETED,    //< Receiver has acknowledged receipt of this message.
-        DROPPED,      //< Receiver is unaware of this message.
         FAILED,       //< Sender failed to send out this message.
     };
 

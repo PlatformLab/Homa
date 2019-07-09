@@ -90,7 +90,7 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     }
 
     SpinLock::Lock lock_message(message->mutex);
-    messageTimeouts.setTimeout(&message->messageTimeout);
+    messageTimeouts.cancelTimeout(&message->messageTimeout);
     pingTimeouts.cancelTimeout(&message->pingTimeout);
     lock.unlock();  // End Sender critical section
 
@@ -227,16 +227,22 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
         return;
     }
 
+    // Lock handoff.
     SpinLock::Lock lock_message(message->mutex);
-    if (message->state != OutboundMessage::State::COMPLETED) {
-        message->state.store(OutboundMessage::State::DROPPED);
-        pingTimeouts.cancelTimeout(&message->pingTimeout);
-        transport->hintUpdatedOp(message->op);
+    lock.unlock();  // End Sender critical section.
+
+    if (message->state == OutboundMessage::State::IN_PROGRESS ||
+        message->state == OutboundMessage::State::SENT) {
+        // Restart sending the message from scratch.
+        message->state.store(OutboundMessage::State::IN_PROGRESS);
+        message->sentIndex = 0;
+        // TODO(cstlee): May want to use the unscheduled-limit here instead of
+        // just granting a single packet.
+        message->grantIndex = 1;
     } else {
         // The message is already considered "done" so the UNKNOWN packet must
         // be a stale response to a ping.
     }
-    lock.unlock();  // End Sender critical section.
 
     driver->releasePackets(&packet, 1);
 }
@@ -270,9 +276,11 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
     }
 
     SpinLock::Lock lock_message(message->mutex);
+    messageTimeouts.cancelTimeout(&message->messageTimeout);
     pingTimeouts.cancelTimeout(&message->pingTimeout);
     lock.unlock();  // End Sender critical section
 
+    assert(message->state != OutboundMessage::State::COMPLETED);
     message->state.store(OutboundMessage::State::FAILED);
     transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
@@ -366,6 +374,7 @@ Sender::poll()
 {
     trySend();
     checkPingTimeouts();
+    checkMessageTimeouts();
 }
 
 /**
@@ -390,13 +399,11 @@ Sender::checkMessageTimeouts()
             break;
         }
         // Found expired timeout.
-        messageTimeouts.setTimeout(&message->messageTimeout);
-
-        if (message->state == OutboundMessage::State::IN_PROGRESS ||
-            message->state == OutboundMessage::State::SENT) {
+        if (message->state != OutboundMessage::State::COMPLETED) {
             message->state.store(OutboundMessage::State::FAILED);
         }
-
+        messageTimeouts.cancelTimeout(&message->messageTimeout);
+        pingTimeouts.cancelTimeout(&message->pingTimeout);
         transport->hintUpdatedOp(message->op);
     }
 }
@@ -423,11 +430,14 @@ Sender::checkPingTimeouts()
             break;
         }
         // Found expired timeout.
-        pingTimeouts.setTimeout(&message->pingTimeout);
+        if (message->state == OutboundMessage::State::COMPLETED ||
+            message->state == OutboundMessage::State::FAILED) {
+            pingTimeouts.cancelTimeout(&message->pingTimeout);
+            continue;
+        } else {
+            pingTimeouts.setTimeout(&message->pingTimeout);
+        }
         lock.unlock();  // End Sender critical section.
-
-        assert(message->state != OutboundMessage::State::COMPLETED &&
-               message->state != OutboundMessage::State::FAILED);
 
         // Have not heard from the Receiver in the last timeout period. Ping
         // the receiver to ensure it still knows about this Message.
