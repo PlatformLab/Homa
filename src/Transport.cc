@@ -59,13 +59,17 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
         if (copyOfState == State::NOT_STARTED) {
             // Nothing to do.
         } else if (copyOfState == State::IN_PROGRESS) {
+            // ServerOp must have an inboundMessage to be IN_PROGRESS
+            assert(inMessage != nullptr);
             const Protocol::Message::Header* outboundHeader =
                 outMessage.getHeader<Protocol::Message::Header>();
-            if ((outState == OutboundMessage::State::COMPLETED) ||
-                (outboundHeader->tag ==
-                     Protocol::Message::ULTIMATE_RESPONSE_TAG &&
-                 outState == OutboundMessage::State::SENT)) {
-                assert(inMessage != nullptr);
+            if (inMessage->getState() == InboundMessage::State::DROPPED) {
+                state.store(State::DROPPED);
+                transport->hintUpdatedOp(this);
+            } else if ((outState == OutboundMessage::State::COMPLETED) ||
+                       (outState == OutboundMessage::State::SENT &&
+                        outboundHeader->tag ==
+                            Protocol::Message::ULTIMATE_RESPONSE_TAG)) {
                 const Protocol::Message::Header* inboundHeader =
                     inMessage->getHeader<Protocol::Message::Header>();
                 state.store(State::COMPLETED);
@@ -74,13 +78,27 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
                     Receiver::sendDonePacket(inMessage, transport->driver);
                 }
                 transport->hintUpdatedOp(this);
+            } else if (outState == OutboundMessage::State::FAILED) {
+                state.store(State::FAILED);
+                // Deregister the outbound message in case the application wants
+                // to try again.
+                transport->sender->dropMessage(&outMessage);
+                transport->hintUpdatedOp(this);
             }
         } else if (copyOfState == State::COMPLETED) {
             if (!retained) {
                 drop(lock);
             }
+        } else if (copyOfState == State::DROPPED) {
+            if (!retained) {
+                drop(lock);
+            }
         } else if (copyOfState == State::FAILED) {
             if (!retained) {
+                assert(inMessage != nullptr);
+                // Return an ERROR back to the Sender now that the Server
+                // has given up.
+                Receiver::sendErrorPacket(inMessage, transport->driver);
                 drop(lock);
             }
         } else {
@@ -95,6 +113,9 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
         } else if (copyOfState == State::IN_PROGRESS) {
             if (inMessage != nullptr) {
                 state.store(State::COMPLETED);
+                transport->hintUpdatedOp(this);
+            } else if (outState == OutboundMessage::State::FAILED) {
+                state.store(State::FAILED);
                 transport->hintUpdatedOp(this);
             }
         } else if (copyOfState == State::COMPLETED) {

@@ -48,6 +48,7 @@ struct OpContext {
         NOT_STARTED,
         IN_PROGRESS,
         COMPLETED,
+        DROPPED,
         FAILED,
     };
 

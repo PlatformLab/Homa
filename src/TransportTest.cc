@@ -150,9 +150,24 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_NOT_STARTED)
     // Nothing to test.
 }
 
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_DROPPED)
+{
+    Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
+    op->state.store(OpContext::State::IN_PROGRESS);
+    op->inMessage->state.store(InboundMessage::State::DROPPED);
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::DROPPED, op->state.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+}
+
 TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone)
 {
-    Transport::Op* op = createOp(Protocol::OpId(0, 0), true, false);
+    Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
     EXPECT_FALSE(op->outMessage.state == OutboundMessage::State::COMPLETED);
     EXPECT_FALSE(op->outMessage.state == OutboundMessage::State::SENT);
@@ -170,7 +185,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone)
 
 TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone_reply)
 {
-    Transport::Op* op = createOp(Protocol::OpId(0, 0), true, false);
+    Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
     op->outMessage.state.store(OutboundMessage::State::IN_PROGRESS);
     const_cast<Protocol::Message::Header*>(
@@ -280,6 +295,23 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_sendDone)
     EXPECT_FALSE(op->destroy);
 }
 
+TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_FAILED)
+{
+    Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
+    op->state.store(OpContext::State::IN_PROGRESS);
+    op->outMessage.state.store(OutboundMessage::State::FAILED);
+
+    EXPECT_CALL(*mockSender, dropMessage(Eq(&op->outMessage))).Times(1);
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::FAILED, op->state.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+}
+
 TEST_F(TransportTest, Op_processUpdates_ServerOp_COMPLETED)
 {
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
@@ -307,10 +339,34 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_COMPLETED)
     EXPECT_TRUE(op->destroy);
 }
 
-TEST_F(TransportTest, Op_processUpdates_ServerOp_FAILED)
+TEST_F(TransportTest, Op_processUpdates_ServerOp_DROPPED)
 {
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     Protocol::OpId(0, 0), true);
+    op->state.store(OpContext::State::DROPPED);
+    op->retained = true;
+    EXPECT_FALSE(op->destroy);
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_FALSE(op->destroy);
+
+    op->retained = false;
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_TRUE(op->destroy);
+}
+
+TEST_F(TransportTest, Op_processUpdates_ServerOp_FAILED)
+{
+    Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::FAILED);
     op->retained = true;
     EXPECT_FALSE(op->destroy);
@@ -325,10 +381,19 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_FAILED)
 
     op->retained = false;
 
+    char payload[1028];
+    NiceMock<Homa::Mock::MockDriver::MockPacket> errorPacket(payload);
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&errorPacket));
+    EXPECT_CALL(mockDriver, sendPackets(Pointee(&errorPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&errorPacket), Eq(1)))
+        .Times(1);
+
     {
         SpinLock::Lock lock(op->mutex);
         op->processUpdates(lock);
     }
+
+    Mock::VerifyAndClearExpectations(&mockDriver);
 
     EXPECT_EQ(OpContext::State::FAILED, op->state.load());
     EXPECT_TRUE(op->destroy);
@@ -393,8 +458,18 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
 
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
-    EXPECT_FALSE(op->destroy);
 
+    op->outMessage.state.store(OutboundMessage::State::FAILED);
+
+    {
+        SpinLock::Lock lock(op->mutex);
+        op->processUpdates(lock);
+    }
+
+    EXPECT_EQ(OpContext::State::FAILED, op->state.load());
+    EXPECT_EQ(1U, transport->updateHints.ops.count(op));
+
+    op->state.store(OpContext::State::IN_PROGRESS);
     op->inMessage = &inMessage;
 
     {
@@ -404,7 +479,6 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
 
     EXPECT_EQ(OpContext::State::COMPLETED, op->state.load());
     EXPECT_EQ(1U, transport->updateHints.ops.count(op));
-    EXPECT_FALSE(op->destroy);
 }
 
 TEST_F(TransportTest, Op_processUpdates_RemoteOp_COMPLETED)
