@@ -163,6 +163,10 @@ clientMain(int count, int hops, int size, std::vector<std::string> addresses)
         op.wait();
 
         {
+            if (op.response == nullptr) {
+                numFailed++;
+                continue;
+            }
             MessageHeader header;
             char buf[size];
             op.response->get(0, &header, sizeof(MessageHeader));
