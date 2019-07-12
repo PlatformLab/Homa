@@ -41,7 +41,7 @@ include(FetchContent)
 FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        ba96d0b1161f540656efdaed035b3c062b60e006
+    GIT_TAG        c1845f65f31c8f2bd97f622cbb92d73d4684890c
 )
 FetchContent_GetProperties(googletest)
 if(NOT googletest_POPULATED)
