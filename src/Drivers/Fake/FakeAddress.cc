@@ -21,6 +21,7 @@
 #include "../RawAddressType.h"
 
 #include <cstdlib>
+#include <cstring>
 
 namespace Homa {
 namespace Drivers {
@@ -52,11 +53,12 @@ FakeAddress::FakeAddress(const char* addressStr)
 
 FakeAddress::FakeAddress(const Raw* const raw)
     : Address()
-    , address(*reinterpret_cast<const uint64_t* const>(raw->bytes))
+    , address()
 {
     if (raw->type != RawAddressType::FAKE) {
         throw BadAddress(HERE_STR, "Bad address: Raw format is not type FAKE");
     }
+    std::memcpy(&address, raw->bytes, sizeof(address));
 }
 
 /**
@@ -73,7 +75,7 @@ FakeAddress::FakeAddress(const FakeAddress& other)
 /**
  * Return the string representation of this address.
  */
-inline std::string
+std::string
 FakeAddress::toString() const
 {
     char buf[21];
@@ -84,18 +86,17 @@ FakeAddress::toString() const
 /**
  * Get the serialized byte-format for this network address.
  */
-inline void
+void
 FakeAddress::toRaw(Raw* raw) const
 {
     raw->type = RawAddressType::FAKE;
-    uint64_t* addr = reinterpret_cast<uint64_t*>(raw->bytes);
-    *addr = address;
+    std::memcpy(raw->bytes, &address, sizeof(address));
 }
 
 /**
  * Return the address identifier for the given address string.
  */
-inline uint64_t
+uint64_t
 FakeAddress::toAddressId(const char* addressStr)
 {
     char* end;

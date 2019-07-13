@@ -339,7 +339,7 @@ void
 DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
 {
     constexpr uint16_t MAX_BURST = 32;
-    uint16_t nb_pkts;
+    uint16_t nb_pkts = 0;
     struct rte_mbuf* tx_pkts[MAX_BURST];
 
     // Process each packet
