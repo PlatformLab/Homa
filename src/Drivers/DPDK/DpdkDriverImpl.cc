@@ -336,7 +336,7 @@ DpdkDriverImpl::allocPacket()
 
 // See Driver::sendPackets()
 void
-DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
+DpdkDriverImpl::sendPackets(Driver::Packet* packets[], uint16_t numPackets)
 {
     constexpr uint16_t MAX_BURST = 32;
     uint16_t nb_pkts = 0;
@@ -452,7 +452,8 @@ DpdkDriverImpl::sendPackets(Packet* packets[], uint16_t numPackets)
 
 // See Driver::receivePackets()
 uint32_t
-DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
+DpdkDriverImpl::receivePackets(uint32_t maxPackets,
+                               Driver::Packet* receivedPackets[])
 {
     uint32_t numPacketsReceived = 0;
 
@@ -547,7 +548,7 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
 
 // See Driver::releasePackets()
 void
-DpdkDriverImpl::releasePackets(Packet* packets[], uint16_t numPackets)
+DpdkDriverImpl::releasePackets(Driver::Packet* packets[], uint16_t numPackets)
 {
     for (uint16_t i = 0; i < numPackets; ++i) {
         SpinLock::Lock lock(packetLock);

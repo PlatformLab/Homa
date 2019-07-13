@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -21,22 +21,76 @@ namespace Homa {
 namespace Drivers {
 namespace DPDK {
 
-DpdkDriver*
-DpdkDriver::newDpdkDriver(int port)
+DpdkDriver::DpdkDriver(int port)
+    : impl(new DpdkDriverImpl(port))
+{}
+
+DpdkDriver::DpdkDriver(int port, int argc, char* argv[])
+    : impl(new DpdkDriverImpl(port, argc, argv))
+{}
+
+DpdkDriver::DpdkDriver(int port, DpdkDriver::NoEalInit)
+    : impl(new DpdkDriverImpl(port, DpdkDriverImpl::NO_EAL_INIT))
+{}
+
+Driver::Address*
+DpdkDriver::getAddress(std::string const* const addressString)
 {
-    return new DpdkDriverImpl(port);
+    return impl->getAddress(addressString);
 }
 
-DpdkDriver*
-DpdkDriver::newDpdkDriver(int port, int argc, char* argv[])
+Driver::Packet*
+DpdkDriver::allocPacket()
 {
-    return new DpdkDriverImpl(port, argc, argv);
+    return impl->allocPacket();
 }
 
-DpdkDriver*
-DpdkDriver::newDpdkDriver(int port, DpdkDriver::NoEalInit _)
+void
+DpdkDriver::sendPackets(Packet* packets[], uint16_t numPackets)
 {
-    return new DpdkDriverImpl(port, _);
+    impl->sendPackets(packets, numPackets);
+}
+
+uint32_t
+DpdkDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
+{
+    return impl->receivePackets(maxPackets, receivedPackets);
+}
+
+void
+DpdkDriver::releasePackets(Packet* packets[], uint16_t numPackets)
+{
+    impl->releasePackets(packets, numPackets);
+}
+
+int
+DpdkDriver::getHighestPacketPriority()
+{
+    return impl->getHighestPacketPriority();
+}
+
+uint32_t
+DpdkDriver::getMaxPayloadSize()
+{
+    return impl->getMaxPayloadSize();
+}
+
+uint32_t
+DpdkDriver::getBandwidth()
+{
+    return impl->getBandwidth();
+}
+
+Driver::Address*
+DpdkDriver::getLocalAddress()
+{
+    return impl->getLocalAddress();
+}
+
+void
+DpdkDriver::setLocalAddress(std::string const* const addressString)
+{
+    impl->setLocalAddress(addressString);
 }
 
 }  // namespace DPDK

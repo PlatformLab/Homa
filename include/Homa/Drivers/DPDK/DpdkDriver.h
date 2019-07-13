@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, Stanford University
+/* Copyright (c) 2018-2019, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -21,6 +21,8 @@
 namespace Homa {
 namespace Drivers {
 namespace DPDK {
+// Forward declartion
+class DpdkDriverImpl;
 
 /**
  * A Driver for [DPDK](dpdk.org) communication. Simple packet send/receive style
@@ -33,36 +35,30 @@ namespace DPDK {
 class DpdkDriver : public Driver {
   public:
     /**
-     * Create and return a pointer to a DpdkDriver.
+     * Construct a DpdkDriver.
      *
-     * This factory function should be used in the common case where the
-     * DpdkDriver is the only part the application using DPDK. Note: This call
-     * will initialize the DPDK EAL with default values.
-     *
-     * The caller is responsible for calling `delete` on the returned Driver
-     * when the driver is no longer needed.
+     * This constructor should be used in the common case where the DpdkDriver
+     * is the only part the application using DPDK. Note: This call will
+     * initialize the DPDK EAL with default values.
      *
      * @param port
      *      Selects which physical port to use for communication.
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    static DpdkDriver* newDpdkDriver(int port);
+    DpdkDriver(int port);
 
     /**
-     * Create and return a pointer to a DpdkDriver and initialize the DPDK EAL
-     * using the provided _argc_ and _argv_. [Advanced Usage]
+     * Construct a DpdkDriver and initialize the DPDK EAL using the provided
+     * _argc_ and _argv_. [Advanced Usage]
      *
-     * This factory function should be used if the caller wants to control what
+     * This constructor should be used if the caller wants to control what
      * parameters are provided to DPDK EAL initialization. The input parameters
      * _argc_ and _argv_ will be provided to rte_eal_init() directly. See the
      * DPDK documentation for initialization options.
      *
-     * This factory function will maintain the currently set thread affinity by
+     * This constructor will maintain the currently set thread affinity by
      * overriding the default affinity set by rte_eal_init().
-     *
-     * The caller is responsible for calling `delete` on the returned Driver
-     * when the driver is no longer needed.
      *
      * @param port
      *      Selects which physical port to use for communication.
@@ -73,22 +69,19 @@ class DpdkDriver : public Driver {
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    static DpdkDriver* newDpdkDriver(int port, int argc, char* argv[]);
+    DpdkDriver(int port, int argc, char* argv[]);
 
     /// Used to signal to the DpdkDriver constructor that the DPDK EAL should
     /// not be initialized.
     enum NoEalInit { NO_EAL_INIT };
     /**
-     * Create and return a pointer to a DpdkDriver without initializing the DPDK
-     * EAL. [Advanced Usage]
+     * Construct a DpdkDriver without initializing the DPDK EAL. [Advanced
+     * Usage]
      *
-     * This factory function is used when parts of the application other than
-     * the DpdkDriver are using DPDK and the caller wants to take resposability
-     * for calling rte_eal_init(). The caller must ensure that rte_eal_init() is
+     * This constructor is used when parts of the application other than the
+     * DpdkDriver are using DPDK and the caller wants to take resposability for
+     * calling rte_eal_init(). The caller must ensure that rte_eal_init() is
      * called before calling this constructor.
-     *
-     * The caller is responsible for calling `delete` on the returned Driver
-     * when the driver is no longer needed.
      *
      * @param port
      *      Selects which physical port to use for communication.
@@ -98,36 +91,35 @@ class DpdkDriver : public Driver {
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    static DpdkDriver* newDpdkDriver(int port, NoEalInit _);
+    DpdkDriver(int port, NoEalInit _);
 
     /// See Driver::getAddress()
-    virtual Driver::Address* getAddress(
-        std::string const* const addressString) = 0;
+    virtual Driver::Address* getAddress(std::string const* const addressString);
 
     /// See Driver::allocPacket()
-    virtual Packet* allocPacket() = 0;
+    virtual Packet* allocPacket();
 
     /// See Driver::sendPackets()
-    virtual void sendPackets(Packet* packets[], uint16_t numPackets) = 0;
+    virtual void sendPackets(Packet* packets[], uint16_t numPackets);
 
     /// See Driver::receivePackets()
     virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    Packet* receivedPackets[]) = 0;
+                                    Packet* receivedPackets[]);
 
     /// See Driver::releasePackets()
-    virtual void releasePackets(Packet* packets[], uint16_t numPackets) = 0;
+    virtual void releasePackets(Packet* packets[], uint16_t numPackets);
 
     /// See Driver::getHighestPacketPriority()
-    virtual int getHighestPacketPriority() = 0;
+    virtual int getHighestPacketPriority();
 
     /// See Driver::getMaxPayloadSize()
-    virtual uint32_t getMaxPayloadSize() = 0;
+    virtual uint32_t getMaxPayloadSize();
 
     /// See Driver::getBandwidth()
-    virtual uint32_t getBandwidth() = 0;
+    virtual uint32_t getBandwidth();
 
     /// See Driver::getLocalAddress()
-    virtual Driver::Address* getLocalAddress() = 0;
+    virtual Driver::Address* getLocalAddress();
 
     /**
      * Override the local address provided to by the NIC. Used in testing when
@@ -136,9 +128,12 @@ class DpdkDriver : public Driver {
      * @param addressString
      *      String representing the local address that this driver should use.
      */
-    virtual void setLocalAddress(std::string const* const addressString) = 0;
+    virtual void setLocalAddress(std::string const* const addressString);
 
   private:
+    /// Contains the actually implentation of the driver.  Hides the details
+    /// of the driver from users of libDpdkDriver.
+    std::unique_ptr<DpdkDriverImpl> impl;
 };
 
 }  // namespace DPDK

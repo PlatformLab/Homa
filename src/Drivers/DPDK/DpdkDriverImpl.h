@@ -39,7 +39,6 @@ namespace Homa {
 
 namespace Drivers {
 namespace DPDK {
-
 // Forward declarations
 class MacAddress;
 
@@ -48,7 +47,7 @@ class MacAddress;
  *
  * @sa DpdkDriver
  */
-class DpdkDriverImpl : public DpdkDriver {
+class DpdkDriverImpl {
     // forward declarations to avoid including implementation in the header.
     class DpdkPacket;
     struct OverflowBuffer;
@@ -56,43 +55,43 @@ class DpdkDriverImpl : public DpdkDriver {
   public:
     explicit DpdkDriverImpl(int port);
     explicit DpdkDriverImpl(int port, int argc, char* argv[]);
+    enum NoEalInit { NO_EAL_INIT };
     explicit DpdkDriverImpl(int port, NoEalInit _);
-    virtual ~DpdkDriverImpl();
+    ~DpdkDriverImpl();
 
     /// See Driver::getAddress()
-    virtual Driver::Address* getAddress(std::string const* const addressString);
+    Driver::Address* getAddress(std::string const* const addressString);
 
     /// See Driver::getAddress()
-    virtual Driver::Address* getAddress(
-        Driver::Address::Raw const* const rawAddress);
+    Driver::Address* getAddress(Driver::Address::Raw const* const rawAddress);
 
     /// See Driver::allocPacket()
-    virtual Packet* allocPacket();
+    Driver::Packet* allocPacket();
 
     /// See Driver::sendPackets()
-    virtual void sendPackets(Packet* packets[], uint16_t numPackets);
+    void sendPackets(Driver::Packet* packets[], uint16_t numPackets);
 
     /// See Driver::receivePackets()
-    virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    Packet* receivedPackets[]);
+    uint32_t receivePackets(uint32_t maxPackets,
+                            Driver::Packet* receivedPackets[]);
 
     /// See Driver::releasePackets()
-    virtual void releasePackets(Packet* packets[], uint16_t numPackets);
+    void releasePackets(Driver::Packet* packets[], uint16_t numPackets);
 
     /// See Driver::getHighestPacketPriority()
-    virtual int getHighestPacketPriority();
+    int getHighestPacketPriority();
 
     /// See Driver::getMaxPayloadSize()
-    virtual uint32_t getMaxPayloadSize();
+    uint32_t getMaxPayloadSize();
 
     /// See Driver::getBandwidth()
-    virtual uint32_t getBandwidth();
+    uint32_t getBandwidth();
 
     /// See Driver::getLocalAddress()
-    virtual Driver::Address* getLocalAddress();
+    Driver::Address* getLocalAddress();
 
     /// See DpdkDriver::setLocalAddress()
-    virtual void setLocalAddress(std::string const* const addressString);
+    void setLocalAddress(std::string const* const addressString);
 
   private:
     /// Provides thread safety for Address operations.
