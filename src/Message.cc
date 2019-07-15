@@ -221,7 +221,7 @@ Message::rawLength() const
  * @return
  *      Pointer to a Packet at the given index.
  */
-inline Driver::Packet*
+Driver::Packet*
 Message::getOrAllocPacket(uint16_t index)
 {
     if (!occupied.test(index)) {
