@@ -99,8 +99,8 @@ class DpdkDriver : public Driver {
     /// See Driver::allocPacket()
     virtual Packet* allocPacket();
 
-    /// See Driver::sendPackets()
-    virtual void sendPackets(Packet* packets[], uint16_t numPackets);
+    /// See Driver::sendPacket()
+    virtual void sendPacket(Packet* packet);
 
     /// See Driver::receivePackets()
     virtual uint32_t receivePackets(uint32_t maxPackets,
@@ -115,9 +115,6 @@ class DpdkDriver : public Driver {
     /// See Driver::getMaxPayloadSize()
     virtual uint32_t getMaxPayloadSize();
 
-    /// See Driver::getBandwidth()
-    virtual uint32_t getBandwidth();
-
     /// See Driver::getLocalAddress()
     virtual Driver::Address* getLocalAddress();
 
@@ -131,7 +128,7 @@ class DpdkDriver : public Driver {
     virtual void setLocalAddress(std::string const* const addressString);
 
   private:
-    /// Contains the actually implentation of the driver.  Hides the details
+    /// Contains the actually implementation of the driver.  Hides the details
     /// of the driver from users of libDpdkDriver.
     std::unique_ptr<DpdkDriverImpl> impl;
 };

@@ -46,9 +46,9 @@ DpdkDriver::allocPacket()
 }
 
 void
-DpdkDriver::sendPackets(Packet* packets[], uint16_t numPackets)
+DpdkDriver::sendPacket(Packet* packet)
 {
-    impl->sendPackets(packets, numPackets);
+    impl->sendPacket(packet);
 }
 
 uint32_t
@@ -73,12 +73,6 @@ uint32_t
 DpdkDriver::getMaxPayloadSize()
 {
     return impl->getMaxPayloadSize();
-}
-
-uint32_t
-DpdkDriver::getBandwidth()
-{
-    return impl->getBandwidth();
 }
 
 Driver::Address*

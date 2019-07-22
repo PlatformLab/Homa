@@ -297,7 +297,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
     pingHeader->common.messageId = id;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
@@ -329,7 +329,7 @@ TEST_F(ReceiverTest, handlePingPacket_unknown)
     pingHeader->common.messageId = id;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
@@ -402,7 +402,7 @@ TEST_F(ReceiverTest, sendDonePacket)
     message->id = id;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -426,7 +426,7 @@ TEST_F(ReceiverTest, sendErrorPacket)
     message->id = id;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -551,10 +551,8 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     EXPECT_CALL(mockDriver, allocPacket())
         .WillOnce(Return(&mockResendPacket1))
         .WillOnce(Return(&mockResendPacket2));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockResendPacket1), Eq(1)))
-        .Times(1);
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockResendPacket2), Eq(1)))
-        .Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockResendPacket1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockResendPacket2))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockResendPacket1), Eq(1)))
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockResendPacket2), Eq(1)))
@@ -617,7 +615,7 @@ TEST_F(ReceiverTest, schedule)
     receiver->inboundMessages.insert({id, message});
 
     EXPECT_CALL(mockDriver, allocPacket).Times(0);
-    EXPECT_CALL(mockDriver, sendPackets).Times(0);
+    EXPECT_CALL(mockDriver, sendPacket).Times(0);
     EXPECT_CALL(mockDriver, releasePackets).Times(0);
 
     receiver->schedule();
@@ -628,7 +626,7 @@ TEST_F(ReceiverTest, schedule)
     message->newPacket = true;
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -658,8 +656,7 @@ TEST_F(ReceiverTest, sendGrantPacket)
         message.numPackets = 1;
 
         EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-        EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1)))
-            .Times(1);
+        EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
         EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
             .Times(1);
 
@@ -682,8 +679,7 @@ TEST_F(ReceiverTest, sendGrantPacket)
         message.numPackets = 8;
 
         EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-        EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1)))
-            .Times(1);
+        EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
         EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
             .Times(1);
 

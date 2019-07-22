@@ -19,16 +19,15 @@
 #include "Homa/Exception.h"
 
 #include <string>
-#include <vector>
 
 namespace Homa {
+namespace Core {
+struct DriverInternal;
+}
 
 /**
- * Used by Homa::Transport to send and receive unreliable datagrams. This is an
- * abstract class.
- *
- * Note: some implementation may require the application call Driver::poll() in
- * order to make progress.
+ * Used by Homa::Transport to send and receive unreliable datagrams.  Provides
+ * the interface to which all Driver implementations must conform.
  *
  * Implementations of this class should be thread-safe.
  */
@@ -128,7 +127,7 @@ class Driver {
     /**
      * Driver destructor.
      */
-    virtual ~Driver() {}
+    virtual ~Driver() = default;
 
     /**
      * Return a Driver specific network address for the given string
@@ -174,9 +173,13 @@ class Driver {
     virtual Packet* allocPacket() = 0;
 
     /**
-     * Send a burst of packets over the network.
+     * Send a packet over the network.
      *
-     * The packets provide can be sent asynchronously by the Driver.
+     * The packet provide can be sent asynchronously by the Driver.
+     *
+     * If the Driver supports buffering packets for batched sends (via the
+     * cork() setting), the Driver may also send previously buffered packets
+     * during this call.
      *
      * In general, Packet objects should be considered immutable once they
      * are passed to this method. The Packet::address and Packet::priority
@@ -189,12 +192,32 @@ class Driver {
      * request if a prior send request for the same Packet is still in
      * progress.
      *
-     * @param packets
-     *      Array of Packet objects to be sent over the network.
-     * @param numPackets
-     *      Number of Packet objects in _packets_.
+     * @param packet
+     *      Packet to be sent over the network.
+     *
+     * @sa Driver::cork(), Driver::uncork()
      */
-    virtual void sendPackets(Packet* packets[], uint16_t numPackets) = 0;
+    virtual void sendPacket(Packet* packet) = 0;
+
+    /**
+     * Request that the Driver enter the "corked" mode where outbound packets
+     * are aggressively buffered so that they can be more efficiently sent out
+     * to the network in a batch.
+     *
+     * If the Driver supports this feature, packets may be buffered until either
+     * uncork() is called or some internal buffering limit is reached.
+     *
+     * @sa Driver::uncork(), Driver::sendPacket()
+     */
+    virtual void cork() {}
+
+    /**
+     * Request that the Driver exit "corked" mode and that any buffered packets
+     * be sent out immediately.
+     *
+     * @sa Driver::cork(), Driver::sendPacket()
+     */
+    virtual void uncork() {}
 
     /**
      * Check to see if any packets have arrived that have not already been
@@ -222,13 +245,12 @@ class Driver {
      * receivePackets() must eventually be released back to the Driver using
      * this method. While in general it is safe for applications to keep
      * Packet objects for an indeterminate period of time, doing so may be
-     * resource inefficent and adversely affect Driver performance.  As
+     * resource inefficient and adversely affect Driver performance.  As
      * such, it is recommended that Packet objects be released in a timely
      * manner.
      *
      * @param packets
-     *      Set of Packet objects which should be released back to the
-     * Driver.
+     *      Set of Packet objects which should be released back to the Driver.
      * @param numPackets
      *      Number of Packet objects in _packets_.
      */
@@ -257,10 +279,7 @@ class Driver {
      * Returns the bandwidth of the network in Mbits/second. If the driver
      * cannot determine the network bandwidth, then it returns 0.
      */
-    virtual uint32_t getBandwidth()
-    {
-        return 0;
-    }
+    virtual uint32_t getBandwidth() = 0;
 
     /**
      * Return this Driver's local network Address which it uses as the source
@@ -268,6 +287,12 @@ class Driver {
      * lifetime of this Driver.
      */
     virtual Address* getLocalAddress() = 0;
+
+    /**
+     * Return the number of bytes that have been passed to the Driver through
+     * the sendPacket() call but have not yet been pushed out to the network.
+     */
+    virtual uint32_t getQueuedBytes() = 0;
 };
 
 /**

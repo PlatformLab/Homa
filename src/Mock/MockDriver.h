@@ -59,7 +59,8 @@ class MockDriver : public Driver {
     MOCK_METHOD1(getAddress, Address*(std::string const* const addressString));
     MOCK_METHOD1(getAddress, Address*(Address::Raw const* const rawAddress));
     MOCK_METHOD0(allocPacket, Packet*());
-    MOCK_METHOD2(sendPackets, void(Packet* packets[], uint16_t numPackets));
+    MOCK_METHOD1(sendPacket, void(Packet* packet));
+    MOCK_METHOD0(flushPackets, void());
     MOCK_METHOD2(receivePackets,
                  uint32_t(uint32_t maxPackets, Packet* receivedPackets[]));
     MOCK_METHOD2(releasePackets, void(Packet* packets[], uint16_t numPackets));
@@ -67,6 +68,7 @@ class MockDriver : public Driver {
     MOCK_METHOD0(getMaxPayloadSize, uint32_t());
     MOCK_METHOD0(getBandwidth, uint32_t());
     MOCK_METHOD0(getLocalAddress, Address*());
+    MOCK_METHOD0(getQueuedBytes, uint32_t());
 };
 
 }  // namespace Mock

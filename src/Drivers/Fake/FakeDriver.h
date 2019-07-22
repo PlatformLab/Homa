@@ -115,16 +115,18 @@ class FakeDriver : public Driver {
      */
     virtual ~FakeDriver();
 
-    Address* getAddress(std::string const* const addressString);
-    Address* getAddress(Driver::Address::Raw const* const rawAddress);
-    Packet* allocPacket();
-    void sendPackets(Packet* packets[], uint16_t numPackets);
-    uint32_t receivePackets(uint32_t maxPackets, Packet* receivedPackets[]);
-    void releasePackets(Packet* packets[], uint16_t numPackets);
-    int getHighestPacketPriority();
-    uint32_t getMaxPayloadSize();
-    uint32_t getBandwidth();
-    Address* getLocalAddress();
+    virtual Address* getAddress(std::string const* const addressString);
+    virtual Address* getAddress(Driver::Address::Raw const* const rawAddress);
+    virtual Packet* allocPacket();
+    virtual void sendPacket(Packet* packet);
+    virtual uint32_t receivePackets(uint32_t maxPackets,
+                                    Packet* receivedPackets[]);
+    virtual void releasePackets(Packet* packets[], uint16_t numPackets);
+    virtual int getHighestPacketPriority();
+    virtual uint32_t getMaxPayloadSize();
+    virtual uint32_t getBandwidth();
+    virtual Address* getLocalAddress();
+    virtual uint32_t getQueuedBytes();
 
   private:
     /// Identifier for this driver on the fake network.

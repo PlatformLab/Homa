@@ -34,7 +34,7 @@ const uint32_t RTT_TIME_US = 5;
  * Sender Constructor.
  *
  * @param transport
- *      The Tranport object that owns this Sender.
+ *      The Transport object that owns this Sender.
  * @param transportId
  *      Unique identifier for the Transport that owns this Sender.
  * @param messageTimeoutCycles
@@ -153,7 +153,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         resendEnd = std::min(resendEnd, message->sentIndex);
         for (uint16_t i = index; i < resendEnd; ++i) {
             Driver::Packet* packet = message->getPacket(index++);
-            message->driver->sendPackets(&packet, 1);
+            message->driver->sendPacket(packet);
         }
     }
 
@@ -484,7 +484,7 @@ Sender::trySend()
         for (uint16_t i = 0; i < numPkts; ++i) {
             Driver::Packet* packet = message->getPacket(message->sentIndex + i);
             assert(packet != nullptr);
-            message->driver->sendPackets(&packet, 1);
+            message->driver->sendPacket(packet);
         }
         message->sentIndex += numPkts;
         if (message->sentIndex >= message->getNumPackets()) {

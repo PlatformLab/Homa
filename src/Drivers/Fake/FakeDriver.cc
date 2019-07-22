@@ -229,17 +229,15 @@ FakeDriver::allocPacket()
 }
 
 /**
- * See Driver::sendPackets()
+ * See Driver::sendPacket()
  */
 void
-FakeDriver::sendPackets(Packet* packets[], uint16_t numPackets)
+FakeDriver::sendPacket(Packet* packet)
 {
-    for (uint16_t i = 0; i < numPackets; ++i) {
-        FakePacket* srcPacket = static_cast<FakePacket*>(packets[i]);
-        FakeAddress* srcAddress = static_cast<FakeAddress*>(getLocalAddress());
-        FakeAddress* dstAddress = static_cast<FakeAddress*>(srcPacket->address);
-        fakeNetwork.sendPacket(srcPacket, srcAddress, dstAddress);
-    }
+    FakePacket* srcPacket = static_cast<FakePacket*>(packet);
+    FakeAddress* srcAddress = static_cast<FakeAddress*>(getLocalAddress());
+    FakeAddress* dstAddress = static_cast<FakeAddress*>(srcPacket->address);
+    fakeNetwork.sendPacket(srcPacket, srcAddress, dstAddress);
 }
 
 /**
@@ -307,6 +305,15 @@ Driver::Address*
 FakeDriver::getLocalAddress()
 {
     return fakeNetwork.getAddress(localAddressId);
+}
+
+/**
+ * See Driver::getQueuedBytes()
+ */
+uint32_t
+FakeDriver::getQueuedBytes()
+{
+    return 0;
 }
 
 }  // namespace Fake

@@ -129,7 +129,8 @@ class Message : public Homa::Message {
     /// returned when this message is no longer needed.
     Driver* const driver;
 
-    /// Number of bytes used per packet for the Homa protocol packet header.
+    /// Number of bytes at the beginning of each Packet that should be
+    /// reserved by used per packet for the Homa protocol packet header.
     const uint16_t PACKET_HEADER_LENGTH;
 
     /// Number of bytes of data in each full packet.

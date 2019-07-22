@@ -334,10 +334,14 @@ DpdkDriverImpl::allocPacket()
     return packet;
 }
 
-// See Driver::sendPackets()
-void
-DpdkDriverImpl::sendPackets(Driver::Packet* packets[], uint16_t numPackets)
+// See Driver::sendPacket()
+uint32_t
+DpdkDriverImpl::sendPacket(Driver::Packet* packet)
 {
+    uint64_t bytesSent = 0;
+    // TODO(cstlee): Remove burst sending and replace with buffering.
+    const uint16_t numPackets = 1;
+    Driver::Packet* packets[1] = {packet};
     constexpr uint16_t MAX_BURST = 32;
     uint16_t nb_pkts = 0;
     struct rte_mbuf* tx_pkts[MAX_BURST];
@@ -345,6 +349,7 @@ DpdkDriverImpl::sendPackets(Driver::Packet* packets[], uint16_t numPackets)
     // Process each packet
     for (uint16_t i = 0; i < numPackets; ++i) {
         DpdkPacket* packet = static_cast<DpdkPacket*>(packets[i]);
+        bytesSent += packet->length;
 
         struct rte_mbuf* mbuf = nullptr;
         // If the packet is held in an Overflow buffer, we need to copy it out
@@ -448,6 +453,8 @@ DpdkDriverImpl::sendPackets(Driver::Packet* packets[], uint16_t numPackets)
 
     // Send out the packets once we finished processing them.
     _sendPackets(tx_pkts, nb_pkts);
+
+    return bytesSent;
 }
 
 // See Driver::receivePackets()

@@ -139,8 +139,8 @@ TEST_F(SenderTest, handleResendPacket_basic)
     resendHdr->index = 3;
     resendHdr->num = 5;
 
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(packets[3]), Eq(1))).Times(1);
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(packets[4]), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packets[3]))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packets[4]))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -197,12 +197,12 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
     char busy[1028];
     Homa::Mock::MockDriver::MockPacket busyPacket(busy);
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&busyPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&busyPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&busyPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&busyPacket), Eq(1)))
         .Times(1);
 
     // Expect no data to be sent but the RESEND packet to be release.
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&dataPacket), Eq(1))).Times(0);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&dataPacket))).Times(0);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -508,8 +508,6 @@ TEST_F(SenderTest, sendMessage_unscheduledLimit)
     EXPECT_EQ(9U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
 
-    EXPECT_CALL(mockDriver, getBandwidth).WillOnce(Return(8000));
-
     sender->sendMessage(message, destination);
 
     EXPECT_TRUE(sender->outboundMessages.find(id) !=
@@ -624,8 +622,8 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_NE(OutboundMessage::State::SENT, message->state);
 
     // 2 granted packets to be sent; won't be finished.
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[0]), Eq(1)));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[1]), Eq(1)));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packet[0])));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packet[1])));
     sender->trySend();  // < test call
     EXPECT_EQ(2U, message->grantIndex);
     EXPECT_EQ(2U, message->sentIndex);
@@ -633,7 +631,7 @@ TEST_F(SenderTest, trySend_basic)
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // No additional grants; no packets sent; won't be finished.
-    EXPECT_CALL(mockDriver, sendPackets).Times(0);
+    EXPECT_CALL(mockDriver, sendPacket).Times(0);
     sender->trySend();  // < test call
     EXPECT_EQ(2U, message->grantIndex);
     EXPECT_EQ(2U, message->sentIndex);
@@ -642,9 +640,9 @@ TEST_F(SenderTest, trySend_basic)
 
     // 3 more granted packets; will finish.
     message->grantIndex = 5;
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[2]), Eq(1)));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[3]), Eq(1)));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(packet[4]), Eq(1)));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packet[2])));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packet[3])));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packet[4])));
     sender->trySend();  // < test call
     EXPECT_EQ(5U, message->grantIndex);
     EXPECT_EQ(5U, message->sentIndex);
@@ -653,7 +651,7 @@ TEST_F(SenderTest, trySend_basic)
 
     // Message already finished.
     message->grantIndex = 6;
-    EXPECT_CALL(mockDriver, sendPackets).Times(0);
+    EXPECT_CALL(mockDriver, sendPacket).Times(0);
     sender->trySend();  // < test call
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_EQ(OutboundMessage::State::SENT, message->state);
@@ -708,7 +706,7 @@ TEST_F(SenderTest, trySend_multipleMessages)
         message[3]->setPacket(i, &mockPacket);
     }
 
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(5);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(5);
 
     sender->trySend();
 
@@ -725,7 +723,7 @@ TEST_F(SenderTest, trySend_multipleMessages)
     EXPECT_NE(OutboundMessage::State::SENT, message[3]->state);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[3]));
 
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(5);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(5);
 
     sender->trySend();
 
@@ -749,7 +747,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
 
     sender->sending.test_and_set();
 
-    EXPECT_CALL(mockDriver, sendPackets).Times(0);
+    EXPECT_CALL(mockDriver, sendPacket).Times(0);
 
     sender->trySend();
 
@@ -759,7 +757,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
 TEST_F(SenderTest, trySend_nothingToSend)
 {
     EXPECT_TRUE(sender->outboundMessages.empty());
-    EXPECT_CALL(mockDriver, sendPackets).Times(0);
+    EXPECT_CALL(mockDriver, sendPacket).Times(0);
     sender->trySend();
 }
 
@@ -790,7 +788,7 @@ TEST_F(SenderTest, checkPingTimeouts_basic)
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&mockPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 

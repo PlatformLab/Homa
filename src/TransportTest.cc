@@ -281,7 +281,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_sendDone)
     char payload[1028];
     NiceMock<Homa::Mock::MockDriver::MockPacket> donePacket(payload);
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&donePacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&donePacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&donePacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&donePacket), Eq(1)))
         .Times(1);
     {
@@ -384,7 +384,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_FAILED)
     char payload[1028];
     NiceMock<Homa::Mock::MockDriver::MockPacket> errorPacket(payload);
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&errorPacket));
-    EXPECT_CALL(mockDriver, sendPackets(Pointee(&errorPacket), Eq(1))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&errorPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&errorPacket), Eq(1)))
         .Times(1);
 

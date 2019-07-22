@@ -84,7 +84,7 @@ TEST(FakeDriverTest, sendPackets)
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(7).size());
 
-    driver1.sendPackets(packets, 1);
+    driver1.sendPacket(packets[0]);
 
     EXPECT_EQ(1U, driver2.nic.priorityQueue.at(0).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(1).size());
@@ -100,7 +100,9 @@ TEST(FakeDriverTest, sendPackets)
         EXPECT_EQ(driver1.getLocalAddress(), packet->address);
     }
 
-    driver1.sendPackets(packets, 4);
+    for (int i = 0; i < 4; ++i) {
+        driver1.sendPacket(packets[i]);
+    }
 
     EXPECT_EQ(2U, driver2.nic.priorityQueue.at(0).size());
     EXPECT_EQ(1U, driver2.nic.priorityQueue.at(1).size());

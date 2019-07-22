@@ -68,8 +68,8 @@ class DpdkDriverImpl {
     /// See Driver::allocPacket()
     Driver::Packet* allocPacket();
 
-    /// See Driver::sendPackets()
-    void sendPackets(Driver::Packet* packets[], uint16_t numPackets);
+    /// See Driver::sendPacket()
+    virtual uint32_t sendPacket(Driver::Packet* packet);
 
     /// See Driver::receivePackets()
     uint32_t receivePackets(uint32_t maxPackets,
@@ -104,7 +104,7 @@ class DpdkDriverImpl {
     /// Provides thread safety for Packet management operations.
     SpinLock packetLock;
 
-    /// Provides memory allocation for the DPDK specific implentation of a
+    /// Provides memory allocation for the DPDK specific implementation of a
     /// Driver Packet.
     ObjectPool<DpdkPacket> packetPool;
 
