@@ -16,11 +16,13 @@
 #ifndef HOMA_DRIVERS_FAKE_FAKEDRIVER_H
 #define HOMA_DRIVERS_FAKE_FAKEDRIVER_H
 
-#include <Homa/Driver.h>
-
 #include <array>
+#include <chrono>
 #include <deque>
 #include <mutex>
+
+#include <Homa/Driver.h>
+#include <Homa/Drivers/Util/QueueEstimator.h>
 
 namespace Homa {
 namespace Drivers {
@@ -134,6 +136,9 @@ class FakeDriver : public Driver {
 
     /// Holds the incoming packets for this driver.
     FakeNIC nic;
+
+    /// Tracks the size of the NIC's transmit queue.
+    Util::QueueEstimator<std::chrono::steady_clock> queueEstimator;
 
     // Disable copy and assign
     FakeDriver(const FakeDriver&) = delete;

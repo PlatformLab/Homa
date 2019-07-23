@@ -186,6 +186,7 @@ FakeNIC::~FakeNIC()
 FakeDriver::FakeDriver()
     : localAddressId()
     , nic()
+    , queueEstimator(getBandwidth())
 {
     localAddressId = fakeNetwork.registerNIC(&nic);
 }
@@ -238,6 +239,7 @@ FakeDriver::sendPacket(Packet* packet)
     FakeAddress* srcAddress = static_cast<FakeAddress*>(getLocalAddress());
     FakeAddress* dstAddress = static_cast<FakeAddress*>(srcPacket->address);
     fakeNetwork.sendPacket(srcPacket, srcAddress, dstAddress);
+    queueEstimator.signalBytesSent(packet->length);
 }
 
 /**
@@ -313,7 +315,7 @@ FakeDriver::getLocalAddress()
 uint32_t
 FakeDriver::getQueuedBytes()
 {
-    return 0;
+    return queueEstimator.getQueuedBytes();
 }
 
 }  // namespace Fake
