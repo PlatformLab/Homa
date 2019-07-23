@@ -43,4 +43,5 @@ target_include_directories(Perf
 target_link_libraries(Perf
     docopt
     PerfUtils
+    Homa
 )

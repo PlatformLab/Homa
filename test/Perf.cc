@@ -23,6 +23,8 @@
 #include "Cycles.h"
 #include "docopt.h"
 
+#include "Homa/Drivers/Util/QueueEstimator.h"
+
 static const char USAGE[] = R"(Performance Nano-Benchmark
 
 Usage:
@@ -42,8 +44,8 @@ Options:
     -h --help       Show this screen
 )";
 
-// This struct contains information about a paricular test that can be displayed
-// to the user.
+// This struct contains information about a particular test that can be
+// displayed to the user.
 struct TestInfo {
     const char* name;         // Name of the performance test; this is what gets
                               // typed on the command line to run the test.
@@ -54,6 +56,25 @@ struct TestInfo {
                               // test (can contain multiple lines but each line
                               // should be less than 72 characters long).
 };
+
+TestInfo queueEstimatorTestInfo = {
+    "queueEstimator", "Update a QueueEstimator",
+    R"(Measure the cost of updating a Homa::Drivers::Util::QueueEstimator.)"};
+double
+queueEstimatorTest()
+{
+    int count = 1000000;
+    Homa::Drivers::Util::QueueEstimator<std::chrono::high_resolution_clock>
+        queueEstimator(10000);
+    uint32_t bytes = 0;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        queueEstimator.signalBytesSent(100);
+        bytes += queueEstimator.getQueuedBytes();
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (2 * count);
+}
 
 TestInfo rdtscTestInfo = {
     "rdtsc", "Read the fine-grain cycle counter",
@@ -97,6 +118,7 @@ struct TestCase {
                            // including the test's string name.
 };
 TestCase tests[] = {
+    {queueEstimatorTest, &queueEstimatorTestInfo},
     {rdtscTest, &rdtscTestInfo},
     {rdhrcTest, &rdhrcTestInfo},
 };
