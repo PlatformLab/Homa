@@ -23,7 +23,7 @@ namespace Core {
  *
  * Intrusive data structures allow data structure metadata to be contained in
  * and allocated with the elements themselves.  Intrusive data structures are
- * often used to avoid encurring additional memory allocation when frequently
+ * often used to avoid incurring additional memory allocation when frequently
  * adding and removing elements from a data structure.
  */
 namespace Intrusive {
@@ -319,7 +319,7 @@ class List {
     /**
      * Removes the node from this List.
      *
-     * Iterators reffering to the removed element are invalidated.
+     * Iterators referring to the removed element are invalidated.
      *
      * @param node
      *      Node to be removed from this List.
@@ -386,7 +386,7 @@ class List {
      *
      * @param pos
      *      Node before which node will be inserted and linked.
-     * @parm node
+     * @param node
      *      Node which will be inserted and linked.
      */
     static inline void __insert(Node* pos, Node* node)

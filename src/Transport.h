@@ -207,7 +207,7 @@ class Transport {
         std::deque<void*> order;
     } updateHints;
 
-    /// Colletion of Op objects that are waiting to be destructed.  Allow the
+    /// Collection of Op objects that are waiting to be destructed.  Allow the
     /// Op the asynchronously request its own destruction.
     struct {
         /// Protects unusedOps.
