@@ -21,6 +21,7 @@
 #include <atomic>
 #include <unordered_map>
 
+#include "Intrusive.h"
 #include "Message.h"
 #include "OutboundMessage.h"
 #include "Protocol.h"
@@ -59,6 +60,9 @@ class Sender {
     void checkMessageTimeouts();
     void checkPingTimeouts();
     void trySend();
+    void hintMessageReady(OutboundMessage* message,
+                          const SpinLock::UniqueLock& lock,
+                          const SpinLock::Lock& lock_message);
 
     /// Protects the top-level
     SpinLock mutex;
@@ -72,10 +76,17 @@ class Sender {
     /// The sequence number to be used for the next OutboundMessage.
     uint64_t nextMessageSequenceNumber;
 
+    /// The maximum number of bytes that should be queued in the Driver.
+    const uint32_t DRIVER_QUEUED_BYTE_LIMIT;
+
     /// Tracks the set of outbound messages being sent by the Sender.
     std::unordered_map<Protocol::MessageId, OutboundMessage*,
                        Protocol::MessageId::Hasher>
         outboundMessages;
+
+    /// A list of outbound messages that have packets that can be sent.
+    /// Messages are kept in order of priority.
+    Intrusive::List<OutboundMessage> readyQueue;
 
     /// Maintains OutboundMessage objects in increasing order of timeout.
     TimeoutManager<OutboundMessage> messageTimeouts;
@@ -84,7 +95,7 @@ class Sender {
     TimeoutManager<OutboundMessage> pingTimeouts;
 
     /// True if the Sender is currently executing trySend(); false, otherwise.
-    /// Use to prevent concurrent calls to trySend() from blocking on eachother.
+    /// Use to prevent concurrent trySend() calls from blocking on each other.
     std::atomic_flag sending = ATOMIC_FLAG_INIT;
 };
 

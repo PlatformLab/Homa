@@ -380,6 +380,19 @@ class List {
         root.next->unlink();
     }
 
+    /**
+     * Check if the given element is in the List.
+     *
+     * @param node
+     *      Node element being checked.
+     * @return
+     *      True, if the node is in the List; false, otherwise.
+     */
+    bool contains(Node* node)
+    {
+        return node->list == this;
+    }
+
   private:
     /**
      * Insert node before pos (private helper method).

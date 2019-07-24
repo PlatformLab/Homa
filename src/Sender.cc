@@ -50,7 +50,9 @@ Sender::Sender(Transport* transport, uint64_t transportId,
     , transport(transport)
     , transportId(transportId)
     , nextMessageSequenceNumber(1)
+    , DRIVER_QUEUED_BYTE_LIMIT(2 * transport->driver->getMaxPayloadSize())
     , outboundMessages()
+    , readyQueue()
     , messageTimeouts(messageTimeoutCycles)
     , pingTimeouts(pingIntervalCycles)
     , sending()
@@ -92,6 +94,7 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     SpinLock::Lock lock_message(message->mutex);
     messageTimeouts.cancelTimeout(&message->messageTimeout);
     pingTimeouts.cancelTimeout(&message->pingTimeout);
+    readyQueue.remove(&message->readyQueueNode);
     lock.unlock();  // End Sender critical section
 
     message->state.store(OutboundMessage::State::COMPLETED);
@@ -116,6 +119,9 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::ResendHeader* header =
         static_cast<Protocol::Packet::ResendHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
+    uint16_t index = header->index;
+    uint16_t resendEnd = index + header->num;
+
     OutboundMessage* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
@@ -131,14 +137,13 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     SpinLock::Lock lock_message(message->mutex);
     messageTimeouts.setTimeout(&message->messageTimeout);
     pingTimeouts.setTimeout(&message->pingTimeout);
-    lock.unlock();  // End Sender critical section
-
-    uint16_t index = header->index;
-    uint16_t resendEnd = index + header->num;
-
     // In case a GRANT may have been lost, consider the RESEND a GRANT.
     assert(resendEnd <= message->getNumPackets());
-    message->grantIndex = std::max(message->grantIndex, resendEnd);
+    if (message->grantIndex < resendEnd) {
+        message->grantIndex = resendEnd;
+        hintMessageReady(message, lock, lock_message);
+    }
+    lock.unlock();  // End Sender critical section
 
     if (index >= message->sentIndex) {
         // If this RESEND is only requesting unsent packets, it must be that
@@ -191,6 +196,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     SpinLock::Lock lock_message(message->mutex);
     messageTimeouts.setTimeout(&message->messageTimeout);
     pingTimeouts.setTimeout(&message->pingTimeout);
+    hintMessageReady(message, lock, lock_message);
     lock.unlock();  // End Sender critical section
 
     assert(header->indexLimit <= message->getNumPackets());
@@ -229,8 +235,6 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
 
     // Lock handoff.
     SpinLock::Lock lock_message(message->mutex);
-    lock.unlock();  // End Sender critical section.
-
     if (message->state == OutboundMessage::State::IN_PROGRESS ||
         message->state == OutboundMessage::State::SENT) {
         // Restart sending the message from scratch.
@@ -239,10 +243,17 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
         // TODO(cstlee): May want to use the unscheduled-limit here instead of
         // just granting a single packet.
         message->grantIndex = 1;
+        // Need to set the rawUnsentBytes before calling hintMessageReady(); the
+        // member variable is used by the helper method.
+        message->rawUnsentBytes =
+            message->rawLength() +
+            (message->PACKET_HEADER_LENGTH * message->getNumPackets());
+        hintMessageReady(message, lock, lock_message);
     } else {
         // The message is already considered "done" so the UNKNOWN packet must
         // be a stale response to a ping.
     }
+    lock.unlock();  // End Sender critical section.
 
     driver->releasePackets(&packet, 1);
 }
@@ -278,6 +289,7 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
     SpinLock::Lock lock_message(message->mutex);
     messageTimeouts.cancelTimeout(&message->messageTimeout);
     pingTimeouts.cancelTimeout(&message->pingTimeout);
+    readyQueue.remove(&message->readyQueueNode);
     lock.unlock();  // End Sender critical section
 
     assert(message->state != OutboundMessage::State::COMPLETED);
@@ -302,11 +314,18 @@ Sender::sendMessage(OutboundMessage* message, Driver::Address* destination)
     SpinLock::UniqueLock lock(mutex);
     SpinLock::Lock lock_message(message->mutex);
 
+    assert(message->driver == transport->driver);
+
     Protocol::MessageId id(transportId, nextMessageSequenceNumber++);
     outboundMessages.insert({id, message});
     messageTimeouts.setTimeout(&message->messageTimeout);
     pingTimeouts.setTimeout(&message->pingTimeout);
-
+    // Need to set the rawUnsentBytes before calling hintMessageReady(); the
+    // member variable is used by the helper method.
+    message->rawUnsentBytes =
+        message->rawLength() +
+        (message->PACKET_HEADER_LENGTH * message->getNumPackets());
+    hintMessageReady(message, lock, lock_message);
     lock.unlock();  // End sender critical section.
 
     message->state.store(OutboundMessage::State::IN_PROGRESS);
@@ -362,6 +381,7 @@ Sender::dropMessage(OutboundMessage* message)
         assert(message == it->second);
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         pingTimeouts.cancelTimeout(&message->pingTimeout);
+        readyQueue.remove(&message->readyQueueNode);
         outboundMessages.erase(it);
     }
 }
@@ -404,6 +424,7 @@ Sender::checkMessageTimeouts()
         }
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         pingTimeouts.cancelTimeout(&message->pingTimeout);
+        readyQueue.remove(&message->readyQueueNode);
         transport->hintUpdatedOp(message->op);
     }
 }
@@ -460,41 +481,82 @@ Sender::trySend()
     }
 
     SpinLock::Lock lock(mutex);
-    OutboundMessage* message = nullptr;
-    auto it = outboundMessages.begin();
-    while (it != outboundMessages.end()) {
-        message = it->second;
-        message->mutex.lock();
-        if (message->sentIndex < message->getNumPackets() &&
-            message->sentIndex < message->grantIndex) {
-            // found a message to send.
-            break;
-        }
-        message->mutex.unlock();
-        message = nullptr;
-        it++;
-    }
-
-    // If there is a message to send; send the next packets.
-    if (message != nullptr) {
-        SpinLock::Lock lock_message(message->mutex, std::adopt_lock);
-        assert(message->grantIndex <= message->getNumPackets());
-        assert(message->grantIndex >= message->sentIndex);
-        uint16_t numPkts = message->grantIndex - message->sentIndex;
-        for (uint16_t i = 0; i < numPkts; ++i) {
-            Driver::Packet* packet = message->getPacket(message->sentIndex + i);
+    uint32_t queuedBytesEstimate = transport->driver->getQueuedBytes();
+    auto it = readyQueue.begin();
+    while (it != readyQueue.end()) {
+        OutboundMessage& message = *it;
+        SpinLock::Lock lock_message(message.mutex);
+        assert(message.driver == transport->driver);
+        assert(message.grantIndex <= message.getNumPackets());
+        while (message.sentIndex < message.grantIndex) {
+            Driver::Packet* packet = message.getPacket(message.sentIndex);
             assert(packet != nullptr);
-            message->driver->sendPacket(packet);
+            queuedBytesEstimate += packet->length;
+            // Check if the send limit would be reached...
+            if (queuedBytesEstimate > DRIVER_QUEUED_BYTE_LIMIT) {
+                break;
+            }
+            // ... if not, send away!
+            message.driver->sendPacket(packet);
+            assert(message.rawUnsentBytes >= packet->length);
+            message.rawUnsentBytes -= packet->length;
+            ++message.sentIndex;
         }
-        message->sentIndex += numPkts;
-        if (message->sentIndex >= message->getNumPackets()) {
+        if (message.sentIndex >= message.getNumPackets()) {
             // We have finished sending the message.
-            message->state.store(OutboundMessage::State::SENT);
-            transport->hintUpdatedOp(message->op);
+            message.state.store(OutboundMessage::State::SENT);
+            transport->hintUpdatedOp(message.op);
+            it = readyQueue.remove(it);
+        } else if (message.sentIndex >= message.grantIndex) {
+            // We have sent every granted packet.
+            it = readyQueue.remove(it);
+        } else {
+            // We hit the DRIVER_QUEUED_BYTES_LIMIT; stop sending for now.
+            break;
         }
     }
 
     sending.clear();
+}
+
+/**
+ * Hint that the provided message has packet(s) that are/is ready to be sent.
+ *
+ * Note: Spurious calls to this method (i.e. call this method when the Message
+ * is not actually ready) is allowed but can add a performance overhead.  This
+ * behavior is allowed so that we can forgo an additional "ready check" in the
+ * common case where we almost always know that it is ready.
+ *
+ * @param message
+ *      The Message that is ready to be sent.
+ * @param lock
+ *      Ensures the Sender::mutex is held during this call.
+ * @param lock_message
+ *      Ensures OutboundMessage::mutex is held during this call.
+ */
+void
+Sender::hintMessageReady(OutboundMessage* message,
+                         const SpinLock::UniqueLock& lock,
+                         const SpinLock::Lock& lock_message)
+{
+    // NOTICE: Holding the Sender::mutex (lock) is needed to prevent deadlock.
+    // If this method were allowed to execute concurrently, two threads could
+    // lock two messages (lock_message & lock_message_other) in different orders
+    // resulting in deadlock.
+    (void)lock;
+    (void)lock_message;
+    if (readyQueue.contains(&message->readyQueueNode)) {
+        return;
+    }
+    auto it = readyQueue.begin();
+    while (it != readyQueue.end()) {
+        SpinLock::Lock lock_message_other(it->mutex);
+        if (it->rawUnsentBytes > message->rawUnsentBytes) {
+            break;
+        }
+        ++it;
+    }
+    readyQueue.insert(it, &message->readyQueueNode);
 }
 
 }  // namespace Core

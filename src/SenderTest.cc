@@ -45,6 +45,7 @@ class SenderTest : public ::testing::Test {
     {
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
+        ON_CALL(mockDriver, getQueuedBytes).WillByDefault(Return(0));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         transport = new Transport(&mockDriver, 22);
@@ -609,52 +610,66 @@ TEST_F(SenderTest, trySend_basic)
     Protocol::OpId opId = {0, 0};
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, opId);
-    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 2);
+    OutboundMessage* message = SenderTest::addMessage(sender, id, op, 3);
+    sender->readyQueue.push_back(&message->readyQueueNode);
     Homa::Mock::MockDriver::MockPacket* packet[5];
+    const uint32_t PACKET_SIZE = sender->transport->driver->getMaxPayloadSize();
     for (int i = 0; i < 5; ++i) {
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
+        packet[i]->length = PACKET_SIZE;
         message->setPacket(i, packet[i]);
+        message->rawUnsentBytes += packet[i]->length;
     }
-    message->messageLength = 4000;
     EXPECT_EQ(5U, message->getNumPackets());
-    EXPECT_EQ(2U, message->grantIndex);
+    EXPECT_EQ(3U, message->grantIndex);
     EXPECT_EQ(0U, message->sentIndex);
+    EXPECT_EQ(5 * PACKET_SIZE, message->rawUnsentBytes);
     EXPECT_NE(OutboundMessage::State::SENT, message->state);
+    EXPECT_TRUE(sender->readyQueue.contains(&message->readyQueueNode));
 
-    // 2 granted packets to be sent; won't be finished.
+    // 3 granted packets; 2 will send; queue limit reached.
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[0])));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[1])));
     sender->trySend();  // < test call
-    EXPECT_EQ(2U, message->grantIndex);
+    EXPECT_EQ(3U, message->grantIndex);
     EXPECT_EQ(2U, message->sentIndex);
+    EXPECT_EQ(3 * PACKET_SIZE, message->rawUnsentBytes);
     EXPECT_NE(OutboundMessage::State::SENT, message->state);
+    EXPECT_TRUE(sender->readyQueue.contains(&message->readyQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
 
-    // No additional grants; no packets sent; won't be finished.
-    EXPECT_CALL(mockDriver, sendPacket).Times(0);
-    sender->trySend();  // < test call
-    EXPECT_EQ(2U, message->grantIndex);
-    EXPECT_EQ(2U, message->sentIndex);
-    EXPECT_NE(OutboundMessage::State::SENT, message->state);
-    Mock::VerifyAndClearExpectations(&mockDriver);
-
-    // 3 more granted packets; will finish.
-    message->grantIndex = 5;
+    // 1 packet to be sent; grant limit reached.
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[2])));
+    sender->trySend();  // < test call
+    EXPECT_EQ(3U, message->grantIndex);
+    EXPECT_EQ(3U, message->sentIndex);
+    EXPECT_EQ(2 * PACKET_SIZE, message->rawUnsentBytes);
+    EXPECT_NE(OutboundMessage::State::SENT, message->state);
+    EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // No additional grants; spurious ready hint.
+    EXPECT_CALL(mockDriver, sendPacket).Times(0);
+    sender->readyQueue.push_back(&message->readyQueueNode);
+    sender->trySend();  // < test call
+    EXPECT_EQ(3U, message->grantIndex);
+    EXPECT_EQ(3U, message->sentIndex);
+    EXPECT_EQ(2 * PACKET_SIZE, message->rawUnsentBytes);
+    EXPECT_NE(OutboundMessage::State::SENT, message->state);
+    EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // 2 more granted packets; will finish.
+    message->grantIndex = 5;
+    sender->readyQueue.push_back(&message->readyQueueNode);
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[3])));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[4])));
     sender->trySend();  // < test call
     EXPECT_EQ(5U, message->grantIndex);
     EXPECT_EQ(5U, message->sentIndex);
+    EXPECT_EQ(0 * PACKET_SIZE, message->rawUnsentBytes);
     EXPECT_EQ(OutboundMessage::State::SENT, message->state);
-    Mock::VerifyAndClearExpectations(&mockDriver);
-
-    // Message already finished.
-    message->grantIndex = 6;
-    EXPECT_CALL(mockDriver, sendPacket).Times(0);
-    sender->trySend();  // < test call
-    EXPECT_EQ(5U, message->sentIndex);
-    EXPECT_EQ(OutboundMessage::State::SENT, message->state);
+    EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     for (int i = 0; i < 5; ++i) {
@@ -664,72 +679,50 @@ TEST_F(SenderTest, trySend_basic)
 
 TEST_F(SenderTest, trySend_multipleMessages)
 {
-    Transport::Op* op[4];
-    OutboundMessage* message[4];
-    for (uint64_t i = 0; i < 4; ++i) {
+    Transport::Op* op[3];
+    OutboundMessage* message[3];
+    Homa::Mock::MockDriver::MockPacket* packet[3];
+    for (uint64_t i = 0; i < 3; ++i) {
         Protocol::OpId opId = {42, i};
         Protocol::MessageId id = {22, 10 + i};
         op[i] = transport->opPool.construct(transport, &mockDriver, opId);
-        message[i] = SenderTest::addMessage(sender, id, op[i], 5);
+        message[i] = SenderTest::addMessage(sender, id, op[i], 1);
+        packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
+        packet[i]->length = sender->transport->driver->getMaxPayloadSize() / 4;
+        message[i]->setPacket(0, packet[i]);
+        message[i]->rawUnsentBytes += packet[i]->length;
+        sender->readyQueue.push_back(&message[i]->readyQueueNode);
     }
 
-    // Message 0: All packets sent
-    message[0]->messageLength = 5000;
-    EXPECT_EQ(5, message[0]->grantIndex);
-    message[0]->sentIndex = 5;
-    message[0]->state.store(OutboundMessage::State::SENT);
-    for (int i = 0; i < 5; ++i) {
-        message[0]->setPacket(i, nullptr);
-    }
+    // Message 0: Will finish
+    EXPECT_EQ(1, message[0]->grantIndex);
+    message[0]->sentIndex = 0;
 
-    // Message 1: Waiting for more grants
-    message[1]->messageLength = 9000;
-    EXPECT_EQ(5, message[1]->grantIndex);
-    message[1]->sentIndex = 5;
-    for (int i = 0; i < 9; ++i) {
-        message[1]->setPacket(i, nullptr);
-    }
+    // Message 1: Will reach grant limit
+    EXPECT_EQ(1, message[1]->grantIndex);
+    message[1]->sentIndex = 0;
+    message[1]->setPacket(1, nullptr);
+    EXPECT_EQ(2, message[1]->getNumPackets());
 
-    // Message 2: New message, send 5 packets
-    message[2]->messageLength = 9000;
-    EXPECT_EQ(5, message[2]->grantIndex);
-    EXPECT_EQ(0, message[2]->sentIndex);
-    for (int i = 0; i < 9; ++i) {
-        message[2]->setPacket(i, &mockPacket);
-    }
+    // Message 2: Will finish
+    EXPECT_EQ(1, message[2]->grantIndex);
+    message[2]->sentIndex = 0;
 
-    // Message 3: Send 3 packets to complete send.
-    message[3]->messageLength = 5000;
-    EXPECT_EQ(5, message[3]->grantIndex);
-    EXPECT_EQ(0, message[3]->sentIndex);
-    for (int i = 0; i < 5; ++i) {
-        message[3]->setPacket(i, &mockPacket);
-    }
-
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(5);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packet[0])));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packet[1])));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(packet[2])));
 
     sender->trySend();
 
-    EXPECT_EQ(5U, message[0]->sentIndex);
+    EXPECT_EQ(1U, message[0]->sentIndex);
     EXPECT_EQ(OutboundMessage::State::SENT, message[0]->state);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op[0]));
-    EXPECT_EQ(5U, message[1]->sentIndex);
+    EXPECT_FALSE(sender->readyQueue.contains(&message[0]->readyQueueNode));
+    EXPECT_EQ(1U, message[1]->sentIndex);
     EXPECT_NE(OutboundMessage::State::SENT, message[1]->state);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op[1]));
-    EXPECT_EQ(5U, message[2]->sentIndex);
-    EXPECT_NE(OutboundMessage::State::SENT, message[2]->state);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
-    EXPECT_EQ(0U, message[3]->sentIndex);
-    EXPECT_NE(OutboundMessage::State::SENT, message[3]->state);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op[3]));
-
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(5);
-
-    sender->trySend();
-
-    EXPECT_EQ(5U, message[3]->sentIndex);
-    EXPECT_EQ(OutboundMessage::State::SENT, message[3]->state);
-    EXPECT_EQ(1U, transport->updateHints.ops.count(op[3]));
+    EXPECT_FALSE(sender->readyQueue.contains(&message[1]->readyQueueNode));
+    EXPECT_EQ(1U, message[2]->sentIndex);
+    EXPECT_EQ(OutboundMessage::State::SENT, message[2]->state);
+    EXPECT_FALSE(sender->readyQueue.contains(&message[2]->readyQueueNode));
 }
 
 TEST_F(SenderTest, trySend_alreadyRunning)
@@ -739,6 +732,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
     Transport::Op* op =
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = SenderTest::addMessage(sender, id, op, 1);
+    sender->readyQueue.push_back(&message->readyQueueNode);
     message->setPacket(0, &mockPacket);
     message->messageLength = 1000;
     EXPECT_EQ(1U, message->getNumPackets());
@@ -756,7 +750,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
 
 TEST_F(SenderTest, trySend_nothingToSend)
 {
-    EXPECT_TRUE(sender->outboundMessages.empty());
+    EXPECT_TRUE(sender->readyQueue.empty());
     EXPECT_CALL(mockDriver, sendPacket).Times(0);
     sender->trySend();
 }
@@ -813,6 +807,66 @@ TEST_F(SenderTest, checkPingTimeouts_empty)
     // Nothing to test except to ensure the call doesn't loop infinitely.
     EXPECT_TRUE(sender->pingTimeouts.list.empty());
     sender->checkPingTimeouts();
+}
+
+TEST_F(SenderTest, hintMessageReady)
+{
+    OutboundMessage* message[3];
+    for (int i = 0; i < 3; ++i) {
+        Protocol::OpId opId = {0, 0};
+        message[i] = &transport->opPool.construct(transport, &mockDriver, opId)
+                          ->outMessage;
+        message[i]->rawUnsentBytes = (i + 1) * 1000;
+    }
+
+    EXPECT_TRUE(sender->readyQueue.empty());
+
+    // Queue([1]) : EXPECT ->[1]->
+    {
+        SpinLock::UniqueLock lock(sender->mutex);
+        SpinLock::Lock lock_message(message[1]->mutex);
+        sender->hintMessageReady(message[1], lock, lock_message);
+    }
+    EXPECT_TRUE(sender->readyQueue.contains(&message[1]->readyQueueNode));
+    auto it = sender->readyQueue.begin();
+    EXPECT_EQ(message[1], (it++).node->owner);
+    EXPECT_EQ(sender->readyQueue.end(), it);
+
+    // Queue([1]) again : EXPECT ->[1]->
+    {
+        SpinLock::UniqueLock lock(sender->mutex);
+        SpinLock::Lock lock_message(message[1]->mutex);
+        sender->hintMessageReady(message[1], lock, lock_message);
+    }
+    EXPECT_TRUE(sender->readyQueue.contains(&message[1]->readyQueueNode));
+    it = sender->readyQueue.begin();
+    EXPECT_EQ(message[1], (it++).node->owner);
+    EXPECT_EQ(sender->readyQueue.end(), it);
+
+    // Queue([0]) : EXPECT ->[0]->[1]->
+    {
+        SpinLock::UniqueLock lock(sender->mutex);
+        SpinLock::Lock lock_message(message[0]->mutex);
+        sender->hintMessageReady(message[0], lock, lock_message);
+    }
+    EXPECT_TRUE(sender->readyQueue.contains(&message[0]->readyQueueNode));
+    it = sender->readyQueue.begin();
+    EXPECT_EQ(message[0], (it++).node->owner);
+    EXPECT_EQ(message[1], (it++).node->owner);
+    EXPECT_EQ(sender->readyQueue.end(), it);
+
+    // Queue([2]) : EXPECT ->[0]->[1]->[2]->
+    {
+        SpinLock::UniqueLock lock(sender->mutex);
+        SpinLock::Lock lock_message(message[2]->mutex);
+        sender->hintMessageReady(message[2], lock, lock_message);
+    }
+    EXPECT_TRUE(sender->readyQueue.contains(&message[2]->readyQueueNode));
+    it = sender->readyQueue.begin();
+    EXPECT_EQ(message[0], (it++).node->owner);
+    EXPECT_EQ(message[1], (it++).node->owner);
+    EXPECT_EQ(message[2], (it++).node->owner);
+    EXPECT_EQ(sender->readyQueue.end(), it);
 }
 
 }  // namespace

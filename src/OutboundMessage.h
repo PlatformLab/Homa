@@ -57,7 +57,9 @@ class OutboundMessage : public Message {
         , state(OutboundMessage::State::NOT_STARTED)
         , grantIndex(0)
         , sentIndex(0)
+        , rawUnsentBytes(0)
         , op(op)
+        , readyQueueNode(this)
         , messageTimeout(this)
         , pingTimeout(this)
     {}
@@ -83,8 +85,14 @@ class OutboundMessage : public Message {
     uint16_t grantIndex;
     /// Packets up to (but excluding) this index have been sent.
     uint16_t sentIndex;
+    /// The number of bytes (including DataHeader bytes) that still need to be
+    /// sent for this Message.
+    uint32_t rawUnsentBytes;
     /// Transport::Op associated with this message.
     void* const op;
+    /// Intrusive structure used by the Sender to keep track of this message
+    /// when it has packets to send.
+    Intrusive::List<OutboundMessage>::Node readyQueueNode;
     /// Intrusive structure used by the Sender to keep track when the sending of
     /// this message should be considered failed.
     Timeout<OutboundMessage> messageTimeout;

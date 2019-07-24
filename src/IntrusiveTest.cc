@@ -412,6 +412,18 @@ TEST_F(IntrusiveListTest, pop_front)
     EXPECT_EQ(&list.root, foo[1].listNode.prev);
 }
 
+TEST_F(IntrusiveListTest, contains)
+{
+    populateList();
+    Foo* foo = &list.front();
+
+    EXPECT_TRUE(list.contains(&foo->listNode));
+
+    list.pop_front();
+
+    EXPECT_FALSE(list.contains(&foo->listNode));
+}
+
 TEST_F(IntrusiveListTest, __insert)
 {
     Intrusive::List<Foo>::__insert(&foo[0].listNode, &foo[1].listNode);
