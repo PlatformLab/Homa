@@ -35,7 +35,7 @@ namespace ControlPacket {
  */
 template <typename PacketHeaderType, typename... Args>
 void
-send(Driver* driver, Driver::Address* address, Args&&... args)
+send(Driver* driver, Driver::Address address, Args&&... args)
 {
     Driver::Packet* packet = driver->allocPacket();
     new (packet->payload) PacketHeaderType(static_cast<Args&&>(args)...);

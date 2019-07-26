@@ -34,7 +34,7 @@ RemoteOp::~RemoteOp()
 }
 
 void
-RemoteOp::send(Driver::Address* destination)
+RemoteOp::send(Driver::Address destination)
 {
     // Don't let applications touch the outbound message while it is being
     // processed by the Transport.
@@ -133,7 +133,7 @@ ServerOp::reply()
 }
 
 void
-ServerOp::delegate(Driver::Address* destination)
+ServerOp::delegate(Driver::Address destination)
 {
     if (op != nullptr) {
         response = nullptr;
@@ -161,7 +161,7 @@ Transport::receiveServerOp()
     return op;
 }
 
-Driver::Address*
+Driver::Address
 Transport::getAddress(std::string const* const addressString)
 {
     return internal->driver->getAddress(addressString);

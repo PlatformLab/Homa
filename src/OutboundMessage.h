@@ -53,7 +53,7 @@ class OutboundMessage : public Message {
         : Message(driver, sizeof(Protocol::Packet::DataHeader), 0)
         , mutex()
         , id(0, 0)
-        , destination(nullptr)
+        , destination()
         , state(OutboundMessage::State::NOT_STARTED)
         , grantIndex(0)
         , sentIndex(0)
@@ -78,7 +78,7 @@ class OutboundMessage : public Message {
     /// Contains the unique identifier for this message.
     Protocol::MessageId id;
     /// Contains destination address this message.
-    Driver::Address* destination;
+    Driver::Address destination;
     /// This message's current state.
     std::atomic<State> state;
     /// Packets up to (but excluding) this index can be sent.

@@ -158,7 +158,7 @@ enum Opcode {
  * versions of the protocol. The struct contains version information about the
  * protocol used in the encompassing packet. The Transport should always send
  * this prefix and can always expect it when receiving a Homa packet. The prefix
- * is seperated into its own struct because the Transport may need to know the
+ * is separated into its own struct because the Transport may need to know the
  * protocol version before interpreting the rest of the packet.
  */
 struct HeaderPrefix {
@@ -336,7 +336,7 @@ static const uint32_t ULTIMATE_RESPONSE_TAG = 0;
  * versions of the protocol. The struct contains version information about the
  * protocol used in the encompassing Message. The Transport should always send
  * this prefix and can always expect it when receiving a Homa Message. The
- * prefix is seperated into its own struct because the Transport may need to
+ * prefix is separated into its own struct because the Transport may need to
  * know the protocol version before interpreting the rest of the packet.
  */
 struct HeaderPrefix {
@@ -357,18 +357,16 @@ struct Header {
     OpId opId;            ///< Id of the Op to which this message belongs.
     uint32_t tag;  ///< Uniquely identifies this Message within the set of
                    ///< messages that belong to the RemoteOp.
-    Driver::Address::Raw replyAddress;  ///< Replies to this Message should be
-                                        ///< sent to this address.
+    Driver::WireFormatAddress replyAddress;  ///< Replies to this Message should
+                                             ///< be sent to this address.
 
     /// CommonHeader constructor.
-    explicit Header(OpId opId, uint32_t tag, Driver::Address* address)
+    explicit Header(OpId opId, uint32_t tag)
         : prefix(1)
         , opId(opId)
         , tag(tag)
         , replyAddress()
-    {
-        address->toRaw(&replyAddress);
-    }
+    {}
 } __attribute__((packed));
 
 }  // namespace Message

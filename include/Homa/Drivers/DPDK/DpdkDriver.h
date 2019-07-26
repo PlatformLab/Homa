@@ -79,7 +79,7 @@ class DpdkDriver : public Driver {
      * Usage]
      *
      * This constructor is used when parts of the application other than the
-     * DpdkDriver are using DPDK and the caller wants to take resposability for
+     * DpdkDriver are using DPDK and the caller wants to take responsibility for
      * calling rte_eal_init(). The caller must ensure that rte_eal_init() is
      * called before calling this constructor.
      *
@@ -94,7 +94,15 @@ class DpdkDriver : public Driver {
     DpdkDriver(int port, NoEalInit _);
 
     /// See Driver::getAddress()
-    virtual Driver::Address* getAddress(std::string const* const addressString);
+    virtual Address getAddress(std::string const* const addressString);
+    virtual Address getAddress(WireFormatAddress const* const wireAddress);
+
+    /// See Driver::addressToString()
+    virtual std::string addressToString(const Address address);
+
+    /// See Driver::addressToWireFormat()
+    virtual void addressToWireFormat(const Address address,
+                                     WireFormatAddress* wireAddress);
 
     /// See Driver::allocPacket()
     virtual Packet* allocPacket();
@@ -116,7 +124,7 @@ class DpdkDriver : public Driver {
     virtual uint32_t getMaxPayloadSize();
 
     /// See Driver::getLocalAddress()
-    virtual Driver::Address* getLocalAddress();
+    virtual Driver::Address getLocalAddress();
 
     /**
      * Override the local address provided to by the NIC. Used in testing when

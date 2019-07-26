@@ -15,12 +15,13 @@
 
 #include "FakeDriver.h"
 
-#include "FakeAddress.h"
-
 #include <atomic>
 #include <cstring>
 #include <random>
 #include <unordered_map>
+
+#include "CodeLocation.h"
+#include "StringUtil.h"
 
 namespace Homa {
 namespace Drivers {
@@ -39,7 +40,6 @@ static class FakeNetwork {
     FakeNetwork()
         : mutex()
         , network()
-        , addressCache()
         , nextAddressId(1)
         , packetLossRate(0)
         , packetLossDistribution(0.0, 1.0)
@@ -52,26 +52,6 @@ static class FakeNetwork {
         for (auto it = network.begin(); it != network.end(); ++it) {
             delete it->second;
         }
-        // Clean up addressCache
-        for (auto it = addressCache.begin(); it != addressCache.end(); ++it) {
-            delete it->second;
-        }
-    }
-
-    /// Return a pointer to a FakeAddress for a given addressId.
-    FakeAddress* getAddress(uint64_t addressId)
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        FakeAddress* addr;
-        auto it = addressCache.find(addressId);
-        if (it == addressCache.end()) {
-            FakeAddress* fakeAddr = new FakeAddress(addressId);
-            addressCache[addressId] = fakeAddr;
-            addr = fakeAddr;
-        } else {
-            addr = it->second;
-        }
-        return addr;
     }
 
     /// Register the FakeNIC so it can receive packets.  Returns the newly
@@ -92,7 +72,8 @@ static class FakeNetwork {
     }
 
     /// Deliver the provide packet to the specified destination.
-    void sendPacket(FakePacket* packet, FakeAddress* src, FakeAddress* dst)
+    void sendPacket(FakePacket* packet, Driver::Address src,
+                    Driver::Address dst)
     {
         FakeNIC* nic = nullptr;
         {
@@ -100,7 +81,7 @@ static class FakeNetwork {
             if (packetLossDistribution(gen) < packetLossRate) {
                 return;
             }
-            auto search = network.find(dst->address);
+            auto search = network.find(dst);
             if (search == network.end()) {
                 return;
             } else {
@@ -134,10 +115,7 @@ static class FakeNetwork {
     std::mutex mutex;
 
     /// Holds all the packets being sent through the fake network.
-    std::unordered_map<uint64_t, FakeNIC*> network;
-
-    /// Collection of FakeAddress objects that can be reused.
-    std::unordered_map<uint64_t, FakeAddress*> addressCache;
+    std::unordered_map<Driver::Address, FakeNIC*> network;
 
     /// The FakeAddress identifier for the next FakeDriver that "connects" to
     /// the FakeNetwork.
@@ -202,21 +180,48 @@ FakeDriver::~FakeDriver()
 /**
  * See Driver::getAddress()
  */
-Driver::Address*
+Driver::Address
 FakeDriver::getAddress(std::string const* const addressString)
 {
-    uint64_t addressId = FakeAddress::toAddressId(addressString->c_str());
-    return fakeNetwork.getAddress(addressId);
+    char* end;
+    uint64_t address = std::strtoul(addressString->c_str(), &end, 10);
+    if (address == 0) {
+        throw BadAddress(HERE_STR, StringUtil::format("Bad address string: %s",
+                                                      addressString->c_str()));
+    }
+    return address;
 }
 
 /**
  * See Driver::getAddress()
  */
-Driver::Address*
-FakeDriver::getAddress(Driver::Address::Raw const* const rawAddress)
+Driver::Address
+FakeDriver::getAddress(Driver::WireFormatAddress const* const wireAddress)
 {
-    FakeAddress address(rawAddress);
-    return fakeNetwork.getAddress(address.address);
+    const Address* address =
+        reinterpret_cast<const Address*>(wireAddress->bytes);
+    return *address;
+}
+
+/**
+ * See Driver::addressToString()
+ */
+std::string
+FakeDriver::addressToString(const Address address)
+{
+    char buf[21];
+    snprintf(buf, sizeof(buf), "%lu", address);
+    return buf;
+}
+
+/**
+ * See Driver::addressToWireFormat()
+ */
+void
+FakeDriver::addressToWireFormat(const Address address,
+                                WireFormatAddress* wireAddress)
+{
+    *reinterpret_cast<Address*>(wireAddress->bytes) = address;
 }
 
 /**
@@ -236,8 +241,8 @@ void
 FakeDriver::sendPacket(Packet* packet)
 {
     FakePacket* srcPacket = static_cast<FakePacket*>(packet);
-    FakeAddress* srcAddress = static_cast<FakeAddress*>(getLocalAddress());
-    FakeAddress* dstAddress = static_cast<FakeAddress*>(srcPacket->address);
+    Address srcAddress = getLocalAddress();
+    Address dstAddress = srcPacket->address;
     fakeNetwork.sendPacket(srcPacket, srcAddress, dstAddress);
     queueEstimator.signalBytesSent(packet->length);
 }
@@ -303,10 +308,10 @@ FakeDriver::getBandwidth()
 /**
  * See Driver::getLocalAddress()
  */
-Driver::Address*
+Driver::Address
 FakeDriver::getLocalAddress()
 {
-    return fakeNetwork.getAddress(localAddressId);
+    return localAddressId;
 }
 
 /**

@@ -33,10 +33,29 @@ DpdkDriver::DpdkDriver(int port, DpdkDriver::NoEalInit)
     : impl(new DpdkDriverImpl(port, DpdkDriverImpl::NO_EAL_INIT))
 {}
 
-Driver::Address*
+Driver::Address
 DpdkDriver::getAddress(std::string const* const addressString)
 {
     return impl->getAddress(addressString);
+}
+
+Driver::Address
+DpdkDriver::getAddress(WireFormatAddress const* const wireAddress)
+{
+    return impl->getAddress(wireAddress);
+}
+
+std::string
+DpdkDriver::addressToString(const Address address)
+{
+    return impl->addressToString(address);
+}
+
+void
+DpdkDriver::addressToWireFormat(const Address address,
+                                WireFormatAddress* wireAddress)
+{
+    impl->addressToWireFormat(address, wireAddress);
 }
 
 Driver::Packet*
@@ -75,7 +94,7 @@ DpdkDriver::getMaxPayloadSize()
     return impl->getMaxPayloadSize();
 }
 
-Driver::Address*
+Driver::Address
 DpdkDriver::getLocalAddress()
 {
     return impl->getLocalAddress();

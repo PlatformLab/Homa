@@ -93,18 +93,10 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     header->index = 1;
     header->totalLength = 1420;
     std::string addressStr("remote-location");
-    Homa::Mock::MockDriver::MockAddress mockAddress;
-    mockPacket.address = &mockAddress;
+    mockPacket.address = (Driver::Address)22;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(0);
-    EXPECT_CALL(mockAddress, toString)
-        .Times(3)
-        .WillRepeatedly(Return(addressStr))
-        .RetiresOnSaturation();
-    EXPECT_CALL(mockDriver,
-                getAddress(Matcher<std::string const*>(Pointee(addressStr))))
-        .WillOnce(Return(&mockAddress));
 
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
@@ -113,7 +105,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_NE(receiver->inboundMessages.end(), it);
     message = it->second;
     EXPECT_TRUE(receiver->receivedMessages.queue.empty());
-    EXPECT_EQ(&mockAddress, message->source);
+    EXPECT_EQ(mockPacket.address, message->source);
     EXPECT_EQ(2U, message->numExpectedPackets);
     EXPECT_EQ(1420U, message->messageLength);
     EXPECT_EQ(1U, message->getNumPackets());
@@ -124,20 +116,12 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
-    Mock::VerifyAndClearExpectations(&mockAddress);
 
     // receive packet 1 again; duplicate packet
     message->newPacket = false;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
-    EXPECT_CALL(mockDriver,
-                getAddress(Matcher<std::string const*>(Pointee(addressStr))))
-        .Times(0);
-    EXPECT_CALL(mockAddress, toString)
-        .Times(2)
-        .WillRepeatedly(Return(addressStr))
-        .RetiresOnSaturation();
 
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
@@ -149,7 +133,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
-    Mock::VerifyAndClearExpectations(&mockAddress);
 
     // receive packet 0; complete the message
     header->index = 0;
@@ -157,13 +140,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(0);
-    EXPECT_CALL(mockDriver,
-                getAddress(Matcher<std::string const*>(Pointee(addressStr))))
-        .Times(0);
-    EXPECT_CALL(mockAddress, toString)
-        .Times(2)
-        .WillRepeatedly(Return(addressStr))
-        .RetiresOnSaturation();
 
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
@@ -175,7 +151,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(InboundMessage::State::COMPLETED, message->state);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
-    Mock::VerifyAndClearExpectations(&mockAddress);
 
     // receive packet 0 again on a complete message
     message->newPacket = false;
@@ -186,7 +161,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_CALL(mockDriver,
                 getAddress(Matcher<std::string const*>(Pointee(addressStr))))
         .Times(0);
-    EXPECT_CALL(mockAddress, toString).Times(0);
 
     receiver->handleDataPacket(&mockPacket, &mockDriver);
 
@@ -205,13 +179,7 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
     header->common.messageId = id;
     header->index = 0;
     std::string addressStr("remote-location");
-    NiceMock<Homa::Mock::MockDriver::MockAddress> mockAddress;
-    mockPacket.address = &mockAddress;
-
-    ON_CALL(mockAddress, toString).WillByDefault(Return(addressStr));
-    ON_CALL(mockDriver,
-            getAddress(Matcher<std::string const*>(Pointee(addressStr))))
-        .WillByDefault(Return(&mockAddress));
+    mockPacket.address = (Driver::Address)22;
 
     // 1 partial packet
     header->totalLength = 450;
@@ -281,17 +249,17 @@ TEST_F(ReceiverTest, handleBusyPacket_unknown)
 TEST_F(ReceiverTest, handlePingPacket_basic)
 {
     Protocol::MessageId id(42, 32);
-    Homa::Mock::MockDriver::MockAddress mockAddress;
+    Driver::Address mockAddress = 22;
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
     message->grantIndexLimit = 11;
-    message->source = &mockAddress;
+    message->source = mockAddress;
     receiver->inboundMessages.insert({id, message});
 
     char pingPayload[1028];
     Homa::Mock::MockDriver::MockPacket pingPacket(pingPayload);
-    pingPacket.address = &mockAddress;
+    pingPacket.address = mockAddress;
     Protocol::Packet::PingHeader* pingHeader =
         (Protocol::Packet::PingHeader*)pingPacket.payload;
     pingHeader->common.messageId = id;
@@ -308,7 +276,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->resendTimeout.expirationCycleTime);
 
-    EXPECT_EQ(&mockAddress, mockPacket.address);
+    EXPECT_EQ(mockAddress, mockPacket.address);
     Protocol::Packet::GrantHeader* header =
         (Protocol::Packet::GrantHeader*)payload;
     EXPECT_EQ(Protocol::Packet::GRANT, header->common.opcode);
@@ -319,11 +287,10 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
 TEST_F(ReceiverTest, handlePingPacket_unknown)
 {
     Protocol::MessageId id(42, 32);
-    Homa::Mock::MockDriver::MockAddress mockAddress;
 
     char pingPayload[1028];
     Homa::Mock::MockDriver::MockPacket pingPacket(pingPayload);
-    pingPacket.address = &mockAddress;
+    pingPacket.address = (Driver::Address)22;
     Protocol::Packet::PingHeader* pingHeader =
         (Protocol::Packet::PingHeader*)pingPacket.payload;
     pingHeader->common.messageId = id;
@@ -337,7 +304,7 @@ TEST_F(ReceiverTest, handlePingPacket_unknown)
 
     receiver->handlePingPacket(&pingPacket, &mockDriver);
 
-    EXPECT_EQ(&mockAddress, mockPacket.address);
+    EXPECT_EQ(pingPacket.address, mockPacket.address);
     Protocol::Packet::UnknownHeader* header =
         (Protocol::Packet::UnknownHeader*)payload;
     EXPECT_EQ(Protocol::Packet::UNKNOWN, header->common.opcode);
@@ -395,10 +362,9 @@ TEST_F(ReceiverTest, poll)
 TEST_F(ReceiverTest, sendDonePacket)
 {
     Protocol::MessageId id = {42, 32};
-    Homa::Mock::MockDriver::MockAddress mockAddress;
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
-    message->source = &mockAddress;
+    message->source = (Driver::Address)22;
     message->id = id;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
@@ -413,16 +379,15 @@ TEST_F(ReceiverTest, sendDonePacket)
     EXPECT_EQ(Protocol::Packet::DONE, header->opcode);
     EXPECT_EQ(id, header->messageId);
     EXPECT_EQ(sizeof(Protocol::Packet::DoneHeader), mockPacket.length);
-    EXPECT_EQ(&mockAddress, mockPacket.address);
+    EXPECT_EQ(message->source, mockPacket.address);
 }
 
 TEST_F(ReceiverTest, sendErrorPacket)
 {
     Protocol::MessageId id = {42, 32};
-    Homa::Mock::MockDriver::MockAddress mockAddress;
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
-    message->source = &mockAddress;
+    message->source = (Driver::Address)22;
     message->id = id;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
@@ -437,7 +402,7 @@ TEST_F(ReceiverTest, sendErrorPacket)
     EXPECT_EQ(Protocol::Packet::ERROR, header->opcode);
     EXPECT_EQ(id, header->messageId);
     EXPECT_EQ(sizeof(Protocol::Packet::ErrorHeader), mockPacket.length);
-    EXPECT_EQ(&mockAddress, mockPacket.address);
+    EXPECT_EQ(message->source, mockPacket.address);
 }
 
 TEST_F(ReceiverTest, checkMessageTimeouts_basic)
@@ -528,8 +493,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     // [1100001100]
     EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message[3]->state);
     message[3]->resendTimeout.expirationCycleTime = 10000;
-    Homa::Mock::MockDriver::MockAddress mockAddress;
-    message[3]->source = &mockAddress;
+    message[3]->source = (Driver::Address)22;
     message[3]->grantIndexLimit = 10;
     for (uint16_t i = 0; i < 2; ++i) {
         message[3]->setPacket(i, &mockPacket);
@@ -577,7 +541,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     EXPECT_EQ(2U, header1->index);
     EXPECT_EQ(4U, header1->num);
     EXPECT_EQ(sizeof(Protocol::Packet::ResendHeader), mockResendPacket1.length);
-    EXPECT_EQ(&mockAddress, mockResendPacket1.address);
+    EXPECT_EQ(message[3]->source, mockResendPacket1.address);
     Protocol::Packet::ResendHeader* header2 =
         static_cast<Protocol::Packet::ResendHeader*>(mockResendPacket2.payload);
     EXPECT_EQ(Protocol::Packet::RESEND, header2->common.opcode);
@@ -585,7 +549,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     EXPECT_EQ(8U, header2->index);
     EXPECT_EQ(2U, header2->num);
     EXPECT_EQ(sizeof(Protocol::Packet::ResendHeader), mockResendPacket2.length);
-    EXPECT_EQ(&mockAddress, mockResendPacket2.address);
+    EXPECT_EQ(message[3]->source, mockResendPacket2.address);
     // Message[4]: No timeout
     EXPECT_EQ(10001, message[4]->resendTimeout.expirationCycleTime);
 }
@@ -600,7 +564,7 @@ TEST_F(ReceiverTest, checkResendTimeouts_empty)
 TEST_F(ReceiverTest, schedule)
 {
     Protocol::MessageId id(42, 32);
-    Driver::Address* sourceAddr = (Driver::Address*)22;
+    Driver::Address sourceAddr = (Driver::Address)22;
     uint32_t TOTAL_MESSAGE_LEN = 9000;
 
     InboundMessage* message =
@@ -640,7 +604,7 @@ TEST_F(ReceiverTest, schedule)
 TEST_F(ReceiverTest, sendGrantPacket)
 {
     Protocol::MessageId msgId(42, 32);
-    Driver::Address* sourceAddr = (Driver::Address*)22;
+    Driver::Address sourceAddr = (Driver::Address)22;
     uint32_t TOTAL_MESSAGE_LEN = 9000;
 
     InboundMessage message(&mockDriver, 24, TOTAL_MESSAGE_LEN);

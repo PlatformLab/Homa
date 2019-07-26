@@ -49,7 +49,7 @@ Receiver::Receiver(Transport* transport, uint64_t messageTimeoutCycles,
 {}
 
 /**
- * Receiver distructor.
+ * Receiver destructor.
  */
 Receiver::~Receiver()
 {
@@ -94,10 +94,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         message =
             messagePool.construct(driver, dataHeaderLength, messageLength);
         message->id = id;
-        // Get an address pointer from the driver; the one in the packet
-        // may disappear when the packet goes away.
-        std::string addrStr = packet->address->toString();
-        message->source = driver->getAddress(&addrStr);
+        message->source = packet->address;
         message->numExpectedPackets =
             messageLength / message->PACKET_DATA_LENGTH;
         message->numExpectedPackets +=
@@ -121,7 +118,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // Things that must be true (sanity check)
-    assert(message->source->toString() == packet->address->toString());
+    assert(message->driver == driver);
+    assert(message->source == packet->address);
     assert(message->rawLength() == header->totalLength);
 
     // Add the packet

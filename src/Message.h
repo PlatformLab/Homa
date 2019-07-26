@@ -103,11 +103,13 @@ class Message : public Homa::Message {
      * @sa allocHeader()
      */
     template <typename MessageHeader, typename... Args>
-    void setHeader(Args&&... args)
+    MessageHeader* setHeader(Args&&... args)
     {
         assert(MESSAGE_HEADER_LENGTH == sizeof(MessageHeader));
         assert(occupied.test(0));
-        new (getHeader()) MessageHeader(static_cast<Args&&>(args)...);
+        MessageHeader* header = static_cast<MessageHeader*>(getHeader());
+        new (header) MessageHeader(static_cast<Args&&>(args)...);
+        return header;
     }
 
     /**

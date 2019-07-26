@@ -309,7 +309,7 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
  * @sa dropMessage()
  */
 void
-Sender::sendMessage(OutboundMessage* message, Driver::Address* destination)
+Sender::sendMessage(OutboundMessage* message, Driver::Address destination)
 {
     SpinLock::UniqueLock lock(mutex);
     SpinLock::Lock lock_message(message->mutex);

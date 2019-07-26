@@ -245,12 +245,12 @@ Transport::releaseOp(OpContext* context)
  * @sa Homa::Core::Transport; no support for concurrent calls to same OpContext.
  */
 void
-Transport::sendRequest(OpContext* context, Driver::Address* destination)
+Transport::sendRequest(OpContext* context, Driver::Address destination)
 {
     Op* op = static_cast<Op*>(context);
     SpinLock::Lock lock_op(op->mutex);
     uint32_t outboundTag;
-    Driver::Address* replyAddress;
+    Driver::Address replyAddress;
     if (op->isServerOp) {
         assert(op->inMessage != nullptr);
         const Protocol::Message::Header* header =
@@ -262,8 +262,10 @@ Transport::sendRequest(OpContext* context, Driver::Address* destination)
         replyAddress = driver->getLocalAddress();
     }
     op->state.store(Op::State::IN_PROGRESS);
-    op->outMessage.setHeader<Protocol::Message::Header>(op->opId, outboundTag,
-                                                        replyAddress);
+    Protocol::Message::Header* outboundHeader =
+        op->outMessage.setHeader<Protocol::Message::Header>(op->opId,
+                                                            outboundTag);
+    driver->addressToWireFormat(replyAddress, &outboundHeader->replyAddress);
     sender->sendMessage(&op->outMessage, destination);
 }
 
@@ -285,11 +287,13 @@ Transport::sendReply(OpContext* context)
 
     const Protocol::Message::Header* header =
         op->inMessage->getHeader<Protocol::Message::Header>();
-    Driver::Address* replyAddress = driver->getAddress(&header->replyAddress);
+    Driver::Address replyAddress = driver->getAddress(&header->replyAddress);
 
     op->state.store(Op::State::IN_PROGRESS);
-    op->outMessage.setHeader<Protocol::Message::Header>(
-        op->opId, Protocol::Message::ULTIMATE_RESPONSE_TAG, replyAddress);
+    Protocol::Message::Header* outboundHeader =
+        op->outMessage.setHeader<Protocol::Message::Header>(
+            op->opId, Protocol::Message::ULTIMATE_RESPONSE_TAG);
+    driver->addressToWireFormat(replyAddress, &outboundHeader->replyAddress);
     sender->sendMessage(&op->outMessage, replyAddress);
 }
 

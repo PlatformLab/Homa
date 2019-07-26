@@ -117,8 +117,11 @@ class FakeDriver : public Driver {
      */
     virtual ~FakeDriver();
 
-    virtual Address* getAddress(std::string const* const addressString);
-    virtual Address* getAddress(Driver::Address::Raw const* const rawAddress);
+    virtual Address getAddress(std::string const* const addressString);
+    virtual Address getAddress(WireFormatAddress const* const wireAddress);
+    virtual std::string addressToString(const Address address);
+    virtual void addressToWireFormat(const Address address,
+                                     WireFormatAddress* wireAddress);
     virtual Packet* allocPacket();
     virtual void sendPacket(Packet* packet);
     virtual uint32_t receivePackets(uint32_t maxPackets,
@@ -127,7 +130,7 @@ class FakeDriver : public Driver {
     virtual int getHighestPacketPriority();
     virtual uint32_t getMaxPayloadSize();
     virtual uint32_t getBandwidth();
-    virtual Address* getLocalAddress();
+    virtual Address getLocalAddress();
     virtual uint32_t getQueuedBytes();
 
   private:

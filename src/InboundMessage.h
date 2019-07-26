@@ -53,7 +53,7 @@ class InboundMessage : public Message {
         : Message(driver, packetHeaderLength, messageLength)
         , mutex()
         , id(0, 0)
-        , source(nullptr)
+        , source()
         , numExpectedPackets(0)
         , grantIndexLimit(0)
         , state(InboundMessage::State::IN_PROGRESS)
@@ -88,7 +88,7 @@ class InboundMessage : public Message {
     /// Contains the unique identifier for this message.
     Protocol::MessageId id;
     /// Contains source address this message.
-    Driver::Address* source;
+    Driver::Address source;
     /// Number of packets the message is expected to contain.
     uint16_t numExpectedPackets;
     /// The packet index up to which the Receiver as granted.

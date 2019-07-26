@@ -52,7 +52,7 @@ class Sender {
     virtual void handleUnknownPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleErrorPacket(Driver::Packet* packet, Driver* driver);
     virtual void sendMessage(OutboundMessage* message,
-                             Driver::Address* destination);
+                             Driver::Address destination);
     virtual void dropMessage(OutboundMessage* message);
     virtual void poll();
 

@@ -62,13 +62,24 @@ MacAddress::MacAddress(const char* macStr)
  *
  * @sa Driver::Address::Raw
  */
-MacAddress::MacAddress(const Raw* const raw)
+MacAddress::MacAddress(const Driver::WireFormatAddress* const wireAddress)
 {
-    if (raw->type != RawAddressType::MAC) {
+    if (wireAddress->type != RawAddressType::MAC) {
         throw BadAddress(HERE_STR, "Bad address: Raw format is not type MAC");
     }
-    assert(sizeof(raw->bytes) >= 6);
-    memcpy(address, raw->bytes, 6);
+    static_assert(sizeof(wireAddress->bytes) >= 6);
+    memcpy(address, wireAddress->bytes, 6);
+}
+
+/**
+ * Create a new address given the Driver::Address representation.
+ *
+ * @param addr
+ *      The Driver::Address representation of an address.
+ */
+MacAddress::MacAddress(const Driver::Address addr)
+{
+    memcpy(address, &addr, 6);
 }
 
 /**
@@ -78,15 +89,14 @@ MacAddress::MacAddress(const Raw* const raw)
  *      MacAddress to be copied.
  */
 MacAddress::MacAddress(const MacAddress& other)
-    : Address()
 {
     memcpy(address, other.address, 6);
 }
 
 /**
- * @copydoc Driver::Address::toString()
+ * Return the string representation of this address.
  */
-inline std::string
+std::string
 MacAddress::toString() const
 {
     char buf[18];
@@ -96,14 +106,28 @@ MacAddress::toString() const
 }
 
 /**
- * @copydoc Driver::Address::toRaw()
+ * Serialized this address into a wire format.
+ *
+ * @param[out] wireAddress
+ *      WireFormatAddress object to which the this address is serialized.
  */
-inline void
-MacAddress::toRaw(Raw* raw) const
+void
+MacAddress::toWireFormat(Driver::WireFormatAddress* wireAddress) const
 {
-    assert(sizeof(raw->bytes) >= 6);
-    memcpy(raw->bytes, address, 6);
-    raw->type = RawAddressType::MAC;
+    static_assert(sizeof(wireAddress->bytes) >= 6);
+    memcpy(wireAddress->bytes, address, 6);
+    wireAddress->type = RawAddressType::MAC;
+}
+
+/**
+ * Return a Driver::Address representation of this address.
+ */
+Driver::Address
+MacAddress::toAddress() const
+{
+    Driver::Address addr = 0;
+    memcpy(&addr, address, 6);
+    return addr;
 }
 
 /**

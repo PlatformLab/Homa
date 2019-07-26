@@ -86,7 +86,7 @@ class Message {
  * An RPC (Remote Procedure Call) is a simple example of a RemoteOp.  Unlike
  * RPCs, however, the processing of the operation maybe fully or partially
  * delegated by one server to another.  As such, the response may not come from
- * the server that initally received the request.
+ * the server that initially received the request.
  *
  * This class is NOT thread-safe.
  */
@@ -113,7 +113,7 @@ class RemoteOp {
      * @param destination
      *      The network address to which the request will be sent.
      */
-    void send(Driver::Address* destination);
+    void send(Driver::Address destination);
 
     /**
      * Indicates whether this RemoteOp is done being processed.  Used to
@@ -150,14 +150,14 @@ class RemoteOp {
 };
 
 /**
- * A ServerOp is a Message pair consisting of an incomming request Message to
+ * A ServerOp is a Message pair consisting of an incoming request Message to
  * be processed and an outgoing response Message containing the result of
  * processing the operation.
  *
  * The request may come directly from the client or from another server that is
  * delegating the processing all or part of the operation.  The response can
  * either be sent back sent to the original client or delegated to a different
- * server for additional processing. Used by servers to handle incomming direct
+ * server for additional processing. Used by servers to handle incoming direct
  * or delegated requests.
  *
  * This class is NOT thread-safe.
@@ -167,7 +167,7 @@ class ServerOp {
     /**
      * Basic constructor to create an empty ServerOp object.
      *
-     * ServerOp objects can be filled with an incomming request by moving the
+     * ServerOp objects can be filled with an incoming request by moving the
      * result of calling Transport::receiveServerOp().
      */
     ServerOp();
@@ -203,7 +203,7 @@ class ServerOp {
      * @param destination
      *      The network address to which the delegated request will be sent.
      */
-    void delegate(Driver::Address* destination);
+    void delegate(Driver::Address destination);
 
     /// Message containing a direct or indirect operation request.
     const Message* request;
@@ -227,7 +227,7 @@ class ServerOp {
 };
 
 /**
- * Provides a means of commicating across the network using the Homa protocol.
+ * Provides a means of communicating across the network using the Homa protocol.
  *
  * The transport is used to send and receive messages across the network using
  * the RemoteOp and ServerOp abstractions.  The execution of the transport is
@@ -239,7 +239,7 @@ class ServerOp {
 class Transport {
   public:
     /**
-     * Constuct a new instance of a Homa-based transport.
+     * Construct a new instance of a Homa-based transport.
      *
      * @param driver
      *      Driver with which this transport should send and receive packets.
@@ -255,7 +255,7 @@ class Transport {
     ~Transport();
 
     /**
-     * Return a ServerOp of an incomming request that has been received by this
+     * Return a ServerOp of an incoming request that has been received by this
      * Homa::Transport. If no request was received, the returned ServerOp will
      * be uninitialized.
      */
@@ -268,11 +268,11 @@ class Transport {
      * @param addressString
      *      See above.
      * @return
-     *      Pointer to an Address object.
+     *      Address handle.
      * @throw BadAddress
      *      _addressString_ is malformed.
      */
-    Driver::Address* getAddress(std::string const* const addressString);
+    Driver::Address getAddress(std::string const* const addressString);
 
     /**
      * Make incremental progress performing all Transport functionality.

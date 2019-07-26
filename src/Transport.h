@@ -143,7 +143,7 @@ class Transport {
     OpContext* allocOp();
     OpContext* receiveOp();
     void releaseOp(OpContext* context);
-    void sendRequest(OpContext* context, Driver::Address* destination);
+    void sendRequest(OpContext* context, Driver::Address destination);
     void sendReply(OpContext* context);
     void poll();
 

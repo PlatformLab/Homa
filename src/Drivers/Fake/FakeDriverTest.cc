@@ -39,18 +39,34 @@ TEST(FakeDriverTest, getAddress_string)
 {
     FakeDriver driver;
     std::string addressStr("42");
-    Driver::Address* address = driver.getAddress(&addressStr);
-    EXPECT_EQ("42", address->toString());
+    Driver::Address address = driver.getAddress(&addressStr);
+    EXPECT_EQ("42", driver.addressToString(address));
 }
 
-TEST(FakeDriverTest, getAddress_raw)
+TEST(FakeDriverTest, getAddress_wireformat)
 {
     FakeDriver driver;
-    Driver::Address::Raw raw;
-    raw.type = RawAddressType::FAKE;
-    *reinterpret_cast<uint64_t*>(raw.bytes) = 42;
-    Driver::Address* address = driver.getAddress(&raw);
-    EXPECT_EQ("42", address->toString());
+    Driver::WireFormatAddress wireformatAddress;
+    wireformatAddress.type = RawAddressType::FAKE;
+    *reinterpret_cast<uint64_t*>(wireformatAddress.bytes) = 42;
+    Driver::Address address = driver.getAddress(&wireformatAddress);
+    EXPECT_EQ("42", driver.addressToString(address));
+}
+
+TEST(FakeDriverTest, addressToString)
+{
+    FakeDriver driver;
+    Driver::Address address = 42;
+    EXPECT_EQ("42", driver.addressToString(address));
+}
+
+TEST(FakeDriverTest, addressToWireFormat)
+{
+    FakeDriver driver;
+    Driver::WireFormatAddress wireformatAddress;
+    driver.addressToWireFormat(42, &wireformatAddress);
+    EXPECT_EQ("42",
+              driver.addressToString(driver.getAddress(&wireformatAddress)));
 }
 
 TEST(FakeDriverTest, allocPacket)

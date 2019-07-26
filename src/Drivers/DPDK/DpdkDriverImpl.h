@@ -60,10 +60,18 @@ class DpdkDriverImpl {
     ~DpdkDriverImpl();
 
     /// See Driver::getAddress()
-    Driver::Address* getAddress(std::string const* const addressString);
+    Driver::Address getAddress(std::string const* const addressString);
 
     /// See Driver::getAddress()
-    Driver::Address* getAddress(Driver::Address::Raw const* const rawAddress);
+    Driver::Address getAddress(
+        Driver::WireFormatAddress const* const wireAddress);
+
+    /// See Driver::addressToString()
+    std::string addressToString(const Driver::Address address);
+
+    /// See Driver::addressToWireFormat()
+    void addressToWireFormat(const Driver::Address address,
+                             Driver::WireFormatAddress* wireAddress);
 
     /// See Driver::allocPacket()
     Driver::Packet* allocPacket();
@@ -88,19 +96,12 @@ class DpdkDriverImpl {
     uint32_t getBandwidth();
 
     /// See Driver::getLocalAddress()
-    Driver::Address* getLocalAddress();
+    Driver::Address getLocalAddress();
 
     /// See DpdkDriver::setLocalAddress()
     void setLocalAddress(std::string const* const addressString);
 
   private:
-    /// Provides thread safety for Address operations.
-    SpinLock addressLock;
-
-    /// Collection of requested DPDK address that can be reused if the same
-    /// address is requested again.
-    std::unordered_map<std::string, MacAddress*> addressCache;
-
     /// Provides thread safety for Packet management operations.
     SpinLock packetLock;
 

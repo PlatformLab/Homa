@@ -202,9 +202,7 @@ DpdkDriverImpl::DpdkDriverImpl(int port)
  *      Thrown if DpdkDriverImpl fails to initialize for any reason.
  */
 DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
-    : addressLock()
-    , addressCache()
-    , packetLock()
+    : packetLock()
     , packetPool()
     , overflowBufferPool()
     , localMac()
@@ -247,7 +245,7 @@ DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
  * Construct a DpdkDriverImpl without DPDK EAL initialization. [Advanced Usage]
  *
  * This constructor is used when parts of the application other than the
- * DpdkDriverImpl are using DPDK and the caller wants to take responsability for
+ * DpdkDriverImpl are using DPDK and the caller wants to take responsibility for
  * calling rte_eal_init(). The caller must ensure that rte_eal_init() is
  * called before calling this constructor.
  *
@@ -261,9 +259,7 @@ DpdkDriverImpl::DpdkDriverImpl(int port, int argc, char* argv[])
  */
 DpdkDriverImpl::DpdkDriverImpl(int port,
                                __attribute__((__unused__)) NoEalInit _)
-    : addressLock()
-    , addressCache()
-    , packetLock()
+    : packetLock()
     , packetPool()
     , overflowBufferPool()
     , localMac()
@@ -293,31 +289,32 @@ DpdkDriverImpl::~DpdkDriverImpl()
 }
 
 // See Driver::getAddress()
-Driver::Address*
+Driver::Address
 DpdkDriverImpl::getAddress(std::string const* const addressString)
 {
-    SpinLock::Lock lock(addressLock);
-
-    Driver::Address* addr;
-
-    auto it = addressCache.find(*addressString);
-    if (it == addressCache.end()) {
-        MacAddress* macAddr = new MacAddress(addressString->c_str());
-        addressCache[*addressString] = macAddr;
-        addr = macAddr;
-    } else {
-        addr = it->second;
-    }
-
-    return addr;
+    return MacAddress(addressString->c_str()).toAddress();
 }
 
 // See Driver::getAddress()
-Driver::Address*
-DpdkDriverImpl::getAddress(Driver::Address::Raw const* const rawAddress)
+Driver::Address
+DpdkDriverImpl::getAddress(Driver::WireFormatAddress const* const wireAddress)
 {
-    std::string addressString = MacAddress(rawAddress).toString();
-    return getAddress(&addressString);
+    return MacAddress(wireAddress).toAddress();
+}
+
+/// See Driver::addressToString()
+std::string
+DpdkDriverImpl::addressToString(const Driver::Address address)
+{
+    return MacAddress(address).toString();
+}
+
+/// See Driver::addressToWireFormat()
+void
+DpdkDriverImpl::addressToWireFormat(const Driver::Address address,
+                                    Driver::WireFormatAddress* wireAddress)
+{
+    MacAddress(address).toWireFormat(wireAddress);
 }
 
 // See Driver::allocPacket()
@@ -390,10 +387,9 @@ DpdkDriverImpl::sendPacket(Driver::Packet* packet)
 
         // Fill out the destination and source MAC addresses plus the Ethernet
         // frame type (i.e., IEEE 802.1Q VLAN tagging).
+        MacAddress macAddr(packet->address);
         struct ether_hdr* ethHdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr*);
-        rte_memcpy(&ethHdr->d_addr,
-                   static_cast<const MacAddress*>(packet->address)->address,
-                   ETHER_ADDR_LEN);
+        rte_memcpy(&ethHdr->d_addr, macAddr.address, ETHER_ADDR_LEN);
         rte_memcpy(&ethHdr->s_addr, localMac->address, ETHER_ADDR_LEN);
         ethHdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
 
@@ -420,8 +416,7 @@ DpdkDriverImpl::sendPacket(Driver::Packet* packet)
         }
 
         // loopback if src mac == dst mac
-        if (!memcmp(static_cast<const MacAddress*>(packet->address)->address,
-                    localMac->address, 6)) {
+        if (localMac.get()->toAddress() == packet->address) {
             struct rte_mbuf* mbuf_clone = rte_pktmbuf_clone(mbuf, mbufPool);
             if (unlikely(mbuf_clone == NULL)) {
                 WARNING("Failed to clone packet for loopback; dropping packet");
@@ -521,21 +516,6 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets,
             }
         }
 
-        // Store the incomming packet's source Address object in the headroom
-        // of the incoming mbuf. This Address will be pointed to in the returned
-        // Packet object.
-        // See http://dpdk.org/doc/guides/prog_guide/mbuf_lib.html for the
-        // diagram of rte_mbuf's internal structure.
-        MacAddress* sender = reinterpret_cast<MacAddress*>(m->buf_addr);
-        if (unlikely(reinterpret_cast<char*>(sender + 1) >
-                     rte_pktmbuf_mtod(m, char*))) {
-            ERROR(
-                "Not enough headroom in the packet mbuf; "
-                "dropping packet");
-            rte_pktmbuf_free(m);
-            continue;
-        }
-        new (sender) MacAddress(ethHdr->s_addr.addr_bytes);
         uint32_t length = rte_pktmbuf_pkt_len(m) - headerLength;
         assert(length <= MAX_PAYLOAD_SIZE);
 
@@ -544,7 +524,7 @@ DpdkDriverImpl::receivePackets(uint32_t maxPackets,
             SpinLock::Lock lock(packetLock);
             packet = packetPool.construct(m, payload);
         }
-        packet->address = sender;
+        packet->address = MacAddress(ethHdr->s_addr.addr_bytes).toAddress();
         packet->length = length;
 
         receivedPackets[numPacketsReceived++] = packet;
@@ -591,10 +571,10 @@ DpdkDriverImpl::getBandwidth()
 }
 
 // See Driver::getLocalAddress()
-Driver::Address*
+Driver::Address
 DpdkDriverImpl::getLocalAddress()
 {
-    return localMac.get();
+    return localMac.get()->toAddress();
 }
 
 void

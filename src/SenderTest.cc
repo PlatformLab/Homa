@@ -398,7 +398,7 @@ TEST_F(SenderTest, sendMessage_basic)
     message->setPacket(0, &mockPacket);
     message->messageLength = 420;
     mockPacket.length = message->messageLength + message->PACKET_HEADER_LENGTH;
-    Driver::Address* destination = (Driver::Address*)22;
+    Driver::Address destination = (Driver::Address)22;
 
     EXPECT_FALSE(sender->outboundMessages.find(id) !=
                  sender->outboundMessages.end());
@@ -439,7 +439,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
     message->messageLength = 1420;
     packet0.length = 1000 + 24;
     packet1.length = 420 + 24;
-    Driver::Address* destination = (Driver::Address*)22;
+    Driver::Address destination = (Driver::Address)22;
 
     EXPECT_EQ(24U, sizeof(Protocol::Packet::DataHeader));
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
@@ -487,7 +487,7 @@ TEST_F(SenderTest, sendMessage_missingPacket)
     OutboundMessage* message = &op->outMessage;
     message->setPacket(1, &mockPacket);
 
-    EXPECT_DEATH(sender->sendMessage(message, nullptr),
+    EXPECT_DEATH(sender->sendMessage(message, Driver::Address()),
                  ".*Incomplete message with id \\(22:1\\); missing packet at "
                  "offset 0; this shouldn't happen.*");
 }
@@ -505,7 +505,7 @@ TEST_F(SenderTest, sendMessage_unscheduledLimit)
     }
     message->messageLength = 9000;
     mockPacket.length = 1000 + sizeof(Protocol::Packet::DataHeader);
-    Driver::Address* destination = (Driver::Address*)22;
+    Driver::Address destination = (Driver::Address)22;
     EXPECT_EQ(9U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
 

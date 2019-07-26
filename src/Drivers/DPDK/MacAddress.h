@@ -16,7 +16,7 @@
 #ifndef HOMA_DRIVERS_DPDK_MACADDRESS_H
 #define HOMA_DRIVERS_DPDK_MACADDRESS_H
 
-#include "Homa/Driver.h"
+#include <Homa/Driver.h>
 
 namespace Homa {
 namespace Drivers {
@@ -25,13 +25,15 @@ namespace DPDK {
 /**
  * A container for an Ethernet hardware address.
  */
-struct MacAddress : public Driver::Address {
+struct MacAddress {
     explicit MacAddress(const uint8_t raw[6]);
     explicit MacAddress(const char* macStr);
-    explicit MacAddress(const Raw* const raw);
+    explicit MacAddress(const Driver::WireFormatAddress* const wireAddress);
+    explicit MacAddress(const Driver::Address addr);
     MacAddress(const MacAddress& other);
     std::string toString() const;
-    void toRaw(Raw* raw) const;
+    void toWireFormat(Driver::WireFormatAddress* wireAddress) const;
+    Driver::Address toAddress() const;
     bool isNull() const;
 
     /// The raw bytes of the MAC address.

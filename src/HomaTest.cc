@@ -33,7 +33,6 @@ class HomaTest : public ::testing::Test {
   public:
     HomaTest()
         : mockDriver()
-        , mockAddress()
         , transport(new Transport(&mockDriver, 22))
         , mockSender(new NiceMock<Homa::Mock::MockSender>(
               transport->internal.get(), 22, 0, 0))
@@ -59,7 +58,6 @@ class HomaTest : public ::testing::Test {
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
-    Homa::Mock::MockDriver::MockAddress mockAddress;
     Transport* transport;
     NiceMock<Homa::Mock::MockSender>* mockSender;
     NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
@@ -71,7 +69,6 @@ class HomaTest : public ::testing::Test {
 
 TEST_F(HomaTest, RemoteOp_constructor)
 {
-    Homa::Mock::MockDriver::MockAddress mockAddress;
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
     RemoteOp op(transport);
 

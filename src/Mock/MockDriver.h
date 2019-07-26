@@ -32,17 +32,6 @@ namespace Mock {
 class MockDriver : public Driver {
   public:
     /**
-     * Used in unit test to mock calls to Driver::Address.
-     *
-     * @sa Driver::Address
-     */
-    class MockAddress : public Driver::Address {
-      public:
-        MOCK_CONST_METHOD0(toString, std::string());
-        MOCK_CONST_METHOD1(toRaw, void(Raw* raw));
-    };
-
-    /**
      * Used in unit tests to mock calls to Driver::Packet.
      *
      * @sa Driver::Packet.
@@ -56,8 +45,12 @@ class MockDriver : public Driver {
         MOCK_METHOD0(getMaxPayloadSize, uint16_t());
     };
 
-    MOCK_METHOD1(getAddress, Address*(std::string const* const addressString));
-    MOCK_METHOD1(getAddress, Address*(Address::Raw const* const rawAddress));
+    MOCK_METHOD1(getAddress, Address(std::string const* const addressString));
+    MOCK_METHOD1(getAddress,
+                 Address(WireFormatAddress const* const wireAddress));
+    MOCK_METHOD1(addressToString, std::string(Address address));
+    MOCK_METHOD2(addressToWireFormat,
+                 void(Address address, WireFormatAddress* wireAddress));
     MOCK_METHOD0(allocPacket, Packet*());
     MOCK_METHOD1(sendPacket, void(Packet* packet));
     MOCK_METHOD0(flushPackets, void());
@@ -67,7 +60,7 @@ class MockDriver : public Driver {
     MOCK_METHOD0(getHighestPacketPriority, int());
     MOCK_METHOD0(getMaxPayloadSize, uint32_t());
     MOCK_METHOD0(getBandwidth, uint32_t());
-    MOCK_METHOD0(getLocalAddress, Address*());
+    MOCK_METHOD0(getLocalAddress, Address());
     MOCK_METHOD0(getQueuedBytes, uint32_t());
 };
 

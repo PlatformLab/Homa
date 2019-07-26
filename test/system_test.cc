@@ -111,7 +111,7 @@ serverMain(Node* server, std::vector<std::string> addresses)
                 op.reply();
             } else {
                 std::string nextAddress = addresses[dis(gen)];
-                Homa::Driver::Address* nextServerAddress =
+                Homa::Driver::Address nextServerAddress =
                     server->driver.getAddress(&nextAddress);
                 op.delegate(nextServerAddress);
             }
@@ -225,8 +225,8 @@ main(int argc, char* argv[])
     std::vector<Node*> servers;
     for (int i = 0; i < numServers; ++i) {
         Node* server = new Node(nextServerId++);
-        addresses.emplace_back(
-            std::string(server->driver.getLocalAddress()->toString()));
+        addresses.emplace_back(std::string(
+            server->driver.addressToString(server->driver.getLocalAddress())));
         servers.push_back(server);
     }
 

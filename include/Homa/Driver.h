@@ -21,9 +21,6 @@
 #include <string>
 
 namespace Homa {
-namespace Core {
-struct DriverInternal;
-}
 
 /**
  * Used by Homa::Transport to send and receive unreliable datagrams.  Provides
@@ -34,41 +31,27 @@ struct DriverInternal;
 class Driver {
   public:
     /**
-     * A base class for Driver specific network addresses.
+     * Represents a Network address.
+     *
+     * Each Address representation is specific to the Driver instance that
+     * returned the it; they cannot be use interchangeably between different
+     * Driver instances.
      */
-    class Address {
-      public:
-        /**
-         * Used to hold a driver's serialized byte-format for an Address.  Each
-         * driver may define its own byte-format so long as fits within the
-         * allowed bytes array.  Additionally, each driver can use the type
-         * field to distinguish between raw addresses of different formats.
-         */
-        struct Raw {
-            uint8_t type;  ///< Can be used to distinguish between different raw
-                           ///< address formats.
-            uint8_t bytes[19];  ///< Holds an Address's serialized byte-format.
-        } __attribute__((packed));
+    using Address = uint64_t;
 
-      protected:
-        /// Address constructor.
-        Address() {}
-        /// Address copy constructor.
-        Address(const Address&) {}
-
-      public:
-        virtual ~Address() {}
-
-        /**
-         * Return the string representation of this network address.
-         */
-        virtual std::string toString() const = 0;
-
-        /**
-         * Get the serialized byte-format for this network address.
-         */
-        virtual void toRaw(Raw* raw) const = 0;
-    };
+    /**
+     * Used to hold a driver's serialized byte-format for a network address.
+     *
+     * Each driver may define its own byte-format so long as fits within the
+     * allowed bytes array.  The type field is used to distinguish between
+     * addresses of different formats.  A format should be interpretable by all
+     * Driver implementations that use the same format type.
+     */
+    struct WireFormatAddress {
+        uint8_t type;  ///< Can be used to distinguish between different wire
+                       ///< address formats.
+        uint8_t bytes[19];  ///< Holds an Address's serialized byte-format.
+    } __attribute__((packed));
 
     /**
      * Represents a packet of data that can be send or is received over the
@@ -92,9 +75,8 @@ class Driver {
      */
     class Packet {
       public:
-        /// Packet's source (receive) or destination (send). This pointer is
-        /// only valid for the lifetime of this Packet.
-        Address* address;
+        /// Packet's source (receive) or destination (send).
+        Address address;
 
         /// Packet's network priority (send only); 0 is the lowest priority.
         int priority;
@@ -113,7 +95,7 @@ class Driver {
          * Construct a Packet. Only called by Packet subclasses.
          */
         explicit Packet(void* payload, uint16_t length = 0)
-            : address(NULL)
+            : address()
             , priority(0)
             , payload(payload)
             , length(length)
@@ -137,31 +119,48 @@ class Driver {
      * @param addressString
      *      See above.
      * @return
-     *      Pointer to an Address object that can be the source or destination
-     *      of a Packet. The pointer is valid for the lifetime of this Driver.
+     *      Address that can be the source or destination of a Packet.
      * @throw BadAddress
      *      _addressString_ is malformed.
      *
      * @sa Driver::Packet
      */
-    virtual Address* getAddress(std::string const* const addressString) = 0;
+    virtual Address getAddress(std::string const* const addressString) = 0;
 
     /**
-     * Return a Driver specific network address for the given raw serialized
-     * byte-format of the address. The raw address byte-format can be Driver
+     * Return a Driver specific network address for the given serialized
+     * byte-format of the address. The address byte-format can be Driver
      * specific.
      *
-     * @param rawAddress
+     * @param wireAddress
      *      See above.
      * @return
-     *      Pointer to an Address object that can be the source or destination
-     *      of a Packet. The pointer is valid for the lifetime of this Driver.
+     *      Address that can be the source or destination of a Packet.
      * @throw BadAddress
      *      _rawAddress_ is malformed.
      *
      * @sa Driver::Packet
      */
-    virtual Address* getAddress(Address::Raw const* const rawAddress) = 0;
+    virtual Address getAddress(WireFormatAddress const* const wireAddress) = 0;
+
+    /**
+     * Return the string representation of a network address.
+     *
+     * @param address
+     *      Address whose string representation should be returned.
+     */
+    virtual std::string addressToString(const Address address) = 0;
+
+    /**
+     * Serialized a network address into its Raw byte format.
+     *
+     * @param address
+     *      Address to be serialized.
+     * @param[out] wireAddress
+     *      WireFormatAddress object to which the Address is serialized.
+     */
+    virtual void addressToWireFormat(const Address address,
+                                     WireFormatAddress* wireAddress) = 0;
 
     /**
      * Allocate a new Packet object from the Driver's pool of resources. The
@@ -286,7 +285,7 @@ class Driver {
      * Address for outgoing packets. The pointer returned is valid for the
      * lifetime of this Driver.
      */
-    virtual Address* getLocalAddress() = 0;
+    virtual Address getLocalAddress() = 0;
 
     /**
      * Return the number of bytes that have been passed to the Driver through

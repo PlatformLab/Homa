@@ -45,7 +45,7 @@ class TransportTest : public ::testing::Test {
     TransportTest()
         : packet_buf()
         , mockDriver()
-        , mockAddress()
+        , mockAddress(22)
         , mockPacket(packet_buf[0])
         , mockPacket2(packet_buf[1])
         , transport(new Transport(&mockDriver, 22))
@@ -86,7 +86,7 @@ class TransportTest : public ::testing::Test {
 
     char packet_buf[2][1024];
     NiceMock<Homa::Mock::MockDriver> mockDriver;
-    NiceMock<Homa::Mock::MockDriver::MockAddress> mockAddress;
+    Homa::Driver::Address mockAddress;
     Homa::Mock::MockDriver::MockPacket mockPacket;
     Homa::Mock::MockDriver::MockPacket mockPacket2;
     Transport* transport;
@@ -551,8 +551,10 @@ TEST_F(TransportTest, receiveOp)
                         sizeof(Protocol::Message::Header);
     serverOp->inMessage->messageLength = sizeof(Protocol::Message::Header);
     serverOp->inMessage->allocHeader<Protocol::Message::Header>();
-    serverOp->inMessage->setHeader<Protocol::Message::Header>(opId, tag,
-                                                              &mockAddress);
+    Protocol::Message::Header* inHeader =
+        serverOp->inMessage->setHeader<Protocol::Message::Header>(opId, tag);
+    transport->driver->addressToWireFormat(mockAddress,
+                                           &inHeader->replyAddress);
 
     transport->pendingServerOps.queue.push_back(serverOp);
     EXPECT_EQ(OpContext::State::NOT_STARTED, serverOp->state.load());
@@ -609,17 +611,17 @@ TEST_F(TransportTest, sendRequest_ServerOp)
     inMessage.construct(&mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
     inMessage->allocHeader<Protocol::Message::Header>();
     op->inMessage = inMessage.get();
-    op->inMessage->setHeader<Protocol::Message::Header>(opId, tag,
-                                                        &mockAddress);
-    const Protocol::Message::Header* header =
-        op->inMessage->getHeader<Protocol::Message::Header>();
+    Protocol::Message::Header* header =
+        op->inMessage->setHeader<Protocol::Message::Header>(opId, tag);
+    transport->driver->addressToWireFormat(mockAddress, &header->replyAddress);
     op->outMessage.allocHeader<Protocol::Message::Header>();
 
-    Driver::Address* destination = (Driver::Address*)22;
+    Driver::Address destination = (Driver::Address)22;
 
-    EXPECT_CALL(mockDriver, getAddress(Matcher<Driver::Address::Raw const*>(
-                                Eq(&header->replyAddress))))
-        .WillOnce(Return(&mockAddress));
+    EXPECT_CALL(mockDriver,
+                getAddress(Matcher<Driver::WireFormatAddress const*>(
+                    Eq(&header->replyAddress))))
+        .WillOnce(Return(mockAddress));
     EXPECT_CALL(*mockSender, sendMessage(Eq(&op->outMessage), Eq(destination)));
 
     transport->sendRequest(op, destination);
@@ -634,13 +636,13 @@ TEST_F(TransportTest, sendRequest_RemoteOp)
 {
     Protocol::OpId expectedOpId = {transport->transportId,
                                    transport->nextOpSequenceNumber};
-    Driver::Address* destination = (Driver::Address*)22;
+    Driver::Address destination = (Driver::Address)22;
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
     Transport::Op* op = transport->opPool.construct(transport, &mockDriver,
                                                     expectedOpId, false);
     op->outMessage.allocHeader<Protocol::Message::Header>();
 
-    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(&mockAddress));
+    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(mockAddress));
     EXPECT_CALL(*mockSender, sendMessage(Eq(&op->outMessage), Eq(destination)));
 
     transport->sendRequest(op, destination);
@@ -660,11 +662,11 @@ TEST_F(TransportTest, sendReply)
     const Protocol::Message::Header* header =
         op->inMessage->getHeader<Protocol::Message::Header>();
 
-    EXPECT_CALL(mockDriver, getAddress(Matcher<Driver::Address::Raw const*>(
-                                Eq(&header->replyAddress))))
-        .WillOnce(Return(&mockAddress));
-    EXPECT_CALL(*mockSender,
-                sendMessage(Eq(&op->outMessage), Eq(&mockAddress)));
+    EXPECT_CALL(mockDriver,
+                getAddress(Matcher<Driver::WireFormatAddress const*>(
+                    Eq(&header->replyAddress))))
+        .WillOnce(Return(mockAddress));
+    EXPECT_CALL(*mockSender, sendMessage(Eq(&op->outMessage), Eq(mockAddress)));
 
     transport->sendReply(op);
 
