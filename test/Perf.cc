@@ -13,17 +13,22 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <array>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 #include "Cycles.h"
 #include "docopt.h"
 
 #include "Homa/Drivers/Util/QueueEstimator.h"
+#include "Intrusive.h"
 
 static const char USAGE[] = R"(Performance Nano-Benchmark
 
@@ -56,6 +61,76 @@ struct TestInfo {
                               // test (can contain multiple lines but each line
                               // should be less than 72 characters long).
 };
+
+TestInfo listSearchTestInfo = {
+    "listSearch", "Linear search an intrusive list",
+    R"(Measure the cost (per entry) of searching through an intrusive list)"};
+double
+listSearchTest()
+{
+    struct Foo {
+        Foo()
+            : val(0)
+            , node(this)
+        {}
+
+        uint64_t val;
+        Homa::Core::Intrusive::List<Foo>::Node node;
+    };
+    std::array<Foo, 1000> foos;
+    Homa::Core::Intrusive::List<Foo> list;
+    for (int i = 0; i < 1000; ++i) {
+        foos[i].val = std::rand() % 1000;
+        list.push_back(&foos[i].node);
+    }
+
+    int count = 1000000;
+
+    uint64_t sum = 0;
+
+    int run = 0;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    while (run < count) {
+        for (auto it = list.begin(); it != list.end(); ++it, ++run) {
+            if (it->val > 500) {
+                sum += it->val;
+            } else {
+                sum -= it->val;
+            }
+        }
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / run;
+}
+
+TestInfo mapLookupTestInfo = {
+    "mapLookup", "Lookup an element in a std::unordered_map",
+    R"(Measure the lookup cost for a std::unordered_map<uint64_t, uint64_t>
+containing 10k elements.)"};
+double
+mapLookupTest()
+{
+    std::unordered_map<uint64_t, uint64_t> map;
+
+    int count = 1000000;
+    int numKeys = 10000;
+    uint64_t keys[numKeys];
+    for (int i = 0; i < numKeys; ++i) {
+        keys[i] = std::rand();
+        map.insert({keys[i], 1234});
+    }
+    uint64_t sum = 0;
+
+    int run = 0;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    while (run < count) {
+        for (int i = 0; i < numKeys; ++i, ++run) {
+            sum += map.at(keys[i]);
+        }
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / run;
+}
 
 TestInfo queueEstimatorTestInfo = {
     "queueEstimator", "Update a QueueEstimator",
@@ -118,6 +193,8 @@ struct TestCase {
                            // including the test's string name.
 };
 TestCase tests[] = {
+    {listSearchTest, &listSearchTestInfo},
+    {mapLookupTest, &mapLookupTestInfo},
     {queueEstimatorTest, &queueEstimatorTestInfo},
     {rdtscTest, &rdtscTestInfo},
     {rdhrcTest, &rdhrcTestInfo},
