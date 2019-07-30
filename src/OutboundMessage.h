@@ -56,8 +56,9 @@ class OutboundMessage : public Message {
         , destination()
         , state(OutboundMessage::State::NOT_STARTED)
         , grantIndex(0)
+        , priority(0)
         , sentIndex(0)
-        , rawUnsentBytes(0)
+        , unsentBytes(0)
         , op(op)
         , readyQueueNode(this)
         , messageTimeout(this)
@@ -83,11 +84,12 @@ class OutboundMessage : public Message {
     std::atomic<State> state;
     /// Packets up to (but excluding) this index can be sent.
     uint16_t grantIndex;
+    /// The network priority at which this Message should be sent.
+    int priority;
     /// Packets up to (but excluding) this index have been sent.
     uint16_t sentIndex;
-    /// The number of bytes (including DataHeader bytes) that still need to be
-    /// sent for this Message.
-    uint32_t rawUnsentBytes;
+    /// The number of bytes that still need to be sent for this Message.
+    uint32_t unsentBytes;
     /// Transport::Op associated with this message.
     void* const op;
     /// Intrusive structure used by the Sender to keep track of this message

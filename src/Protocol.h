@@ -24,13 +24,13 @@
 namespace Homa {
 
 /**
- * Defines the wireformat structures used in Homa protocol.
+ * Defines the wire format structures used in Homa protocol.
  *
  * The Protocol defines headers both at the Packet level as well as at the
  * Message level.  Packet level headers contain information to process each
  * individual packet.  In contrast, Message level headers contain information
  * needed to process the Message but aren't needed to process each individual
- * packet.  This seperation reduces Homa's protocol overhead by only including
+ * packet.  This separation reduces Homa's protocol overhead by only including
  * Message level headers once per Message.
  */
 namespace Protocol {
@@ -196,6 +196,11 @@ struct DataHeader {
     CommonHeader common;   ///< Common header fields.
     uint32_t totalLength;  ///< Total # bytes in the message (*not* just in this
                            ///< packet).
+    uint8_t policyVersion;  ///< Version of the network priority policy being
+                            ///< used by the Sender.
+    uint16_t unscheduledIndexLimit;  ///< Packets with an index up to (but not
+                                     ///< including) this value will be sent
+                                     ///< without being granted.
     uint16_t index;  ///< Index of this packet in the array of packets that form
                      ///< the message.
 
@@ -203,9 +208,12 @@ struct DataHeader {
     // starting at the offset corresponding to the given packet index.
 
     /// DataHeader constructor.
-    DataHeader(MessageId messageId, uint32_t totalLength, uint16_t index)
+    DataHeader(MessageId messageId, uint32_t totalLength, uint8_t policyVersion,
+               uint16_t unscheduledIndexLimit, uint16_t index)
         : common(Opcode::DATA, messageId)
         , totalLength(totalLength)
+        , policyVersion(policyVersion)
+        , unscheduledIndexLimit(unscheduledIndexLimit)
         , index(index)
     {}
 } __attribute__((packed));
@@ -220,11 +228,14 @@ struct GrantHeader {
     CommonHeader common;  ///< Common header fields.
     uint16_t indexLimit;  ///< Packets with an index up to (but not including)
                           ///< this value can be transmitted by the sender.
+    uint8_t priority;     ///< The network priority the sender should use to
+                          ///< transmit the associated message.
 
     /// GrantHeader constructor.
-    GrantHeader(MessageId messageId, uint16_t indexLimit)
+    GrantHeader(MessageId messageId, uint16_t indexLimit, uint8_t priority)
         : common(Opcode::GRANT, messageId)
         , indexLimit(indexLimit)
+        , priority(priority)
     {}
 } __attribute__((packed));
 

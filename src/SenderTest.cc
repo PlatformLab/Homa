@@ -22,12 +22,14 @@
 #include <Homa/Debug.h>
 
 #include "Mock/MockDriver.h"
+#include "Mock/MockPolicy.h"
 #include "Transport.h"
 
 namespace Homa {
 namespace Core {
 namespace {
 
+using ::testing::_;
 using ::testing::Eq;
 using ::testing::Mock;
 using ::testing::NiceMock;
@@ -39,17 +41,19 @@ class SenderTest : public ::testing::Test {
     SenderTest()
         : mockDriver()
         , mockPacket(&payload)
+        , mockPolicyManager()
         , transport()
         , sender()
         , savedLogPolicy(Debug::getLogPolicy())
     {
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
-        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
+        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1027));
         ON_CALL(mockDriver, getQueuedBytes).WillByDefault(Return(0));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         transport = new Transport(&mockDriver, 22);
         sender = transport->sender.get();
+        sender->policyManager = &mockPolicyManager;
         sender->messageTimeouts.timeoutIntervalCycles = 1000;
         sender->pingTimeouts.timeoutIntervalCycles = 100;
         PerfUtils::Cycles::mockTscValue = 10000;
@@ -64,6 +68,7 @@ class SenderTest : public ::testing::Test {
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
+    NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;
     char payload[1028];
     Transport* transport;
     Sender* sender;
@@ -297,6 +302,12 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
     message->state.store(OutboundMessage::State::SENT);
     message->sentIndex = 5;
     EXPECT_EQ(5, message->grantIndex);
+    char packetBuf[sizeof(Protocol::Packet::DataHeader)];
+    Homa::Mock::MockDriver::MockPacket packet(&packetBuf);
+    packet.length = sizeof(packetBuf);
+    static_cast<Protocol::Packet::DataHeader*>(packet.payload)
+        ->unscheduledIndexLimit = 3;
+    message->setPacket(0, &packet);
 
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
@@ -309,7 +320,7 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
 
     EXPECT_EQ(OutboundMessage::State::IN_PROGRESS, message->state);
     EXPECT_EQ(0U, message->sentIndex);
-    EXPECT_EQ(1U, message->grantIndex);
+    EXPECT_EQ(3U, message->grantIndex);
 }
 
 TEST_F(SenderTest, handleUnknownPacket_no_message)
@@ -399,9 +410,14 @@ TEST_F(SenderTest, sendMessage_basic)
     message->messageLength = 420;
     mockPacket.length = message->messageLength + message->PACKET_HEADER_LENGTH;
     Driver::Address destination = (Driver::Address)22;
+    Core::Policy::Unscheduled policy = {1, 420, 2};
 
     EXPECT_FALSE(sender->outboundMessages.find(id) !=
                  sender->outboundMessages.end());
+
+    EXPECT_CALL(mockPolicyManager,
+                getUnscheduledPolicy(Eq(destination), Eq(420)))
+        .WillOnce(Return(policy));
 
     sender->sendMessage(message, destination);
 
@@ -411,20 +427,22 @@ TEST_F(SenderTest, sendMessage_basic)
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     EXPECT_EQ(id, header->common.messageId);
     EXPECT_EQ(destination, message->destination);
+    EXPECT_EQ(OutboundMessage::State::IN_PROGRESS, message->state);
+    EXPECT_EQ(1U, message->grantIndex);
+    EXPECT_EQ(2, message->priority);
+    EXPECT_EQ(420U, message->unsentBytes);
     EXPECT_EQ(message->messageLength, header->totalLength);
     EXPECT_TRUE(sender->outboundMessages.find(id) !=
                 sender->outboundMessages.end());
     EXPECT_EQ(message, sender->outboundMessages.find(id)->second);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
-    EXPECT_EQ(1U, message->grantIndex);
-    EXPECT_EQ(OutboundMessage::State::IN_PROGRESS, message->state);
 }
 
 TEST_F(SenderTest, sendMessage_multipacket)
 {
-    char payload0[1024];
-    char payload1[1024];
+    char payload0[1027];
+    char payload1[1027];
     NiceMock<Homa::Mock::MockDriver::MockPacket> packet0(payload0);
     NiceMock<Homa::Mock::MockDriver::MockPacket> packet1(payload1);
     Protocol::MessageId id = {sender->transportId,
@@ -437,28 +455,31 @@ TEST_F(SenderTest, sendMessage_multipacket)
     message->setPacket(0, &packet0);
     message->setPacket(1, &packet1);
     message->messageLength = 1420;
-    packet0.length = 1000 + 24;
-    packet1.length = 420 + 24;
+    packet0.length = 1000 + 27;
+    packet1.length = 420 + 27;
     Driver::Address destination = (Driver::Address)22;
+    Core::Policy::Unscheduled policy = {1, 1000, 2};
 
-    EXPECT_EQ(24U, sizeof(Protocol::Packet::DataHeader));
+    EXPECT_EQ(27U, sizeof(Protocol::Packet::DataHeader));
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
+    EXPECT_CALL(mockPolicyManager,
+                getUnscheduledPolicy(Eq(destination), Eq(1420)))
+        .WillOnce(Return(policy));
 
     sender->sendMessage(message, destination);
 
     EXPECT_EQ(id, message->id);
+    EXPECT_EQ(1U, message->grantIndex);
 
     Protocol::Packet::DataHeader* header = nullptr;
     // Packet0
     EXPECT_EQ(22U, (uint64_t)packet0.address);
-    EXPECT_EQ(0U, packet0.priority);
     header = static_cast<Protocol::Packet::DataHeader*>(packet0.payload);
     EXPECT_EQ(message->id, header->common.messageId);
     EXPECT_EQ(message->messageLength, header->totalLength);
 
     // Packet1
     EXPECT_EQ(22U, (uint64_t)packet1.address);
-    EXPECT_EQ(0U, packet1.priority);
     header = static_cast<Protocol::Packet::DataHeader*>(packet1.payload);
     EXPECT_EQ(message->id, header->common.messageId);
     EXPECT_EQ(destination, message->destination);
@@ -486,6 +507,9 @@ TEST_F(SenderTest, sendMessage_missingPacket)
         transport->opPool.construct(transport, &mockDriver, opId);
     OutboundMessage* message = &op->outMessage;
     message->setPacket(1, &mockPacket);
+    Core::Policy::Unscheduled policy = {1, 1000, 2};
+    ON_CALL(mockPolicyManager, getUnscheduledPolicy(_, _))
+        .WillByDefault(Return(policy));
 
     EXPECT_DEATH(sender->sendMessage(message, Driver::Address()),
                  ".*Incomplete message with id \\(22:1\\); missing packet at "
@@ -506,8 +530,11 @@ TEST_F(SenderTest, sendMessage_unscheduledLimit)
     message->messageLength = 9000;
     mockPacket.length = 1000 + sizeof(Protocol::Packet::DataHeader);
     Driver::Address destination = (Driver::Address)22;
+    Core::Policy::Unscheduled policy = {1, 4500, 2};
     EXPECT_EQ(9U, message->getNumPackets());
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
+    EXPECT_CALL(mockPolicyManager, getUnscheduledPolicy(destination, 9000))
+        .WillOnce(Return(policy));
 
     sender->sendMessage(message, destination);
 
@@ -614,16 +641,18 @@ TEST_F(SenderTest, trySend_basic)
     sender->readyQueue.push_back(&message->readyQueueNode);
     Homa::Mock::MockDriver::MockPacket* packet[5];
     const uint32_t PACKET_SIZE = sender->transport->driver->getMaxPayloadSize();
+    const uint32_t PACKET_DATA_SIZE =
+        PACKET_SIZE - message->PACKET_HEADER_LENGTH;
     for (int i = 0; i < 5; ++i) {
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
         packet[i]->length = PACKET_SIZE;
         message->setPacket(i, packet[i]);
-        message->rawUnsentBytes += packet[i]->length;
+        message->unsentBytes += PACKET_DATA_SIZE;
     }
     EXPECT_EQ(5U, message->getNumPackets());
     EXPECT_EQ(3U, message->grantIndex);
     EXPECT_EQ(0U, message->sentIndex);
-    EXPECT_EQ(5 * PACKET_SIZE, message->rawUnsentBytes);
+    EXPECT_EQ(5 * PACKET_DATA_SIZE, message->unsentBytes);
     EXPECT_NE(OutboundMessage::State::SENT, message->state);
     EXPECT_TRUE(sender->readyQueue.contains(&message->readyQueueNode));
 
@@ -633,7 +662,7 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_EQ(3U, message->grantIndex);
     EXPECT_EQ(2U, message->sentIndex);
-    EXPECT_EQ(3 * PACKET_SIZE, message->rawUnsentBytes);
+    EXPECT_EQ(3 * PACKET_DATA_SIZE, message->unsentBytes);
     EXPECT_NE(OutboundMessage::State::SENT, message->state);
     EXPECT_TRUE(sender->readyQueue.contains(&message->readyQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -643,7 +672,7 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_EQ(3U, message->grantIndex);
     EXPECT_EQ(3U, message->sentIndex);
-    EXPECT_EQ(2 * PACKET_SIZE, message->rawUnsentBytes);
+    EXPECT_EQ(2 * PACKET_DATA_SIZE, message->unsentBytes);
     EXPECT_NE(OutboundMessage::State::SENT, message->state);
     EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -654,7 +683,7 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_EQ(3U, message->grantIndex);
     EXPECT_EQ(3U, message->sentIndex);
-    EXPECT_EQ(2 * PACKET_SIZE, message->rawUnsentBytes);
+    EXPECT_EQ(2 * PACKET_DATA_SIZE, message->unsentBytes);
     EXPECT_NE(OutboundMessage::State::SENT, message->state);
     EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -667,7 +696,7 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_EQ(5U, message->grantIndex);
     EXPECT_EQ(5U, message->sentIndex);
-    EXPECT_EQ(0 * PACKET_SIZE, message->rawUnsentBytes);
+    EXPECT_EQ(0 * PACKET_DATA_SIZE, message->unsentBytes);
     EXPECT_EQ(OutboundMessage::State::SENT, message->state);
     EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -690,7 +719,8 @@ TEST_F(SenderTest, trySend_multipleMessages)
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
         packet[i]->length = sender->transport->driver->getMaxPayloadSize() / 4;
         message[i]->setPacket(0, packet[i]);
-        message[i]->rawUnsentBytes += packet[i]->length;
+        message[i]->unsentBytes +=
+            (packet[i]->length - message[i]->PACKET_HEADER_LENGTH);
         sender->readyQueue.push_back(&message[i]->readyQueueNode);
     }
 
@@ -816,7 +846,7 @@ TEST_F(SenderTest, hintMessageReady)
         Protocol::OpId opId = {0, 0};
         message[i] = &transport->opPool.construct(transport, &mockDriver, opId)
                           ->outMessage;
-        message[i]->rawUnsentBytes = (i + 1) * 1000;
+        message[i]->unsentBytes = (i + 1) * 1000;
     }
 
     EXPECT_TRUE(sender->readyQueue.empty());

@@ -208,6 +208,7 @@ class List {
      */
     List()
         : root(nullptr)
+        , count(0)
     {
         root.list = this;
     }
@@ -257,6 +258,25 @@ class List {
     }
 
     /**
+     * Return an Iterator to the specified element if the element is in the
+     * list.  Otherwise return List::end.
+     *
+     * @param node
+     *      Node element whose Iterator should be returned.
+     * @return
+     *      An Iterator to the specified element if it is in the list or
+     *      List::end otherwise.
+     */
+    Iterator get(Node* node)
+    {
+        if (contains(node)) {
+            return Iterator(node);
+        } else {
+            return end();
+        }
+    }
+
+    /**
      * Check if the List contains no elements.
      *
      * @return
@@ -265,6 +285,14 @@ class List {
     bool empty() const
     {
         return &root == root.next;
+    }
+
+    /**
+     * Return the number of elements in the List.
+     */
+    size_t size()
+    {
+        return count;
     }
 
     /**
@@ -277,6 +305,7 @@ class List {
         while (root.prev != &root) {
             root.prev->unlink();
         }
+        count = 0;
     };
 
     /**
@@ -294,6 +323,7 @@ class List {
     Iterator insert(Iterator pos, Node* node)
     {
         assert(pos.node->list == this);
+        ++count;
         __insert(pos.node, node);
         return Iterator(node);
     }
@@ -311,6 +341,7 @@ class List {
     Iterator remove(Iterator pos)
     {
         assert(pos.node->list == this || pos.node->list == nullptr);
+        count -= contains(pos.node);
         Iterator nextPos(pos.node->next);
         pos.node->unlink();
         return nextPos;
@@ -327,6 +358,7 @@ class List {
     void remove(Node* node)
     {
         assert(node->list == this || node->list == nullptr);
+        count -= contains(node);
         node->unlink();
     }
 
@@ -340,6 +372,7 @@ class List {
      */
     void push_back(Node* node)
     {
+        ++count;
         __insert(&root, node);
     }
 
@@ -352,6 +385,7 @@ class List {
      */
     void pop_back()
     {
+        --count;
         root.prev->unlink();
     }
 
@@ -365,6 +399,7 @@ class List {
      */
     void push_front(Node* node)
     {
+        ++count;
         __insert(root.next, node);
     }
 
@@ -377,6 +412,7 @@ class List {
      */
     void pop_front()
     {
+        --count;
         root.next->unlink();
     }
 
@@ -416,6 +452,8 @@ class List {
 
     /// Entry point into the double-linked list of Nodes.
     Node root;
+    /// Number of elements in this list.
+    size_t count;
 };
 
 }  // namespace Intrusive

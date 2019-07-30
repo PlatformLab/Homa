@@ -79,6 +79,7 @@ add_library(Homa
     src/Debug.cc
     src/Homa.cc
     src/Message.cc
+    src/Policy.cc
     src/Receiver.cc
     src/Sender.cc
     src/StringUtil.cc

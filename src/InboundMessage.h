@@ -56,9 +56,11 @@ class InboundMessage : public Message {
         , source()
         , numExpectedPackets(0)
         , grantIndexLimit(0)
+        , priority(0)
+        , unreceivedBytes(messageLength)
         , state(InboundMessage::State::IN_PROGRESS)
-        , newPacket(false)
         , op(nullptr)
+        , scheduledMessageNode(this)
         , receivedMessageNode(this)
         , messageTimeout(this)
         , resendTimeout(this)
@@ -93,12 +95,17 @@ class InboundMessage : public Message {
     uint16_t numExpectedPackets;
     /// The packet index up to which the Receiver as granted.
     uint16_t grantIndexLimit;
+    /// The network priority at which the Receiver requests Message be sent.
+    uint8_t priority;
+    /// The number of bytes that still need to be received for this Message.
+    uint32_t unreceivedBytes;
     /// This message's current state.
     std::atomic<State> state;
-    /// Marked true when a new data packet arrives; cleared by the scheduler.
-    bool newPacket;
     /// Transport::Op associated with this message.
     void* op;
+    /// Intrusive structure used by the Receiver to keep track of when this
+    /// message should be issued grants.
+    Intrusive::List<InboundMessage>::Node scheduledMessageNode;
     /// Intrusive structure used by the Receiver to keep track of this message
     /// when it has been completely received.
     Intrusive::List<InboundMessage>::Node receivedMessageNode;

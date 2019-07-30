@@ -27,6 +27,7 @@
 #include "ObjectPool.h"
 #include "OpContext.h"
 #include "OutboundMessage.h"
+#include "Policy.h"
 #include "SpinLock.h"
 
 /**
@@ -176,6 +177,9 @@ class Transport {
 
     /// Unique identifier for the next RemoteOp this transport sends.
     std::atomic<uint64_t> nextOpSequenceNumber;
+
+    /// Module which manages the network packet priority policy.
+    Policy::Manager policyManager;
 
     /// Module which controls the sending of message.
     std::unique_ptr<Core::Sender> sender;

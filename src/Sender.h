@@ -24,6 +24,7 @@
 #include "Intrusive.h"
 #include "Message.h"
 #include "OutboundMessage.h"
+#include "Policy.h"
 #include "Protocol.h"
 #include "SpinLock.h"
 #include "Timeout.h"
@@ -43,6 +44,7 @@ class Transport;
 class Sender {
   public:
     explicit Sender(Transport* transport, uint64_t transportId,
+                    Policy::Manager* policyManager,
                     uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
     virtual ~Sender();
 
@@ -72,6 +74,9 @@ class Sender {
 
     /// Transport identifier.
     const uint64_t transportId;
+
+    /// Provider of network packet priority decisions.
+    Policy::Manager* policyManager;
 
     /// The sequence number to be used for the next OutboundMessage.
     uint64_t nextMessageSequenceNumber;

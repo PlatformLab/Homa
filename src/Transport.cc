@@ -141,12 +141,14 @@ Transport::Transport(Driver* driver, uint64_t transportId)
     : driver(driver)
     , transportId(transportId)
     , nextOpSequenceNumber(1)
-    , sender(new Sender(this, transportId,
+    , policyManager(driver)
+    , sender(new Sender(this, transportId, &policyManager,
                         PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                         PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
-    , receiver(new Receiver(
-          this, PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
-          PerfUtils::Cycles::fromMicroseconds(RESEND_INTERVAL_US)))
+    , receiver(
+          new Receiver(this, &policyManager,
+                       PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
+                       PerfUtils::Cycles::fromMicroseconds(RESEND_INTERVAL_US)))
     , mutex()
     , opPool()
     , activeOps()

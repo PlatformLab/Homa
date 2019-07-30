@@ -20,15 +20,13 @@
 namespace Homa {
 namespace Core {
 
-namespace {
-const uint32_t RTT_TIME_US = 5;
-}
-
 /**
  * Receiver constructor.
  *
  * @param transport
- *      The Tranport object that owns this Receiver.
+ *      The Transport object that owns this Receiver.
+ * @param policyManager
+ *      Provides information about the grant and network priority policies.
  * @param messageTimeoutCycles
  *      Number of cycles of inactivity to wait before this Receiver declares an
  *      InboundMessage receive failure.
@@ -36,11 +34,13 @@ const uint32_t RTT_TIME_US = 5;
  *      Number of cycles of inactivity to wait between requesting retransmission
  *      of un-received parts of a message.
  */
-Receiver::Receiver(Transport* transport, uint64_t messageTimeoutCycles,
-                   uint64_t resendIntervalCycles)
+Receiver::Receiver(Transport* transport, Policy::Manager* policyManager,
+                   uint64_t messageTimeoutCycles, uint64_t resendIntervalCycles)
     : mutex()
     , transport(transport)
+    , policyManager(policyManager)
     , inboundMessages()
+    , scheduledMessages()
     , receivedMessages()
     , messagePool()
     , messageTimeouts(messageTimeoutCycles)
@@ -54,6 +54,7 @@ Receiver::Receiver(Transport* transport, uint64_t messageTimeoutCycles,
 Receiver::~Receiver()
 {
     mutex.lock();
+    scheduledMessages.clear();
     receivedMessages.mutex.lock();
     receivedMessages.queue.clear();
     messageTimeouts.list.clear();
@@ -101,17 +102,26 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             messageLength % message->PACKET_DATA_LENGTH ? 1 : 0;
 
         inboundMessages.insert(it, {id, message});
+        policyManager->signalNewMessage(message->source, header->policyVersion,
+                                        header->totalLength);
+
+        if (message->numExpectedPackets > header->unscheduledIndexLimit) {
+            // Message needs to be scheduled.  Push the message to the back
+            // of the scheduledMessage list; it will be moved to the correct
+            // position during the schedule update.
+            scheduledMessages.push_back(&message->scheduledMessageNode);
+        }
     }
 
     SpinLock::Lock lock_message(message->mutex);
     messageTimeouts.setTimeout(&message->messageTimeout);
     resendTimeouts.setTimeout(&message->resendTimeout);
-    lock.unlock();  // End Receiver critical section
 
     assert(id == message->id);
 
     // All packets already received; must be a duplicate.
     if (message->state == InboundMessage::State::COMPLETED) {
+        lock.unlock();  // End Receiver critical section
         // drop packet
         driver->releasePackets(&packet, 1);
         return;
@@ -125,19 +135,50 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     // Add the packet
     bool packetAdded = message->setPacket(header->index, packet);
     if (packetAdded) {
-        // This value is technically sloppy since last packet of the message
-        // which may not be a full packet. However, this should be fine since
-        // receiving the last packet means we don't need the scheduler to GRANT
-        // more packets anyway.
-        uint32_t totalReceivedBytes =
-            message->PACKET_DATA_LENGTH * message->getNumPackets();
-        message->newPacket = true;
-        if (totalReceivedBytes >= message->rawLength()) {
+        uint32_t packetDataBytes =
+            packet->length - message->PACKET_HEADER_LENGTH;
+        assert(message->unreceivedBytes >= packetDataBytes);
+        message->unreceivedBytes -= packetDataBytes;
+        if (message->unreceivedBytes > 0) {
+            // Message incomplete. Update the schedule.
+            if (scheduledMessages.contains(&message->scheduledMessageNode)) {
+                // See if the message can be moved up the list, every message
+                // following it in the list should be longer.
+                auto it_message =
+                    scheduledMessages.get(&message->scheduledMessageNode);
+                auto it_pos = it_message;
+                while (it_pos != scheduledMessages.begin()) {
+                    --it_pos;
+                    // Notice: holding the Receiver::mutex during this operation
+                    // avoids the deadlock that can occur between lock_message
+                    // and lock_message_other.
+                    SpinLock::Lock lock_message_other(it_pos->mutex);
+                    if (it_pos->unreceivedBytes <= message->unreceivedBytes) {
+                        // Found the correct location; just after it_pos. The
+                        // message should be inserted just before what follows.
+                        ++it_pos;
+                        break;
+                    }
+                }
+                if (it_pos == it_message) {
+                    // Do nothing if the message is already in the right spot.
+                } else {
+                    // Move the message to the new position in the list.
+                    scheduledMessages.remove(it_message);
+                    scheduledMessages.insert(it_pos,
+                                             &message->scheduledMessageNode);
+                }
+            }
+        } else {
+            // Message received
+            scheduledMessages.remove(&message->scheduledMessageNode);
+            lock.unlock();  // End Receiver critical section
             message->state.store(InboundMessage::State::COMPLETED);
             SpinLock::Lock lock_received_messages(receivedMessages.mutex);
             receivedMessages.queue.push_back(&message->receivedMessageNode);
         }
     } else {
+        lock.unlock();  // End Receiver critical section
         // must be a duplicate packet; drop packet.
         driver->releasePackets(&packet, 1);
     }
@@ -205,7 +246,8 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
         // a GRANT in along time.  In either case, resend the latest GRANT so
         // the Sender knows we are still working on the message.
         ControlPacket::send<Protocol::Packet::GrantHeader>(
-            driver, message->source, message->id, message->grantIndexLimit);
+            driver, message->source, message->id, message->grantIndexLimit,
+            message->priority);
     } else {
         lock.unlock();
         // We are here because we have no knowledge of the message the Sender is
@@ -253,6 +295,7 @@ Receiver::dropMessage(InboundMessage* message)
     SpinLock::Lock lock(mutex);
     message->mutex.lock();
     if (inboundMessages.erase(message->id) > 0) {
+        scheduledMessages.remove(&message->scheduledMessageNode);
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         resendTimeouts.cancelTimeout(&message->resendTimeout);
         messagePool.destroy(message);
@@ -292,6 +335,7 @@ Receiver::checkMessageTimeouts()
             break;
         }
         // Found expired timeout.
+        scheduledMessages.remove(&message->scheduledMessageNode);
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         resendTimeouts.cancelTimeout(&message->resendTimeout);
         if (message->state == InboundMessage::State::IN_PROGRESS) {
@@ -387,56 +431,49 @@ Receiver::schedule()
         return;
     }
 
+    /* The overall goal is to grant up to policy.degreeOvercommitment number of
+     * scheduled messages simultaneously.  Each of these messages should always
+     * have policy.scheduledBytesLimit number of bytes granted.  Ideally, each
+     * message will be assign a different network priority based on a message's
+     * number of unreceivedBytes.  The message with the fewest unreceivedBytes
+     * (SRPT) will be assigned the highest priority.  If the number of messages
+     * to grant exceeds the number of available priorities, the lowest priority
+     * is shared by multiple messages.  If the number of messages to grant is
+     * fewer than the the available priority, than the messages are assigned to
+     * the lowest available priority.
+     */
     SpinLock::UniqueLock lock(mutex);
+    Policy::Scheduled policy = policyManager->getScheduledPolicy();
+    assert(policy.degreeOvercommitment > policy.maxScheduledPriority);
+    int unusedPriorities =
+        std::max(0, (policy.maxScheduledPriority + 1) -
+                        Util::downCast<int>(scheduledMessages.size()));
 
-    auto it = inboundMessages.begin();
-    while (it != inboundMessages.end()) {
-        InboundMessage* message = it->second;
+    auto it = scheduledMessages.begin();
+    int slot = 0;
+    while (it != scheduledMessages.end() &&
+           slot < policy.degreeOvercommitment) {
+        InboundMessage* message = &(*it);
         SpinLock::Lock lock_message(message->mutex);
-        if (message->newPacket) {
-            // found a message to grant.
-            lock.unlock();
-            sendGrantPacket(message, message->driver, lock_message);
-            message->newPacket = false;
-            break;
+        message->priority =
+            std::max(0, policy.maxScheduledPriority - slot - unusedPriorities);
+        uint16_t newGrantLimit = std::min(
+            Util::downCast<uint16_t>(
+                message->getNumPackets() +
+                ((policy.scheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
+                 message->PACKET_DATA_LENGTH)),
+            message->numExpectedPackets);
+        if (newGrantLimit > message->grantIndexLimit) {
+            message->grantIndexLimit = newGrantLimit;
+            ControlPacket::send<Protocol::Packet::GrantHeader>(
+                message->driver, message->source, message->id,
+                message->grantIndexLimit, message->priority);
         }
-        it++;
+        ++it;
+        ++slot;
     }
 
     scheduling.clear();
-}
-
-/**
- * Send a GRANT packet to the Sender of an incoming Message.
- *
- * @param message
- *      InboundMessage for which to send a GRANT.
- * @param driver
- *      Driver with which the GRANT packet should be sent.
- * @param lock_message
- *      Used to remind the caller to hold the message's mutex while calling
- *      this method.
- */
-void
-Receiver::sendGrantPacket(InboundMessage* message, Driver* driver,
-                          const SpinLock::Lock& lock_message)
-{
-    (void)lock_message;
-    // TODO(cstlee): Implement Homa's grant policy.
-    // Implements a very simple grant policy which tries to maintain RTT bytes
-    // granted for every Message.
-    // TODO(cstlee): Add safe guards to prevent RTT_BYTES from being less than
-    //               a single packet length. The sender might get stuck if the
-    //               grants are smaller than a single packet.
-    uint32_t RTT_BYTES = RTT_TIME_US * (driver->getBandwidth() / 8);
-    uint32_t RTT_PACKETS = RTT_BYTES / message->PACKET_DATA_LENGTH;
-    uint16_t indexLimit = std::min(
-        Util::downCast<uint16_t>(message->getNumPackets() + RTT_PACKETS),
-        message->numExpectedPackets);
-    message->grantIndexLimit = indexLimit;
-
-    ControlPacket::send<Protocol::Packet::GrantHeader>(driver, message->source,
-                                                       message->id, indexLimit);
 }
 
 }  // namespace Core

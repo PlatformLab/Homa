@@ -207,6 +207,18 @@ TEST_F(IntrusiveListTest, end)
     EXPECT_EQ(&foo[2].listNode, (--it).node);
 }
 
+TEST_F(IntrusiveListTest, get)
+{
+    Intrusive::List<Foo>::Iterator it = list.get(&foo[0].listNode);
+    EXPECT_EQ(list.end(), it);
+
+    list.push_back(&foo[0].listNode);
+
+    it = list.get(&foo[0].listNode);
+
+    EXPECT_EQ(&foo[0].listNode, it.node);
+}
+
 TEST_F(IntrusiveListTest, empty)
 {
     populateList();
@@ -231,6 +243,7 @@ TEST_F(IntrusiveListTest, clear)
     }
     EXPECT_EQ(&list.root, list.root.next);
     EXPECT_EQ(&list.root, list.root.prev);
+    EXPECT_EQ(0U, list.size());
 }
 
 TEST_F(IntrusiveListTest, insert)
@@ -247,6 +260,7 @@ TEST_F(IntrusiveListTest, insert)
     EXPECT_EQ(&list.root, foo[1].listNode.next);
     EXPECT_EQ(&foo[1].listNode, list.root.prev);
     EXPECT_EQ(&list.root, foo[1].listNode.prev);
+    EXPECT_EQ(1U, list.size());
 
     it = list.insert(it, &foo[0].listNode);
 
@@ -257,6 +271,7 @@ TEST_F(IntrusiveListTest, insert)
     EXPECT_EQ(&foo[1].listNode, list.root.prev);
     EXPECT_EQ(&foo[0].listNode, foo[1].listNode.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+    EXPECT_EQ(2U, list.size());
 
     it = list.end();
 
@@ -271,6 +286,7 @@ TEST_F(IntrusiveListTest, insert)
     EXPECT_EQ(&foo[1].listNode, foo[2].listNode.prev);
     EXPECT_EQ(&foo[0].listNode, foo[1].listNode.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+    EXPECT_EQ(3U, list.size());
 }
 
 TEST_F(IntrusiveListTest, remove_iterator)
@@ -279,6 +295,7 @@ TEST_F(IntrusiveListTest, remove_iterator)
 
     Intrusive::List<Foo>::Iterator it = ++list.begin();
     EXPECT_EQ(&foo[1].listNode, it.node);
+    EXPECT_EQ(3U, list.size());
 
     it = list.remove(it);
 
@@ -293,11 +310,14 @@ TEST_F(IntrusiveListTest, remove_iterator)
     EXPECT_EQ(&foo[2].listNode, list.root.prev);
     EXPECT_EQ(&foo[0].listNode, foo[2].listNode.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+
+    EXPECT_EQ(2U, list.size());
 }
 
 TEST_F(IntrusiveListTest, remove_node)
 {
     populateList();
+    EXPECT_EQ(3U, list.size());
 
     list.remove(&foo[1].listNode);
 
@@ -310,6 +330,8 @@ TEST_F(IntrusiveListTest, remove_node)
     EXPECT_EQ(&foo[2].listNode, list.root.prev);
     EXPECT_EQ(&foo[0].listNode, foo[2].listNode.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+
+    EXPECT_EQ(2U, list.size());
 }
 
 TEST_F(IntrusiveListTest, push_back)
@@ -323,6 +345,7 @@ TEST_F(IntrusiveListTest, push_back)
     EXPECT_EQ(&list.root, foo[0].listNode.next);
     EXPECT_EQ(&foo[0].listNode, list.root.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+    EXPECT_EQ(1U, list.size());
 
     list.push_back(&foo[1].listNode);
 
@@ -332,6 +355,7 @@ TEST_F(IntrusiveListTest, push_back)
     EXPECT_EQ(&foo[1].listNode, list.root.prev);
     EXPECT_EQ(&foo[0].listNode, foo[1].listNode.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+    EXPECT_EQ(2U, list.size());
 
     list.push_back(&foo[2].listNode);
 
@@ -343,11 +367,13 @@ TEST_F(IntrusiveListTest, push_back)
     EXPECT_EQ(&foo[1].listNode, foo[2].listNode.prev);
     EXPECT_EQ(&foo[0].listNode, foo[1].listNode.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+    EXPECT_EQ(3U, list.size());
 }
 
 TEST_F(IntrusiveListTest, pop_back)
 {
     populateList();
+    EXPECT_EQ(3U, list.size());
 
     list.pop_back();
 
@@ -360,6 +386,8 @@ TEST_F(IntrusiveListTest, pop_back)
     EXPECT_EQ(&foo[1].listNode, list.root.prev);
     EXPECT_EQ(&foo[0].listNode, foo[1].listNode.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+
+    EXPECT_EQ(2U, list.size());
 }
 
 TEST_F(IntrusiveListTest, push_front)
@@ -373,6 +401,7 @@ TEST_F(IntrusiveListTest, push_front)
     EXPECT_EQ(&list.root, foo[2].listNode.next);
     EXPECT_EQ(&foo[2].listNode, list.root.prev);
     EXPECT_EQ(&list.root, foo[2].listNode.prev);
+    EXPECT_EQ(1U, list.size());
 
     list.push_front(&foo[1].listNode);
 
@@ -382,6 +411,7 @@ TEST_F(IntrusiveListTest, push_front)
     EXPECT_EQ(&foo[2].listNode, list.root.prev);
     EXPECT_EQ(&foo[1].listNode, foo[2].listNode.prev);
     EXPECT_EQ(&list.root, foo[1].listNode.prev);
+    EXPECT_EQ(2U, list.size());
 
     list.push_front(&foo[0].listNode);
 
@@ -393,11 +423,13 @@ TEST_F(IntrusiveListTest, push_front)
     EXPECT_EQ(&foo[1].listNode, foo[2].listNode.prev);
     EXPECT_EQ(&foo[0].listNode, foo[1].listNode.prev);
     EXPECT_EQ(&list.root, foo[0].listNode.prev);
+    EXPECT_EQ(3U, list.size());
 }
 
 TEST_F(IntrusiveListTest, pop_front)
 {
     populateList();
+    EXPECT_EQ(3U, list.size());
 
     list.pop_front();
 
@@ -410,6 +442,8 @@ TEST_F(IntrusiveListTest, pop_front)
     EXPECT_EQ(&foo[2].listNode, list.root.prev);
     EXPECT_EQ(&foo[1].listNode, foo[2].listNode.prev);
     EXPECT_EQ(&list.root, foo[1].listNode.prev);
+
+    EXPECT_EQ(2U, list.size());
 }
 
 TEST_F(IntrusiveListTest, contains)

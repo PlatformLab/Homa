@@ -26,10 +26,6 @@
 namespace Homa {
 namespace Core {
 
-namespace {
-const uint32_t RTT_TIME_US = 5;
-}
-
 /**
  * Sender Constructor.
  *
@@ -37,6 +33,8 @@ const uint32_t RTT_TIME_US = 5;
  *      The Transport object that owns this Sender.
  * @param transportId
  *      Unique identifier for the Transport that owns this Sender.
+ * @param policyManager
+ *      Provides information about the network packet priority policies.
  * @param messageTimeoutCycles
  *      Number of cycles of inactivity to wait before this Sender declares an
  *      OutboundMessage send failure.
@@ -45,10 +43,12 @@ const uint32_t RTT_TIME_US = 5;
  *      of an OutboundMessage.
  */
 Sender::Sender(Transport* transport, uint64_t transportId,
-               uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles)
+               Policy::Manager* policyManager, uint64_t messageTimeoutCycles,
+               uint64_t pingIntervalCycles)
     : mutex()
     , transport(transport)
     , transportId(transportId)
+    , policyManager(policyManager)
     , nextMessageSequenceNumber(1)
     , DRIVER_QUEUED_BYTE_LIMIT(2 * transport->driver->getMaxPayloadSize())
     , outboundMessages()
@@ -201,6 +201,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
 
     assert(header->indexLimit <= message->getNumPackets());
     message->grantIndex = std::max(message->grantIndex, header->indexLimit);
+    message->priority = header->priority;
 
     driver->releasePackets(&packet, 1);
 }
@@ -240,14 +241,16 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
         // Restart sending the message from scratch.
         message->state.store(OutboundMessage::State::IN_PROGRESS);
         message->sentIndex = 0;
-        // TODO(cstlee): May want to use the unscheduled-limit here instead of
-        // just granting a single packet.
-        message->grantIndex = 1;
+        // Reset to initial unschedule limit.
+        Driver::Packet* packet = message->getPacket(0);
+        assert(packet != nullptr);
+        assert(packet->length >= sizeof(Protocol::Packet::DataHeader));
+        message->grantIndex =
+            static_cast<Protocol::Packet::DataHeader*>(packet->payload)
+                ->unscheduledIndexLimit;
         // Need to set the rawUnsentBytes before calling hintMessageReady(); the
         // member variable is used by the helper method.
-        message->rawUnsentBytes =
-            message->rawLength() +
-            (message->PACKET_HEADER_LENGTH * message->getNumPackets());
+        message->unsentBytes = message->rawLength();
         hintMessageReady(message, lock, lock_message);
     } else {
         // The message is already considered "done" so the UNKNOWN packet must
@@ -311,58 +314,62 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
 void
 Sender::sendMessage(OutboundMessage* message, Driver::Address destination)
 {
-    SpinLock::UniqueLock lock(mutex);
-    SpinLock::Lock lock_message(message->mutex);
+    // Prepare the message
+    {
+        SpinLock::UniqueLock lock(mutex);
+        SpinLock::Lock lock_message(message->mutex);
+        assert(message->driver == transport->driver);
+        // Allocate a new message id
+        Protocol::MessageId id(transportId, nextMessageSequenceNumber++);
+        lock.unlock();  // End sender critical section.
 
-    assert(message->driver == transport->driver);
+        Policy::Unscheduled policy = policyManager->getUnscheduledPolicy(
+            destination, message->rawLength());
 
-    Protocol::MessageId id(transportId, nextMessageSequenceNumber++);
-    outboundMessages.insert({id, message});
-    messageTimeouts.setTimeout(&message->messageTimeout);
-    pingTimeouts.setTimeout(&message->pingTimeout);
-    // Need to set the rawUnsentBytes before calling hintMessageReady(); the
-    // member variable is used by the helper method.
-    message->rawUnsentBytes =
-        message->rawLength() +
-        (message->PACKET_HEADER_LENGTH * message->getNumPackets());
-    hintMessageReady(message, lock, lock_message);
-    lock.unlock();  // End sender critical section.
+        message->id = id;
+        message->destination = destination;
+        message->state.store(OutboundMessage::State::IN_PROGRESS);
+        message->grantIndex = Util::downCast<uint16_t>(
+            ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
+             message->PACKET_DATA_LENGTH));
+        message->priority = policy.priority;
+        message->unsentBytes = message->rawLength();
 
-    message->state.store(OutboundMessage::State::IN_PROGRESS);
-    message->id = id;
-    message->destination = destination;
-    uint32_t unscheduledBytes =
-        RTT_TIME_US * (message->driver->getBandwidth() / 8);
+        uint32_t actualMessageLen = 0;
+        // fill out metadata.
+        for (uint16_t i = 0; i < message->getNumPackets(); ++i) {
+            Driver::Packet* packet = message->getPacket(i);
+            if (packet == nullptr) {
+                PANIC(
+                    "Incomplete message with id (%lu:%lu); missing packet "
+                    "at offset %d; this shouldn't happen.",
+                    message->id.transportId, message->id.sequence,
+                    i * message->PACKET_DATA_LENGTH);
+            }
 
-    uint32_t actualMessageLen = 0;
-    // fill out metadata.
-    for (uint16_t i = 0; i < message->getNumPackets(); ++i) {
-        Driver::Packet* packet = message->getPacket(i);
-        if (packet == nullptr) {
-            PANIC(
-                "Incomplete message with id (%lu:%lu); missing packet "
-                "at offset %d; this shouldn't happen.",
-                message->id.transportId, message->id.sequence,
-                i * message->PACKET_DATA_LENGTH);
+            packet->address = message->destination;
+            new (packet->payload) Protocol::Packet::DataHeader(
+                message->id, message->rawLength(), policy.version,
+                message->grantIndex, i);
+            actualMessageLen +=
+                (packet->length - message->PACKET_HEADER_LENGTH);
         }
 
-        packet->address = message->destination;
-        packet->priority = 0;
-        new (packet->payload)
-            Protocol::Packet::DataHeader(message->id, message->rawLength(), i);
-        actualMessageLen += (packet->length - message->PACKET_HEADER_LENGTH);
+        // perform sanity checks.
+        assert(message->rawLength() == actualMessageLen);
+        assert(message->PACKET_HEADER_LENGTH ==
+               sizeof(Protocol::Packet::DataHeader));
     }
 
-    // perform sanity checks.
-    assert(message->rawLength() == actualMessageLen);
-    assert(message->PACKET_HEADER_LENGTH ==
-           sizeof(Protocol::Packet::DataHeader));
-
-    message->grantIndex = unscheduledBytes / message->PACKET_DATA_LENGTH;
-    message->grantIndex =
-        std::min(message->grantIndex, message->getNumPackets());
-    // TODO(cstlee): handle case when unscheduledBytes is less than 1 packet.
-    assert(message->grantIndex != 0);
+    // Queue the message for sending
+    {
+        SpinLock::UniqueLock lock(mutex);
+        SpinLock::Lock lock_message(message->mutex);
+        outboundMessages.insert({message->id, message});
+        messageTimeouts.setTimeout(&message->messageTimeout);
+        pingTimeouts.setTimeout(&message->pingTimeout);
+        hintMessageReady(message, lock, lock_message);
+    }
 }
 
 /**
@@ -480,6 +487,12 @@ Sender::trySend()
         return;
     }
 
+    /* The goal is to send out packets for messages that have bytes that have
+     * been "granted" (both scheduled and unscheduled grants).  Messages with
+     * the fewest remaining bytes to send (unsentBytes) are sent first (SRPT).
+     * Each time this method is called we will try to send enough packet to keep
+     * the NIC busy but not too many as to cause excessive queue in the NIC.
+     */
     SpinLock::Lock lock(mutex);
     uint32_t queuedBytesEstimate = transport->driver->getQueuedBytes();
     auto it = readyQueue.begin();
@@ -497,9 +510,12 @@ Sender::trySend()
                 break;
             }
             // ... if not, send away!
+            packet->priority = message.priority;
             message.driver->sendPacket(packet);
-            assert(message.rawUnsentBytes >= packet->length);
-            message.rawUnsentBytes -= packet->length;
+            uint32_t packetDataBytes =
+                packet->length - message.PACKET_HEADER_LENGTH;
+            assert(message.unsentBytes >= packetDataBytes);
+            message.unsentBytes -= packetDataBytes;
             ++message.sentIndex;
         }
         if (message.sentIndex >= message.getNumPackets()) {
@@ -551,7 +567,7 @@ Sender::hintMessageReady(OutboundMessage* message,
     auto it = readyQueue.begin();
     while (it != readyQueue.end()) {
         SpinLock::Lock lock_message_other(it->mutex);
-        if (it->rawUnsentBytes > message->rawUnsentBytes) {
+        if (it->unsentBytes > message->unsentBytes) {
             break;
         }
         ++it;

@@ -24,7 +24,9 @@
 
 #include "ControlPacket.h"
 #include "InboundMessage.h"
+#include "Intrusive.h"
 #include "ObjectPool.h"
+#include "Policy.h"
 #include "Protocol.h"
 #include "SpinLock.h"
 #include "Timeout.h"
@@ -43,7 +45,8 @@ namespace Core {
  */
 class Receiver {
   public:
-    explicit Receiver(Transport* transport, uint64_t messageTimeoutCycles,
+    explicit Receiver(Transport* transport, Policy::Manager* policyManager,
+                      uint64_t messageTimeoutCycles,
                       uint64_t resendIntervalCycles);
     virtual ~Receiver();
     virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
@@ -87,8 +90,6 @@ class Receiver {
     void checkMessageTimeouts();
     void checkResendTimeouts();
     void schedule();
-    void sendGrantPacket(InboundMessage* message, Driver* driver,
-                         const SpinLock::Lock& lock_message);
 
     /// Mutex for monitor-style locking of Receiver state.
     SpinLock mutex;
@@ -96,10 +97,16 @@ class Receiver {
     /// Transport of which this Receiver is a part.
     Transport* transport;
 
+    /// Provider of network packet priority and grant policy decisions.
+    Policy::Manager* policyManager;
+
     /// Tracks the set of inbound messages being received by this Receiver.
     std::unordered_map<Protocol::MessageId, InboundMessage*,
                        Protocol::MessageId::Hasher>
         inboundMessages;
+
+    /// List of inbound messages that require grants to complete.
+    Intrusive::List<InboundMessage> scheduledMessages;
 
     /// InboundMessage objects to be processed by the transport.
     struct {

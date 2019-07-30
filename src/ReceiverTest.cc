@@ -24,12 +24,14 @@
 #include <Homa/Debug.h>
 
 #include "Mock/MockDriver.h"
+#include "Mock/MockPolicy.h"
 #include "Transport.h"
 
 namespace Homa {
 namespace Core {
 namespace {
 
+using ::testing::_;
 using ::testing::Eq;
 using ::testing::InSequence;
 using ::testing::Matcher;
@@ -43,16 +45,18 @@ class ReceiverTest : public ::testing::Test {
     ReceiverTest()
         : mockDriver()
         , mockPacket(&payload)
+        , mockPolicyManager()
         , payload()
         , receiver()
         , savedLogPolicy(Debug::getLogPolicy())
     {
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
-        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
+        ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1027));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         transport = new Transport(&mockDriver, 1);
         receiver = transport->receiver.get();
+        receiver->policyManager = &mockPolicyManager;
         receiver->messageTimeouts.timeoutIntervalCycles = 1000;
         receiver->resendTimeouts.timeoutIntervalCycles = 100;
         PerfUtils::Cycles::mockTscValue = 10000;
@@ -68,6 +72,7 @@ class ReceiverTest : public ::testing::Test {
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
+    NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;
     char payload[1028];
     Receiver* receiver;
     Transport* transport;
@@ -76,96 +81,146 @@ class ReceiverTest : public ::testing::Test {
 
 TEST_F(ReceiverTest, handleDataPacket_basic)
 {
-    // Setup registered op
-    Protocol::MessageId id(42, 32);
-    Protocol::OpId opId = {0, 0};
-    Transport::Op* op =
-        transport->opPool.construct(transport, &mockDriver, opId);
+    // Initial Messages [0, 1, 2]
+    InboundMessage* others[3];
+    for (int i = 0; i < 3; ++i) {
+        others[i] = receiver->messagePool.construct(
+            &mockDriver, sizeof(Protocol::Packet::DataHeader), 10000);
+        receiver->scheduledMessages.push_back(&others[i]->scheduledMessageNode);
+    }
+    others[0]->unreceivedBytes = 1100;
+    others[1]->unreceivedBytes = 1500;
+    others[2]->unreceivedBytes = 5000;
+
     InboundMessage* message = nullptr;
+    const Protocol::MessageId id(42, 33);
+    const uint32_t totalMessageLength = 3500;
+    const uint8_t policyVersion = 1;
+    const uint16_t HEADER_SIZE = sizeof(Protocol::Packet::DataHeader);
 
-    EXPECT_TRUE(receiver->inboundMessages.empty());
-    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
-
-    // receive packet 1
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
+    header->common.opcode = Protocol::Packet::DATA;
     header->common.messageId = id;
-    header->index = 1;
-    header->totalLength = 1420;
-    std::string addressStr("remote-location");
-    mockPacket.address = (Driver::Address)22;
+    header->totalLength = totalMessageLength;
+    header->policyVersion = policyVersion;
+    header->unscheduledIndexLimit = 1;
+    mockPacket.address = Driver::Address(22);
 
+    // -------------------------------------------------------------------------
+    // Receive packet[1]. New message. Scheduled before 2.
+    header->index = 1;
+    mockPacket.length = HEADER_SIZE + 1000;
+    EXPECT_CALL(mockPolicyManager,
+                signalNewMessage(Eq(mockPacket.address), Eq(policyVersion),
+                                 Eq(totalMessageLength)))
+        .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(0);
 
+    // TEST CALL
     receiver->handleDataPacket(&mockPacket, &mockDriver);
+    // ---------
 
-    EXPECT_FALSE(receiver->inboundMessages.empty());
-    auto it = receiver->inboundMessages.find(id);
-    EXPECT_NE(receiver->inboundMessages.end(), it);
-    message = it->second;
-    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
-    EXPECT_EQ(mockPacket.address, message->source);
-    EXPECT_EQ(2U, message->numExpectedPackets);
-    EXPECT_EQ(1420U, message->messageLength);
-    EXPECT_EQ(1U, message->getNumPackets());
-    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
-    EXPECT_TRUE(message->newPacket);
+    ASSERT_NE(receiver->inboundMessages.end(),
+              receiver->inboundMessages.find(id));
+    message = receiver->inboundMessages.find(id)->second;
+    EXPECT_EQ(id, message->id);
+    EXPECT_EQ(totalMessageLength, message->messageLength);
+    EXPECT_EQ(4U, message->numExpectedPackets);
     EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
-
-    Mock::VerifyAndClearExpectations(&mockDriver);
-
-    // receive packet 1 again; duplicate packet
-    message->newPacket = false;
-
-    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-        .Times(1);
-
-    receiver->handleDataPacket(&mockPacket, &mockDriver);
-
-    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
-    EXPECT_TRUE(message->occupied.test(1));
     EXPECT_EQ(1U, message->getNumPackets());
-    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
-    EXPECT_FALSE(message->newPacket);
-    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
-
+    EXPECT_EQ(2500U, message->unreceivedBytes);
+    EXPECT_TRUE(
+        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
+    EXPECT_EQ(&others[1]->scheduledMessageNode,
+              message->scheduledMessageNode.prev);
+    EXPECT_EQ(&others[2]->scheduledMessageNode,
+              message->scheduledMessageNode.next);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
-    // receive packet 0; complete the message
-    header->index = 0;
-    message->newPacket = false;
-
-    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-        .Times(0);
-
-    receiver->handleDataPacket(&mockPacket, &mockDriver);
-
-    EXPECT_FALSE(receiver->receivedMessages.queue.empty());
-    EXPECT_EQ(message, &receiver->receivedMessages.queue.back());
-    EXPECT_EQ(2U, message->getNumPackets());
-    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
-    EXPECT_TRUE(message->newPacket);
-    EXPECT_EQ(InboundMessage::State::COMPLETED, message->state);
-
-    Mock::VerifyAndClearExpectations(&mockDriver);
-
-    // receive packet 0 again on a complete message
-    message->newPacket = false;
-    receiver->receivedMessages.queue.clear();
-
+    // -------------------------------------------------------------------------
+    // Receive packet[1]. Duplicate.
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
-    EXPECT_CALL(mockDriver,
-                getAddress(Matcher<std::string const*>(Pointee(addressStr))))
+
+    // TEST CALL
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    // ---------
+
+    EXPECT_EQ(1U, message->getNumPackets());
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // -------------------------------------------------------------------------
+    // Receive packet[2]. Scheduled unchanged (before 2).
+    header->index = 2;
+    mockPacket.length = HEADER_SIZE + 1000;
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(0);
 
+    // TEST CALL
     receiver->handleDataPacket(&mockPacket, &mockDriver);
+    // ---------
 
-    EXPECT_FALSE(message->newPacket);
-    EXPECT_TRUE(receiver->receivedMessages.queue.empty());
+    EXPECT_EQ(2U, message->getNumPackets());
+    EXPECT_EQ(1500U, message->unreceivedBytes);
+    EXPECT_TRUE(
+        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
+    EXPECT_EQ(&others[1]->scheduledMessageNode,
+              message->scheduledMessageNode.prev);
+    EXPECT_EQ(&others[2]->scheduledMessageNode,
+              message->scheduledMessageNode.next);
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // -------------------------------------------------------------------------
+    // Receive packet[3]. Scheduled before 0.
+    header->index = 3;
+    mockPacket.length = HEADER_SIZE + 500;
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(0);
+
+    // TEST CALL
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    // ---------
+
+    EXPECT_EQ(3U, message->getNumPackets());
+    EXPECT_EQ(1000U, message->unreceivedBytes);
+    EXPECT_TRUE(
+        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
+    EXPECT_EQ(&others[0]->scheduledMessageNode,
+              message->scheduledMessageNode.next);
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // -------------------------------------------------------------------------
+    // Receive packet[0]. Finished.
+    header->index = 0;
+    mockPacket.length = HEADER_SIZE + 1000;
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(0);
+
+    // TEST CALL
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    // ---------
+
+    EXPECT_EQ(4U, message->getNumPackets());
+    EXPECT_EQ(0U, message->unreceivedBytes);
+    EXPECT_FALSE(
+        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
+    EXPECT_EQ(InboundMessage::State::COMPLETED, message->state);
+    EXPECT_EQ(message, &receiver->receivedMessages.queue.back());
+    Mock::VerifyAndClearExpectations(&mockDriver);
+
+    // -------------------------------------------------------------------------
+    // Receive packet[0]. Already finished.
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    // TEST CALL
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    // ---------
+
     Mock::VerifyAndClearExpectations(&mockDriver);
 }
 
@@ -173,16 +228,18 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 {
     Protocol::MessageId id(42, 32);
     InboundMessage* message = nullptr;
+    const uint16_t HEADER_SIZE = sizeof(Protocol::Packet::DataHeader);
 
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     header->common.messageId = id;
     header->index = 0;
     std::string addressStr("remote-location");
-    mockPacket.address = (Driver::Address)22;
+    mockPacket.address = Driver::Address(22);
 
     // 1 partial packet
     header->totalLength = 450;
+    mockPacket.length = HEADER_SIZE + 450;
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     message = receiver->inboundMessages.find(id)->second;
     EXPECT_EQ(1U, message->numExpectedPackets);
@@ -193,6 +250,7 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 
     // 1 full packet
     header->totalLength = 1000;
+    mockPacket.length = HEADER_SIZE + 1000;
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     message = receiver->inboundMessages.find(id)->second;
     EXPECT_EQ(1U, message->numExpectedPackets);
@@ -203,11 +261,54 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 
     // 1 full packet + 1 partial packet
     header->totalLength = 1450;
+    mockPacket.length = HEADER_SIZE + 1000;
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     message = receiver->inboundMessages.find(id)->second;
     EXPECT_EQ(2U, message->numExpectedPackets);
     EXPECT_EQ(1450U, message->messageLength);
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
+}
+
+TEST_F(ReceiverTest, handleDataPacket_unscheduled)
+{
+    InboundMessage* message = nullptr;
+    const Protocol::MessageId id(42, 33);
+    const uint32_t totalMessageLength = 3500;
+    const uint8_t policyVersion = 1;
+    const uint16_t HEADER_SIZE = sizeof(Protocol::Packet::DataHeader);
+
+    Protocol::Packet::DataHeader* header =
+        static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
+    header->common.opcode = Protocol::Packet::DATA;
+    header->common.messageId = id;
+    header->totalLength = totalMessageLength;
+    header->policyVersion = policyVersion;
+    header->unscheduledIndexLimit = 4;  //<--- Fully unscheduled message
+    mockPacket.address = Driver::Address(22);
+
+    header->index = 1;
+    mockPacket.length = HEADER_SIZE + 1000;
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(0);
+
+    // TEST CALL
+    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    // ---------
+
+    ASSERT_NE(receiver->inboundMessages.end(),
+              receiver->inboundMessages.find(id));
+    message = receiver->inboundMessages.find(id)->second;
+    EXPECT_EQ(id, message->id);
+    EXPECT_EQ(totalMessageLength, message->messageLength);
+    EXPECT_EQ(4U, message->numExpectedPackets);
+    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
+    EXPECT_EQ(1U, message->getNumPackets());
+    EXPECT_EQ(2500U, message->unreceivedBytes);
+    EXPECT_FALSE(
+        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
+    Mock::VerifyAndClearExpectations(&mockDriver);
 }
 
 TEST_F(ReceiverTest, handleBusyPacket_basic)
@@ -216,7 +317,6 @@ TEST_F(ReceiverTest, handleBusyPacket_basic)
     InboundMessage* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
-    message->newPacket = false;
     receiver->inboundMessages.insert({id, message});
 
     Protocol::Packet::BusyHeader* busyHeader =
@@ -337,10 +437,12 @@ TEST_F(ReceiverTest, dropMessage)
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
     receiver->inboundMessages.insert({id, message});
+    receiver->scheduledMessages.push_back(&message->scheduledMessageNode);
     receiver->messageTimeouts.list.push_back(&message->messageTimeout.node);
     receiver->resendTimeouts.list.push_back(&message->resendTimeout.node);
     EXPECT_EQ(1U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(message, receiver->inboundMessages.find(id)->second);
+    EXPECT_FALSE(receiver->scheduledMessages.empty());
     EXPECT_FALSE(receiver->messageTimeouts.list.empty());
     EXPECT_FALSE(receiver->resendTimeouts.list.empty());
 
@@ -349,14 +451,9 @@ TEST_F(ReceiverTest, dropMessage)
     EXPECT_EQ(0U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(receiver->inboundMessages.end(),
               receiver->inboundMessages.find(id));
+    EXPECT_TRUE(receiver->scheduledMessages.empty());
     EXPECT_TRUE(receiver->messageTimeouts.list.empty());
     EXPECT_TRUE(receiver->resendTimeouts.list.empty());
-}
-
-TEST_F(ReceiverTest, poll)
-{
-    // Nothing to test.
-    receiver->poll();
 }
 
 TEST_F(ReceiverTest, sendDonePacket)
@@ -563,32 +660,31 @@ TEST_F(ReceiverTest, checkResendTimeouts_empty)
 
 TEST_F(ReceiverTest, schedule)
 {
-    Protocol::MessageId id(42, 32);
-    Driver::Address sourceAddr = (Driver::Address)22;
-    uint32_t TOTAL_MESSAGE_LEN = 9000;
+    InboundMessage* message[3];
+    for (uint64_t i = 0; i < 3; ++i) {
+        Protocol::MessageId id = {42, 10 + i};
+        message[i] = receiver->messagePool.construct(
+            &mockDriver, sizeof(Protocol::Packet::DataHeader), 3000);
+        message[i]->id = id;
+        message[i]->priority = 10;  // bogus number that should be reset.
+        message[i]->grantIndexLimit = 1;
+        message[i]->numExpectedPackets = 3;
+        receiver->scheduledMessages.push_back(
+            &message[i]->scheduledMessageNode);
+    }
+    Protocol::Packet::GrantHeader* header =
+        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
+    Policy::Scheduled policy;
 
-    InboundMessage* message =
-        receiver->messagePool.construct(&mockDriver, 24, TOTAL_MESSAGE_LEN);
-    message->id = id;
-    message->source = sourceAddr;
-    message->numPackets = 1;
-    EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
-    EXPECT_EQ(1U, message->getNumPackets());
-    EXPECT_FALSE(message->newPacket);
-
-    receiver->inboundMessages.insert({id, message});
-
-    EXPECT_CALL(mockDriver, allocPacket).Times(0);
-    EXPECT_CALL(mockDriver, sendPacket).Times(0);
-    EXPECT_CALL(mockDriver, releasePackets).Times(0);
-
-    receiver->schedule();
-
-    Mock::VerifyAndClearExpectations(&mockDriver);
-
-    EXPECT_FALSE(message->newPacket);
-    message->newPacket = true;
-
+    //-------------------------------------------------------------------------
+    // Test:
+    //      - more grantable packets than needed
+    //      - more messages than overcommit level
+    policy.maxScheduledPriority = 0;
+    policy.degreeOvercommitment = 1;
+    policy.scheduledByteLimit = 5000;
+    EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
+        .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
     EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
@@ -596,70 +692,70 @@ TEST_F(ReceiverTest, schedule)
 
     receiver->schedule();
 
+    EXPECT_EQ(0, message[0]->priority);
+    EXPECT_EQ(3, message[0]->grantIndexLimit);
+    EXPECT_EQ(message[0]->id, header->common.messageId);
+
     Mock::VerifyAndClearExpectations(&mockDriver);
 
-    EXPECT_FALSE(message->newPacket);
-}
+    //-------------------------------------------------------------------------
+    // Test:
+    //      - fewer grantable packets than needed (message[1])
+    //      - no new grants needed (message[0])
+    policy.maxScheduledPriority = 1;
+    policy.degreeOvercommitment = 2;
+    policy.scheduledByteLimit = 1001;
+    EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
+        .WillOnce(Return(policy));
+    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
 
-TEST_F(ReceiverTest, sendGrantPacket)
-{
-    Protocol::MessageId msgId(42, 32);
-    Driver::Address sourceAddr = (Driver::Address)22;
-    uint32_t TOTAL_MESSAGE_LEN = 9000;
+    receiver->schedule();
 
-    InboundMessage message(&mockDriver, 24, TOTAL_MESSAGE_LEN);
-    message.id = msgId;
-    message.source = sourceAddr;
-    message.numExpectedPackets = 9;
-    EXPECT_EQ(1000U, message.PACKET_DATA_LENGTH);
+    EXPECT_EQ(1, message[0]->priority);
+    EXPECT_EQ(0, message[1]->priority);
+    EXPECT_EQ(2, message[1]->grantIndexLimit);
+    EXPECT_EQ(message[1]->id, header->common.messageId);
 
-    InSequence _seq;
+    Mock::VerifyAndClearExpectations(&mockDriver);
 
-    {
-        // GRANT 5 more packets (up to index 6)
-        message.numPackets = 1;
+    //-------------------------------------------------------------------------
+    // Test:
+    //      - fewer priorities than overcommit/messages
+    policy.maxScheduledPriority = 1;
+    policy.degreeOvercommitment = 4;
+    policy.scheduledByteLimit = 1;
+    EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
+        .WillOnce(Return(policy));
+    EXPECT_CALL(mockDriver, sendPacket(_)).Times(0);
 
-        EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-        EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
-        EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-            .Times(1);
+    receiver->schedule();
 
-        SpinLock::Lock lock_message(message.mutex);
-        receiver->sendGrantPacket(&message, &mockDriver, lock_message);
+    EXPECT_EQ(1, message[0]->priority);
+    EXPECT_EQ(0, message[1]->priority);
+    EXPECT_EQ(0, message[2]->priority);
 
-        Protocol::Packet::GrantHeader* header =
-            (Protocol::Packet::GrantHeader*)payload;
-        EXPECT_EQ(msgId, header->common.messageId);
-        EXPECT_EQ(6U, header->indexLimit);
-        EXPECT_EQ(6U, message.grantIndexLimit);
-        EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);
-        EXPECT_EQ(sourceAddr, mockPacket.address);
+    Mock::VerifyAndClearExpectations(&mockDriver);
 
-        Mock::VerifyAndClearExpectations(&mockDriver);
-    }
+    //-------------------------------------------------------------------------
+    // Test:
+    //      - more priorities than overcommit/messages
+    policy.maxScheduledPriority = 5;
+    policy.degreeOvercommitment = 6;
+    policy.scheduledByteLimit = 1;
+    EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
+        .WillOnce(Return(policy));
+    EXPECT_CALL(mockDriver, sendPacket(_)).Times(0);
 
-    {
-        // GRANT 1 more packet; MAX packet index 9.
-        message.numPackets = 8;
+    receiver->schedule();
 
-        EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-        EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
-        EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-            .Times(1);
+    EXPECT_EQ(2, message[0]->priority);
+    EXPECT_EQ(1, message[1]->priority);
+    EXPECT_EQ(0, message[2]->priority);
 
-        SpinLock::Lock lock_message(message.mutex);
-        receiver->sendGrantPacket(&message, &mockDriver, lock_message);
-
-        Protocol::Packet::GrantHeader* header =
-            (Protocol::Packet::GrantHeader*)payload;
-        EXPECT_EQ(msgId, header->common.messageId);
-        EXPECT_EQ(9U, header->indexLimit);
-        EXPECT_EQ(9U, message.grantIndexLimit);
-        EXPECT_EQ(sizeof(Protocol::Packet::GrantHeader), mockPacket.length);
-        EXPECT_EQ(sourceAddr, mockPacket.address);
-
-        Mock::VerifyAndClearExpectations(&mockDriver);
-    }
+    Mock::VerifyAndClearExpectations(&mockDriver);
 }
 
 }  // namespace
