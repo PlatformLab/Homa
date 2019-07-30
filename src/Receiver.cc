@@ -17,6 +17,8 @@
 
 #include <Cycles.h>
 
+#include "Transport.h"
+
 namespace Homa {
 namespace Core {
 
@@ -29,7 +31,7 @@ namespace Core {
  *      Provides information about the grant and network priority policies.
  * @param messageTimeoutCycles
  *      Number of cycles of inactivity to wait before this Receiver declares an
- *      InboundMessage receive failure.
+ *      Receiver::Message receive failure.
  * @param resendIntervalCycles
  *      Number of cycles of inactivity to wait between requesting retransmission
  *      of un-received parts of a message.
@@ -60,7 +62,7 @@ Receiver::~Receiver()
     messageTimeouts.list.clear();
     resendTimeouts.list.clear();
     for (auto it = inboundMessages.begin(); it != inboundMessages.end(); ++it) {
-        InboundMessage* message = it->second;
+        Message* message = it->second;
         messagePool.destroy(message);
     }
 }
@@ -83,7 +85,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     uint16_t dataHeaderLength = sizeof(Protocol::Packet::DataHeader);
     Protocol::MessageId id = header->common.messageId;
 
-    InboundMessage* message = nullptr;
+    Message* message = nullptr;
 
     auto it = inboundMessages.find(id);
     if (it != inboundMessages.end()) {
@@ -120,7 +122,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     assert(id == message->id);
 
     // All packets already received; must be a duplicate.
-    if (message->state == InboundMessage::State::COMPLETED) {
+    if (message->state == Message::State::COMPLETED) {
         lock.unlock();  // End Receiver critical section
         // drop packet
         driver->releasePackets(&packet, 1);
@@ -173,7 +175,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             // Message received
             scheduledMessages.remove(&message->scheduledMessageNode);
             lock.unlock();  // End Receiver critical section
-            message->state.store(InboundMessage::State::COMPLETED);
+            message->state.store(Message::State::COMPLETED);
             SpinLock::Lock lock_received_messages(receivedMessages.mutex);
             receivedMessages.queue.push_back(&message->receivedMessageNode);
         }
@@ -204,7 +206,7 @@ Receiver::handleBusyPacket(Driver::Packet* packet, Driver* driver)
 
     auto it = inboundMessages.find(id);
     if (it != inboundMessages.end()) {
-        InboundMessage* message = it->second;
+        Message* message = it->second;
 
         SpinLock::Lock lock_message(message->mutex);
         // Sender has replied BUSY to our RESEND request; consider this message
@@ -235,7 +237,7 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
 
     auto it = inboundMessages.find(id);
     if (it != inboundMessages.end()) {
-        InboundMessage* message = it->second;
+        Message* message = it->second;
 
         SpinLock::Lock lock_message(message->mutex);
         // Sender is checking on this message; consider it still active.
@@ -259,22 +261,21 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
 }
 
 /**
- * Return a handle to a new received InboundMessage.
+ * Return a handle to a new received Message.
  *
  * The Transport should regularly call this method to insure incoming messages
  * are processed.
  *
  * @return
- *      A new InboundMessage which has been at least partially received, if
- *      available; otherwise, nullptr.
+ *      A new Message which has been received, if available; otherwise, nullptr.
  *
  * @sa dropMessage()
  */
-InboundMessage*
+Receiver::Message*
 Receiver::receiveMessage()
 {
     SpinLock::Lock lock_received_messages(receivedMessages.mutex);
-    InboundMessage* message = nullptr;
+    Message* message = nullptr;
     if (!receivedMessages.queue.empty()) {
         message = &receivedMessages.queue.front();
         receivedMessages.queue.pop_front();
@@ -283,14 +284,14 @@ Receiver::receiveMessage()
 }
 
 /**
- * Inform the Receiver that an InboundMessage returned by receiveMessage() is
- * not needed and can be dropped.
+ * Inform the Receiver that an Message returned by receiveMessage() is not
+ * needed and can be dropped.
  *
  * @param message
- *      InboundMessage which will be dropped.
+ *      Message which will be dropped.
  */
 void
-Receiver::dropMessage(InboundMessage* message)
+Receiver::dropMessage(Receiver::Message* message)
 {
     SpinLock::Lock lock(mutex);
     message->mutex.lock();
@@ -328,7 +329,7 @@ Receiver::checkMessageTimeouts()
         if (messageTimeouts.list.empty()) {
             break;
         }
-        InboundMessage* message = &messageTimeouts.list.front();
+        Message* message = &messageTimeouts.list.front();
         SpinLock::UniqueLock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->messageTimeout.hasElapsed()) {
@@ -338,7 +339,7 @@ Receiver::checkMessageTimeouts()
         scheduledMessages.remove(&message->scheduledMessageNode);
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         resendTimeouts.cancelTimeout(&message->resendTimeout);
-        if (message->state == InboundMessage::State::IN_PROGRESS) {
+        if (message->state == Message::State::IN_PROGRESS) {
             // Message timed out before being fully received; drop the message.
             lock_message.release();
             if (inboundMessages.erase(message->id) > 0) {
@@ -347,7 +348,7 @@ Receiver::checkMessageTimeouts()
         } else {
             // Message timed out but we already made it available to the
             // Transport; let the Transport know.
-            message->state.store(InboundMessage::State::DROPPED);
+            message->state.store(Message::State::DROPPED);
             transport->hintUpdatedOp(message->op);
         }
     }
@@ -367,14 +368,14 @@ Receiver::checkResendTimeouts()
         if (resendTimeouts.list.empty()) {
             break;
         }
-        InboundMessage* message = &resendTimeouts.list.front();
+        Message* message = &resendTimeouts.list.front();
         SpinLock::Lock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->resendTimeout.hasElapsed()) {
             break;
         }
         // Found expired timeout.
-        if (message->state == InboundMessage::State::IN_PROGRESS) {
+        if (message->state == Message::State::IN_PROGRESS) {
             resendTimeouts.setTimeout(&message->resendTimeout);
         } else {
             resendTimeouts.cancelTimeout(&message->resendTimeout);
@@ -453,7 +454,7 @@ Receiver::schedule()
     int slot = 0;
     while (it != scheduledMessages.end() &&
            slot < policy.degreeOvercommitment) {
-        InboundMessage* message = &(*it);
+        Message* message = &(*it);
         SpinLock::Lock lock_message(message->mutex);
         message->priority =
             std::max(0, policy.maxScheduledPriority - slot - unusedPriorities);

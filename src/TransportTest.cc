@@ -92,7 +92,7 @@ class TransportTest : public ::testing::Test {
     Transport* transport;
     NiceMock<Homa::Mock::MockSender>* mockSender;
     NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
-    Tub<InboundMessage> inMessage;
+    Tub<Receiver::Message> inMessage;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
 
@@ -154,7 +154,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_DROPPED)
 {
     Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    op->inMessage->state.store(InboundMessage::State::DROPPED);
+    op->inMessage->state.store(Receiver::Message::State::DROPPED);
 
     {
         SpinLock::Lock lock(op->mutex);
@@ -443,7 +443,7 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
 {
     Transport::Op* op = transport->opPool.construct(
         transport, &mockDriver, Protocol::OpId(0, 0), false);
-    InboundMessage inMessage(&mockDriver, 0, 0);
+    Receiver::Message inMessage(&mockDriver, 0, 0);
     inMessage.setPacket(0, &mockPacket);
 
     op->retained = true;
@@ -543,7 +543,7 @@ TEST_F(TransportTest, receiveOp)
     Transport::Op* serverOp =
         transport->opPool.construct(transport, &mockDriver, opId, true);
 
-    InboundMessage message(transport->driver,
+    Receiver::Message message(transport->driver,
                            sizeof(Protocol::Packet::DataHeader), 0);
     serverOp->inMessage = &message;
     serverOp->inMessage->setPacket(0, &mockPacket);
@@ -920,7 +920,7 @@ TEST_F(TransportTest, cleanupOps)
         transport, &mockDriver, Protocol::OpId(2, 1));
     serverOp->outMessage.id = {22, 2};
     transport->activeOps.insert(serverOp);
-    InboundMessage message(&mockDriver, 0, 0);
+    Receiver::Message message(&mockDriver, 0, 0);
     serverOp->inMessage = &message;
     // Remote Op
     Transport::Op* remoteOp = transport->opPool.construct(

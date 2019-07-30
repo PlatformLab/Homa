@@ -22,7 +22,6 @@
 #include "Cycles.h"
 
 #include "Protocol.h"
-#include "Receiver.h"
 #include "Sender.h"
 
 namespace Homa {
@@ -63,7 +62,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
             assert(inMessage != nullptr);
             const Protocol::Message::Header* outboundHeader =
                 outMessage.getHeader<Protocol::Message::Header>();
-            if (inMessage->getState() == InboundMessage::State::DROPPED) {
+            if (inMessage->getState() == Receiver::Message::State::DROPPED) {
                 state.store(State::DROPPED);
                 transport->hintUpdatedOp(this);
             } else if ((outState == OutboundMessage::State::COMPLETED) ||
@@ -366,7 +365,7 @@ Transport::processPackets()
 void
 Transport::processInboundMessages()
 {
-    for (InboundMessage* message = receiver->receiveMessage();
+    for (Receiver::Message* message = receiver->receiveMessage();
          message != nullptr; message = receiver->receiveMessage()) {
         const Protocol::Message::Header* header =
             message->getHeader<Protocol::Message::Header>();

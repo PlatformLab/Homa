@@ -82,7 +82,7 @@ class ReceiverTest : public ::testing::Test {
 TEST_F(ReceiverTest, handleDataPacket_basic)
 {
     // Initial Messages [0, 1, 2]
-    InboundMessage* others[3];
+    Receiver::Message* others[3];
     for (int i = 0; i < 3; ++i) {
         others[i] = receiver->messagePool.construct(
             &mockDriver, sizeof(Protocol::Packet::DataHeader), 10000);
@@ -92,7 +92,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     others[1]->unreceivedBytes = 1500;
     others[2]->unreceivedBytes = 5000;
 
-    InboundMessage* message = nullptr;
+    Receiver::Message* message = nullptr;
     const Protocol::MessageId id(42, 33);
     const uint32_t totalMessageLength = 3500;
     const uint8_t policyVersion = 1;
@@ -128,7 +128,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(id, message->id);
     EXPECT_EQ(totalMessageLength, message->messageLength);
     EXPECT_EQ(4U, message->numExpectedPackets);
-    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
+    EXPECT_EQ(Receiver::Message::State::IN_PROGRESS, message->state);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
     EXPECT_EQ(1U, message->getNumPackets());
@@ -208,7 +208,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(0U, message->unreceivedBytes);
     EXPECT_FALSE(
         receiver->scheduledMessages.contains(&message->scheduledMessageNode));
-    EXPECT_EQ(InboundMessage::State::COMPLETED, message->state);
+    EXPECT_EQ(Receiver::Message::State::COMPLETED, message->state);
     EXPECT_EQ(message, &receiver->receivedMessages.queue.back());
     Mock::VerifyAndClearExpectations(&mockDriver);
 
@@ -227,7 +227,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 {
     Protocol::MessageId id(42, 32);
-    InboundMessage* message = nullptr;
+    Receiver::Message* message = nullptr;
     const uint16_t HEADER_SIZE = sizeof(Protocol::Packet::DataHeader);
 
     Protocol::Packet::DataHeader* header =
@@ -271,7 +271,7 @@ TEST_F(ReceiverTest, handleDataPacket_numExpectedPackets)
 
 TEST_F(ReceiverTest, handleDataPacket_unscheduled)
 {
-    InboundMessage* message = nullptr;
+    Receiver::Message* message = nullptr;
     const Protocol::MessageId id(42, 33);
     const uint32_t totalMessageLength = 3500;
     const uint8_t policyVersion = 1;
@@ -301,7 +301,7 @@ TEST_F(ReceiverTest, handleDataPacket_unscheduled)
     EXPECT_EQ(id, message->id);
     EXPECT_EQ(totalMessageLength, message->messageLength);
     EXPECT_EQ(4U, message->numExpectedPackets);
-    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message->state);
+    EXPECT_EQ(Receiver::Message::State::IN_PROGRESS, message->state);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
     EXPECT_EQ(1U, message->getNumPackets());
@@ -314,7 +314,7 @@ TEST_F(ReceiverTest, handleDataPacket_unscheduled)
 TEST_F(ReceiverTest, handleBusyPacket_basic)
 {
     Protocol::MessageId id(42, 32);
-    InboundMessage* message =
+    Receiver::Message* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
     receiver->inboundMessages.insert({id, message});
@@ -350,7 +350,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
 {
     Protocol::MessageId id(42, 32);
     Driver::Address mockAddress = 22;
-    InboundMessage* message =
+    Receiver::Message* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
     message->grantIndexLimit = 11;
@@ -413,8 +413,10 @@ TEST_F(ReceiverTest, handlePingPacket_unknown)
 
 TEST_F(ReceiverTest, receiveMessage)
 {
-    InboundMessage* msg0 = receiver->messagePool.construct(&mockDriver, 0, 0);
-    InboundMessage* msg1 = receiver->messagePool.construct(&mockDriver, 0, 0);
+    Receiver::Message* msg0 =
+        receiver->messagePool.construct(&mockDriver, 0, 0);
+    Receiver::Message* msg1 =
+        receiver->messagePool.construct(&mockDriver, 0, 0);
 
     receiver->receivedMessages.queue.push_back(&msg0->receivedMessageNode);
     receiver->receivedMessages.queue.push_back(&msg1->receivedMessageNode);
@@ -433,7 +435,7 @@ TEST_F(ReceiverTest, receiveMessage)
 TEST_F(ReceiverTest, dropMessage)
 {
     Protocol::MessageId id = {42, 32};
-    InboundMessage* message =
+    Receiver::Message* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
     receiver->inboundMessages.insert({id, message});
@@ -459,7 +461,7 @@ TEST_F(ReceiverTest, dropMessage)
 TEST_F(ReceiverTest, sendDonePacket)
 {
     Protocol::MessageId id = {42, 32};
-    InboundMessage* message =
+    Receiver::Message* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->source = (Driver::Address)22;
     message->id = id;
@@ -482,7 +484,7 @@ TEST_F(ReceiverTest, sendDonePacket)
 TEST_F(ReceiverTest, sendErrorPacket)
 {
     Protocol::MessageId id = {42, 32};
-    InboundMessage* message =
+    Receiver::Message* message =
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->source = (Driver::Address)22;
     message->id = id;
@@ -505,7 +507,7 @@ TEST_F(ReceiverTest, sendErrorPacket)
 TEST_F(ReceiverTest, checkMessageTimeouts_basic)
 {
     void* op[3];
-    InboundMessage* message[3];
+    Receiver::Message* message[3];
     for (uint64_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         op[i] = reinterpret_cast<void*>(i);
@@ -523,10 +525,10 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
 
     // Message[0]: Normal timeout: IN_PROGRESS
     message[0]->messageTimeout.expirationCycleTime = 9998;
-    message[0]->state = InboundMessage::State::IN_PROGRESS;
+    message[0]->state = Receiver::Message::State::IN_PROGRESS;
     // Message[1]: Normal timeout: COMPLETED
     message[1]->messageTimeout.expirationCycleTime = 10000;
-    message[1]->state = InboundMessage::State::COMPLETED;
+    message[1]->state = Receiver::Message::State::COMPLETED;
     // Message[2]: No timeout
     message[2]->messageTimeout.expirationCycleTime = 10001;
 
@@ -543,7 +545,7 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     // Message[1]: Normal timeout: COMPLETED
     EXPECT_EQ(nullptr, message[1]->messageTimeout.node.list);
     EXPECT_EQ(nullptr, message[1]->resendTimeout.node.list);
-    EXPECT_EQ(InboundMessage::State::DROPPED, message[1]->getState());
+    EXPECT_EQ(Receiver::Message::State::DROPPED, message[1]->getState());
     EXPECT_EQ(1U, receiver->inboundMessages.count(message[1]->id));
     EXPECT_EQ(2U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(1U, transport->updateHints.ops.count(op[1]));
@@ -566,7 +568,7 @@ TEST_F(ReceiverTest, checkMessageTimeouts_empty)
 
 TEST_F(ReceiverTest, checkResendTimeouts)
 {
-    InboundMessage* message[5];
+    Receiver::Message* message[5];
     for (uint64_t i = 0; i < 5; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messagePool.construct(&mockDriver, 0, 0);
@@ -576,19 +578,19 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     }
 
     // Message[0]: Fully received
-    message[0]->state.store(InboundMessage::State::COMPLETED);
+    message[0]->state.store(Receiver::Message::State::COMPLETED);
     message[0]->resendTimeout.expirationCycleTime = 10000 - 20;
     // Message[1]: DROPPED
-    message[1]->state.store(InboundMessage::State::DROPPED);
+    message[1]->state.store(Receiver::Message::State::DROPPED);
     message[1]->resendTimeout.expirationCycleTime = 10000 - 10;
     // Message[2]: Normal timeout: block on grants
-    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message[2]->state);
+    EXPECT_EQ(Receiver::Message::State::IN_PROGRESS, message[2]->state);
     message[2]->resendTimeout.expirationCycleTime = 10000 - 5;
     // Message[3]: Normal timeout: Send Resends.
     // Message Packets
     //  0123456789
     // [1100001100]
-    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message[3]->state);
+    EXPECT_EQ(Receiver::Message::State::IN_PROGRESS, message[3]->state);
     message[3]->resendTimeout.expirationCycleTime = 10000;
     message[3]->source = (Driver::Address)22;
     message[3]->grantIndexLimit = 10;
@@ -599,7 +601,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
         message[3]->setPacket(i, &mockPacket);
     }
     // Message[4]: No timeout
-    EXPECT_EQ(InboundMessage::State::IN_PROGRESS, message[4]->state);
+    EXPECT_EQ(Receiver::Message::State::IN_PROGRESS, message[4]->state);
     message[4]->resendTimeout.expirationCycleTime = 10001;
 
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
@@ -660,7 +662,7 @@ TEST_F(ReceiverTest, checkResendTimeouts_empty)
 
 TEST_F(ReceiverTest, schedule)
 {
-    InboundMessage* message[3];
+    Receiver::Message* message[3];
     for (uint64_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messagePool.construct(

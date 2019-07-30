@@ -16,26 +16,23 @@
 #ifndef HOMA_CORE_RECEIVER_H
 #define HOMA_CORE_RECEIVER_H
 
-#include "Homa/Driver.h"
-
 #include <atomic>
 #include <deque>
 #include <unordered_map>
 
+#include <Homa/Driver.h>
+
 #include "ControlPacket.h"
-#include "InboundMessage.h"
 #include "Intrusive.h"
+#include "Message.h"
 #include "ObjectPool.h"
 #include "Policy.h"
 #include "Protocol.h"
 #include "SpinLock.h"
 #include "Timeout.h"
-#include "Transport.h"
 
 namespace Homa {
 namespace Core {
-
-// Forward declaration
 
 /**
  * The Receiver processes incoming Data packets, assembling them into messages
@@ -45,6 +42,95 @@ namespace Core {
  */
 class Receiver {
   public:
+    /**
+     * Represents an incoming message that is being assembled or being processed
+     * by the application.
+     */
+    class Message : public Core::Message {
+      public:
+        /**
+         * Defines the possible states of this Message.
+         */
+        enum class State {
+            IN_PROGRESS,  //< Receiver is in the process of receiving this
+                          // message.
+            COMPLETED,    //< Receiver has received the entire message.
+            DROPPED,      //< Message was COMPLETED but the Receiver has lost
+                          //< communication with the Sender.
+        };
+
+        explicit Message(Driver* driver, uint16_t packetHeaderLength,
+                         uint32_t messageLength)
+            : Core::Message(driver, packetHeaderLength, messageLength)
+            , mutex()
+            , id(0, 0)
+            , source()
+            , numExpectedPackets(0)
+            , grantIndexLimit(0)
+            , priority(0)
+            , unreceivedBytes(messageLength)
+            , state(Message::State::IN_PROGRESS)
+            , op(nullptr)
+            , scheduledMessageNode(this)
+            , receivedMessageNode(this)
+            , messageTimeout(this)
+            , resendTimeout(this)
+        {}
+
+        /**
+         * Associate a particular Transport::Op with this Message.  Allows the
+         * receiver to single the Transport about this Message when update
+         * occur.
+         */
+        void registerOp(void* op)
+        {
+            SpinLock::Lock lock(mutex);
+            this->op = op;
+        }
+
+        /**
+         * Return the current state of this message.
+         */
+        State getState() const
+        {
+            return state.load();
+        }
+
+      private:
+        /// Monitor style lock.
+        mutable SpinLock mutex;
+        /// Contains the unique identifier for this message.
+        Protocol::MessageId id;
+        /// Contains source address this message.
+        Driver::Address source;
+        /// Number of packets the message is expected to contain.
+        uint16_t numExpectedPackets;
+        /// The packet index up to which the Receiver as granted.
+        uint16_t grantIndexLimit;
+        /// The network priority at which the Receiver requests Message be sent.
+        uint8_t priority;
+        /// The number of bytes that still need to be received for this Message.
+        uint32_t unreceivedBytes;
+        /// This message's current state.
+        std::atomic<State> state;
+        /// Transport::Op associated with this message.
+        void* op;
+        /// Intrusive structure used by the Receiver to keep track of when this
+        /// message should be issued grants.
+        Intrusive::List<Message>::Node scheduledMessageNode;
+        /// Intrusive structure used by the Receiver to keep track of this
+        /// message when it has been completely received.
+        Intrusive::List<Message>::Node receivedMessageNode;
+        /// Intrusive structure used by the Receiver to keep track when the
+        /// receiving of this message should be considered failed.
+        Timeout<Message> messageTimeout;
+        /// Intrusive structure used by the Receiver to keep track when
+        /// unreceived parts of this message should be re-requested.
+        Timeout<Message> resendTimeout;
+
+        friend class Receiver;
+    };
+
     explicit Receiver(Transport* transport, Policy::Manager* policyManager,
                       uint64_t messageTimeoutCycles,
                       uint64_t resendIntervalCycles);
@@ -52,8 +138,8 @@ class Receiver {
     virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleBusyPacket(Driver::Packet* packet, Driver* driver);
     virtual void handlePingPacket(Driver::Packet* packet, Driver* driver);
-    virtual InboundMessage* receiveMessage();
-    virtual void dropMessage(InboundMessage* message);
+    virtual Receiver::Message* receiveMessage();
+    virtual void dropMessage(Receiver::Message* message);
     virtual void poll();
 
     /**
@@ -64,7 +150,7 @@ class Receiver {
      * @param driver
      *      Driver with which the DONE packet should be sent.
      */
-    static inline void sendDonePacket(InboundMessage* message, Driver* driver)
+    static inline void sendDonePacket(Message* message, Driver* driver)
     {
         SpinLock::Lock lock_message(message->mutex);
         ControlPacket::send<Protocol::Packet::DoneHeader>(
@@ -79,7 +165,7 @@ class Receiver {
      * @param driver
      *      Driver with which the ERROR packet should be sent.
      */
-    static inline void sendErrorPacket(InboundMessage* message, Driver* driver)
+    static inline void sendErrorPacket(Message* message, Driver* driver)
     {
         SpinLock::Lock lock_message(message->mutex);
         ControlPacket::send<Protocol::Packet::ErrorHeader>(
@@ -101,32 +187,32 @@ class Receiver {
     Policy::Manager* policyManager;
 
     /// Tracks the set of inbound messages being received by this Receiver.
-    std::unordered_map<Protocol::MessageId, InboundMessage*,
+    std::unordered_map<Protocol::MessageId, Message*,
                        Protocol::MessageId::Hasher>
         inboundMessages;
 
     /// List of inbound messages that require grants to complete.
-    Intrusive::List<InboundMessage> scheduledMessages;
+    Intrusive::List<Message> scheduledMessages;
 
-    /// InboundMessage objects to be processed by the transport.
+    /// Message objects to be processed by the transport.
     struct {
         /// Monitor style lock.
         SpinLock mutex;
         /// List of completely received messages.
-        Intrusive::List<InboundMessage> queue;
+        Intrusive::List<Message> queue;
     } receivedMessages;
 
-    /// Used to allocate InboundMessage objects.
-    ObjectPool<InboundMessage> messagePool;
+    /// Used to allocate Message objects.
+    ObjectPool<Message> messagePool;
 
-    /// Maintains InboundMessage objects in increasing order of timeout.
-    TimeoutManager<InboundMessage> messageTimeouts;
+    /// Maintains Message objects in increasing order of timeout.
+    TimeoutManager<Message> messageTimeouts;
 
-    /// Maintains InboundMessage object in increase order of resend timeout.
-    TimeoutManager<InboundMessage> resendTimeouts;
+    /// Maintains Message object in increase order of resend timeout.
+    TimeoutManager<Message> resendTimeouts;
 
     /// True if the Receiver is executing schedule(); false, otherwise. Use to
-    /// prevent concurrent calls to trySend() from blocking on eachother.
+    /// prevent concurrent calls to trySend() from blocking on each other.
     std::atomic_flag scheduling = ATOMIC_FLAG_INIT;
 };
 

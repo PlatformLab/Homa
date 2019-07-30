@@ -135,7 +135,7 @@ TEST_F(HomaTest, RemoteOp_isReady_COMPLETED)
     RemoteOp op(transport);
     op.request = nullptr;
     op.response = nullptr;
-    Core::InboundMessage inMessage(&mockDriver, 28, 0);
+    Core::Receiver::Message inMessage(&mockDriver, 28, 0);
     inMessage.id = Protocol::MessageId(42, 32);
     static_cast<Core::Transport::Op*>(op.op)->inMessage = &inMessage;
 
@@ -213,7 +213,7 @@ TEST_F(HomaTest, Transport_receiveServerOp)
     Protocol::MessageId msgId(42, 1);
     Core::Transport::Op* op = transport->internal->opPool.construct(
         transport->internal.get(), transport->internal->driver, opId);
-    Core::InboundMessage inMessage(&mockDriver,
+    Core::Receiver::Message inMessage(&mockDriver,
                                    sizeof(Protocol::Packet::DataHeader), 0);
     inMessage.id = msgId;
     op->inMessage = &inMessage;

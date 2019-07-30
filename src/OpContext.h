@@ -23,6 +23,7 @@ namespace Core {
 
 // forward declaration
 class Transport;
+class Message;
 
 /**
  * Holds all the relevant data and metadata for a RemoteOp or ServerOp.

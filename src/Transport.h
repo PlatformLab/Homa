@@ -23,11 +23,11 @@
 #include <unordered_set>
 #include <vector>
 
-#include "InboundMessage.h"
 #include "ObjectPool.h"
 #include "OpContext.h"
 #include "OutboundMessage.h"
 #include "Policy.h"
+#include "Receiver.h"
 #include "SpinLock.h"
 
 /**
@@ -37,7 +37,6 @@ namespace Homa {
 namespace Core {
 
 // Forward Declarations
-class Receiver;
 class Sender;
 
 /**
@@ -103,7 +102,7 @@ class Transport {
 
         /// Message to be received as part of this Op.  Processed by the
         /// Receiver.
-        InboundMessage* inMessage;
+        Receiver::Receiver::Message* inMessage;
 
       private:
         /**
