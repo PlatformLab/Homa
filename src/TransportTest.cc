@@ -169,8 +169,8 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone)
 {
     Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    EXPECT_FALSE(op->outMessage.state == OutboundMessage::State::COMPLETED);
-    EXPECT_FALSE(op->outMessage.state == OutboundMessage::State::SENT);
+    EXPECT_FALSE(op->outMessage.state == Sender::Message::State::COMPLETED);
+    EXPECT_FALSE(op->outMessage.state == Sender::Message::State::SENT);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     {
@@ -187,7 +187,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_notDone_reply)
 {
     Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    op->outMessage.state.store(OutboundMessage::State::IN_PROGRESS);
+    op->outMessage.state.store(Sender::Message::State::IN_PROGRESS);
     const_cast<Protocol::Message::Header*>(
         op->outMessage.getHeader<Protocol::Message::Header>())
         ->tag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
@@ -207,11 +207,11 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_acked)
 {
     Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    op->outMessage.state.store(OutboundMessage::State::COMPLETED);
+    op->outMessage.state.store(Sender::Message::State::COMPLETED);
     const_cast<Protocol::Message::Header*>(
         op->inMessage->getHeader<Protocol::Message::Header>())
         ->tag = Protocol::Message::INITIAL_REQUEST_TAG;
-    EXPECT_TRUE(op->outMessage.state == OutboundMessage::State::COMPLETED);
+    EXPECT_TRUE(op->outMessage.state == Sender::Message::State::COMPLETED);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     {
@@ -228,14 +228,14 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_reply_sent)
 {
     Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    op->outMessage.state.store(OutboundMessage::State::SENT);
+    op->outMessage.state.store(Sender::Message::State::SENT);
     const_cast<Protocol::Message::Header*>(
         op->outMessage.getHeader<Protocol::Message::Header>())
         ->tag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
     const_cast<Protocol::Message::Header*>(
         op->inMessage->getHeader<Protocol::Message::Header>())
         ->tag = Protocol::Message::INITIAL_REQUEST_TAG;
-    EXPECT_TRUE(op->outMessage.state == OutboundMessage::State::SENT);
+    EXPECT_TRUE(op->outMessage.state == Sender::Message::State::SENT);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
     {
@@ -252,7 +252,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_noSendDone)
 {
     Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    op->outMessage.state.store(OutboundMessage::State::SENT);
+    op->outMessage.state.store(Sender::Message::State::SENT);
     const_cast<Protocol::Message::Header*>(
         op->inMessage->getHeader<Protocol::Message::Header>())
         ->tag = Protocol::Message::INITIAL_REQUEST_TAG;
@@ -272,7 +272,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_done_sendDone)
 {
     Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    op->outMessage.state.store(OutboundMessage::State::SENT);
+    op->outMessage.state.store(Sender::Message::State::SENT);
     const_cast<Protocol::Message::Header*>(
         op->inMessage->getHeader<Protocol::Message::Header>())
         ->tag = Protocol::Message::INITIAL_REQUEST_TAG + 1;
@@ -299,7 +299,7 @@ TEST_F(TransportTest, Op_processUpdates_ServerOp_IN_PROGRESS_FAILED)
 {
     Transport::Op* op = createOp(Protocol::OpId(0, 0), true, true);
     op->state.store(OpContext::State::IN_PROGRESS);
-    op->outMessage.state.store(OutboundMessage::State::FAILED);
+    op->outMessage.state.store(Sender::Message::State::FAILED);
 
     EXPECT_CALL(*mockSender, dropMessage(Eq(&op->outMessage))).Times(1);
 
@@ -459,7 +459,7 @@ TEST_F(TransportTest, Op_processUpdates_RemoteOp_IN_PROGRESS)
     EXPECT_EQ(OpContext::State::IN_PROGRESS, op->state.load());
     EXPECT_EQ(0U, transport->updateHints.ops.count(op));
 
-    op->outMessage.state.store(OutboundMessage::State::FAILED);
+    op->outMessage.state.store(Sender::Message::State::FAILED);
 
     {
         SpinLock::Lock lock(op->mutex);
@@ -544,7 +544,7 @@ TEST_F(TransportTest, receiveOp)
         transport->opPool.construct(transport, &mockDriver, opId, true);
 
     Receiver::Message message(transport->driver,
-                           sizeof(Protocol::Packet::DataHeader), 0);
+                              sizeof(Protocol::Packet::DataHeader), 0);
     serverOp->inMessage = &message;
     serverOp->inMessage->setPacket(0, &mockPacket);
     mockPacket.length = sizeof(Protocol::Packet::DataHeader) +

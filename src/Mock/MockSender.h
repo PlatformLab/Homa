@@ -47,9 +47,9 @@ class MockSender : public Core::Sender {
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD2(handleErrorPacket,
                  void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD2(sendMessage, void(Core::OutboundMessage* message,
+    MOCK_METHOD2(sendMessage, void(Core::Sender::Message* message,
                                    Driver::Address destination));
-    MOCK_METHOD1(dropMessage, void(Core::OutboundMessage* message));
+    MOCK_METHOD1(dropMessage, void(Core::Sender::Message* message));
     MOCK_METHOD0(poll, void());
 };
 

@@ -25,9 +25,9 @@
 
 #include "ObjectPool.h"
 #include "OpContext.h"
-#include "OutboundMessage.h"
 #include "Policy.h"
 #include "Receiver.h"
+#include "Sender.h"
 #include "SpinLock.h"
 
 /**
@@ -35,9 +35,6 @@
  */
 namespace Homa {
 namespace Core {
-
-// Forward Declarations
-class Sender;
 
 /**
  * Internal implementation of Homa::Transport.
@@ -98,7 +95,7 @@ class Transport {
         const Protocol::OpId opId;
 
         /// Message to be sent out as part of this Op.  Processed by the Sender.
-        OutboundMessage outMessage;
+        Sender::Message outMessage;
 
         /// Message to be received as part of this Op.  Processed by the
         /// Receiver.

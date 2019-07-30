@@ -37,10 +37,10 @@ namespace Core {
  *      Provides information about the network packet priority policies.
  * @param messageTimeoutCycles
  *      Number of cycles of inactivity to wait before this Sender declares an
- *      OutboundMessage send failure.
+ *      Sender::Message send failure.
  * @param pingIntervalCycles
  *      Number of cycles of inactivity to wait between checking on the liveness
- *      of an OutboundMessage.
+ *      of an Sender::Message.
  */
 Sender::Sender(Transport* transport, uint64_t transportId,
                Policy::Manager* policyManager, uint64_t messageTimeoutCycles,
@@ -80,7 +80,7 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::DoneHeader* header =
         static_cast<Protocol::Packet::DoneHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    OutboundMessage* message = nullptr;
+    Message* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
@@ -97,7 +97,7 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     readyQueue.remove(&message->readyQueueNode);
     lock.unlock();  // End Sender critical section
 
-    message->state.store(OutboundMessage::State::COMPLETED);
+    message->state.store(Message::State::COMPLETED);
     transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
 }
@@ -122,7 +122,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     uint16_t index = header->index;
     uint16_t resendEnd = index + header->num;
 
-    OutboundMessage* message = nullptr;
+    Message* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
@@ -182,7 +182,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    OutboundMessage* message = nullptr;
+    Message* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
@@ -223,7 +223,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    OutboundMessage* message = nullptr;
+    Message* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
@@ -236,10 +236,10 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
 
     // Lock handoff.
     SpinLock::Lock lock_message(message->mutex);
-    if (message->state == OutboundMessage::State::IN_PROGRESS ||
-        message->state == OutboundMessage::State::SENT) {
+    if (message->state == Message::State::IN_PROGRESS ||
+        message->state == Message::State::SENT) {
         // Restart sending the message from scratch.
-        message->state.store(OutboundMessage::State::IN_PROGRESS);
+        message->state.store(Message::State::IN_PROGRESS);
         message->sentIndex = 0;
         // Reset to initial unschedule limit.
         Driver::Packet* packet = message->getPacket(0);
@@ -278,7 +278,7 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
     Protocol::Packet::ErrorHeader* header =
         static_cast<Protocol::Packet::ErrorHeader*>(packet->payload);
     Protocol::MessageId msgId = header->common.messageId;
-    OutboundMessage* message = nullptr;
+    Message* message = nullptr;
 
     auto it = outboundMessages.find(msgId);
     if (it != outboundMessages.end()) {
@@ -295,8 +295,8 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
     readyQueue.remove(&message->readyQueueNode);
     lock.unlock();  // End Sender critical section
 
-    assert(message->state != OutboundMessage::State::COMPLETED);
-    message->state.store(OutboundMessage::State::FAILED);
+    assert(message->state != Message::State::COMPLETED);
+    message->state.store(Message::State::FAILED);
     transport->hintUpdatedOp(message->op);
     driver->releasePackets(&packet, 1);
 }
@@ -305,14 +305,14 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
  * Queue a message to be sent.
  *
  * @param message
- *      OutboundMessage to be sent.
+ *      Sender::Message to be sent.
  * @param destination
  *      Destination address for this message.
  *
  * @sa dropMessage()
  */
 void
-Sender::sendMessage(OutboundMessage* message, Driver::Address destination)
+Sender::sendMessage(Sender::Message* message, Driver::Address destination)
 {
     // Prepare the message
     {
@@ -328,7 +328,7 @@ Sender::sendMessage(OutboundMessage* message, Driver::Address destination)
 
         message->id = id;
         message->destination = destination;
-        message->state.store(OutboundMessage::State::IN_PROGRESS);
+        message->state.store(Message::State::IN_PROGRESS);
         message->grantIndex = Util::downCast<uint16_t>(
             ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
              message->PACKET_DATA_LENGTH));
@@ -376,10 +376,10 @@ Sender::sendMessage(OutboundMessage* message, Driver::Address destination)
  * Inform the Sender that a Message is no longer needed.
  *
  * @param message
- *      The OutboundMessage that is no longer needed.
+ *      The Sender::Message that is no longer needed.
  */
 void
-Sender::dropMessage(OutboundMessage* message)
+Sender::dropMessage(Sender::Message* message)
 {
     SpinLock::Lock lock(mutex);
     SpinLock::Lock lock_message(message->mutex);
@@ -419,15 +419,15 @@ Sender::checkMessageTimeouts()
         if (messageTimeouts.list.empty()) {
             break;
         }
-        OutboundMessage* message = &messageTimeouts.list.front();
+        Message* message = &messageTimeouts.list.front();
         SpinLock::Lock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->messageTimeout.hasElapsed()) {
             break;
         }
         // Found expired timeout.
-        if (message->state != OutboundMessage::State::COMPLETED) {
-            message->state.store(OutboundMessage::State::FAILED);
+        if (message->state != Message::State::COMPLETED) {
+            message->state.store(Message::State::FAILED);
         }
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         pingTimeouts.cancelTimeout(&message->pingTimeout);
@@ -451,15 +451,15 @@ Sender::checkPingTimeouts()
         if (pingTimeouts.list.empty()) {
             break;
         }
-        OutboundMessage* message = &pingTimeouts.list.front();
+        Message* message = &pingTimeouts.list.front();
         SpinLock::Lock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->pingTimeout.hasElapsed()) {
             break;
         }
         // Found expired timeout.
-        if (message->state == OutboundMessage::State::COMPLETED ||
-            message->state == OutboundMessage::State::FAILED) {
+        if (message->state == Message::State::COMPLETED ||
+            message->state == Message::State::FAILED) {
             pingTimeouts.cancelTimeout(&message->pingTimeout);
             continue;
         } else {
@@ -497,7 +497,7 @@ Sender::trySend()
     uint32_t queuedBytesEstimate = transport->driver->getQueuedBytes();
     auto it = readyQueue.begin();
     while (it != readyQueue.end()) {
-        OutboundMessage& message = *it;
+        Message& message = *it;
         SpinLock::Lock lock_message(message.mutex);
         assert(message.driver == transport->driver);
         assert(message.grantIndex <= message.getNumPackets());
@@ -520,7 +520,7 @@ Sender::trySend()
         }
         if (message.sentIndex >= message.getNumPackets()) {
             // We have finished sending the message.
-            message.state.store(OutboundMessage::State::SENT);
+            message.state.store(Message::State::SENT);
             transport->hintUpdatedOp(message.op);
             it = readyQueue.remove(it);
         } else if (message.sentIndex >= message.grantIndex) {
@@ -548,11 +548,10 @@ Sender::trySend()
  * @param lock
  *      Ensures the Sender::mutex is held during this call.
  * @param lock_message
- *      Ensures OutboundMessage::mutex is held during this call.
+ *      Ensures Message::mutex is held during this call.
  */
 void
-Sender::hintMessageReady(OutboundMessage* message,
-                         const SpinLock::UniqueLock& lock,
+Sender::hintMessageReady(Message* message, const SpinLock::UniqueLock& lock,
                          const SpinLock::Lock& lock_message)
 {
     // NOTICE: Holding the Sender::mutex (lock) is needed to prevent deadlock.

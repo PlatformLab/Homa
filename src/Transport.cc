@@ -22,7 +22,6 @@
 #include "Cycles.h"
 
 #include "Protocol.h"
-#include "Sender.h"
 
 namespace Homa {
 namespace Core {
@@ -52,7 +51,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
     }
 
     State copyOfState = state.load();
-    OutboundMessage::State outState = outMessage.getState();
+    Sender::Message::State outState = outMessage.getState();
 
     if (isServerOp) {
         if (copyOfState == State::NOT_STARTED) {
@@ -65,8 +64,8 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
             if (inMessage->getState() == Receiver::Message::State::DROPPED) {
                 state.store(State::DROPPED);
                 transport->hintUpdatedOp(this);
-            } else if ((outState == OutboundMessage::State::COMPLETED) ||
-                       (outState == OutboundMessage::State::SENT &&
+            } else if ((outState == Sender::Message::State::COMPLETED) ||
+                       (outState == Sender::Message::State::SENT &&
                         outboundHeader->tag ==
                             Protocol::Message::ULTIMATE_RESPONSE_TAG)) {
                 const Protocol::Message::Header* inboundHeader =
@@ -77,7 +76,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
                     Receiver::sendDonePacket(inMessage, transport->driver);
                 }
                 transport->hintUpdatedOp(this);
-            } else if (outState == OutboundMessage::State::FAILED) {
+            } else if (outState == Sender::Message::State::FAILED) {
                 state.store(State::FAILED);
                 // Deregister the outbound message in case the application wants
                 // to try again.
@@ -113,7 +112,7 @@ Transport::Op::processUpdates(const SpinLock::Lock& lock)
             if (inMessage != nullptr) {
                 state.store(State::COMPLETED);
                 transport->hintUpdatedOp(this);
-            } else if (outState == OutboundMessage::State::FAILED) {
+            } else if (outState == Sender::Message::State::FAILED) {
                 state.store(State::FAILED);
                 transport->hintUpdatedOp(this);
             }
