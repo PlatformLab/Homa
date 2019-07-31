@@ -36,6 +36,34 @@ Manager::Manager(Driver* driver)
 {}
 
 /**
+ * Return the network priority that should be used for resent packets (i.e.
+ * packets that were lost and need to be resent).
+ */
+int
+Manager::getResendPriority()
+{
+    return 0;
+}
+
+/**
+ * Returns the highest priority that should be used for scheduled (granted)
+ * messages and the number of messages that should be concurrently granted.
+ *
+ * Used by Receiver to set granted message priorities.
+ *
+ * @sa Policy::Scheduled
+ */
+Scheduled
+Manager::getScheduledPolicy()
+{
+    Scheduled policy;
+    policy.maxScheduledPriority = 0;
+    policy.degreeOvercommitment = 1;
+    policy.scheduledByteLimit = RTT_TIME_US * (driver->getBandwidth() / 8);
+    return policy;
+}
+
+/**
  * Return the unscheduled policy for messages of a particular size bound for a
  * particular Transport.
  *
@@ -60,24 +88,6 @@ Manager::getUnscheduledPolicy(const Driver::Address destination,
     policy.unscheduledByteLimit =
         std::min(RTT_TIME_US * (driver->getBandwidth() / 8), messageLength);
     policy.priority = 0;
-    return policy;
-}
-
-/**
- * Returns the highest priority that should be used for scheduled (granted)
- * messages and the number of messages that should be concurrently granted.
- *
- * Used by Receiver to set granted message priorities.
- *
- * @sa Policy::Scheduled
- */
-Scheduled
-Manager::getScheduledPolicy()
-{
-    Scheduled policy;
-    policy.maxScheduledPriority = 0;
-    policy.degreeOvercommitment = 1;
-    policy.scheduledByteLimit = RTT_TIME_US * (driver->getBandwidth() / 8);
     return policy;
 }
 

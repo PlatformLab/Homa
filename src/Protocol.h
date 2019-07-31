@@ -263,12 +263,17 @@ struct ResendHeader {
                      ///< the array of packets that form the message.
     uint16_t num;  ///< Number of packet in the range of packets that should be
                    ///< resent starting with the packet at _index_.
+    uint8_t priority;  ///< The network priority the sender should use to
+                       ///< transmit the previously unsent bytes of the
+                       ///< associated message.
 
     /// DoneHeader constructor.
-    ResendHeader(MessageId messageId, uint16_t index, uint16_t num)
+    ResendHeader(MessageId messageId, uint16_t index, uint16_t num,
+                 uint8_t priority)
         : common(Opcode::RESEND, messageId)
         , index(index)
         , num(num)
+        , priority(priority)
     {}
 } __attribute__((packed));
 

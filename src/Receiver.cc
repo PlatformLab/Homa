@@ -102,12 +102,13 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             messageLength / message->PACKET_DATA_LENGTH;
         message->numExpectedPackets +=
             messageLength % message->PACKET_DATA_LENGTH ? 1 : 0;
+        message->grantIndexLimit = header->unscheduledIndexLimit;
 
         inboundMessages.insert(it, {id, message});
         policyManager->signalNewMessage(message->source, header->policyVersion,
                                         header->totalLength);
 
-        if (message->numExpectedPackets > header->unscheduledIndexLimit) {
+        if (message->numExpectedPackets > message->grantIndexLimit) {
             // Message needs to be scheduled.  Push the message to the back
             // of the scheduledMessage list; it will be moved to the correct
             // position during the schedule update.
@@ -406,9 +407,17 @@ Receiver::checkResendTimeouts()
                 // Received packet
                 if (num != 0) {
                     // Send out the range of packets found so far.
+                    //
+                    // The RESEND also includes the current granted priority so
+                    // that it can act as a GRANT in case a GRANT was lost.  If
+                    // this message hasn't been scheduled (i.e. no grants have
+                    // been sent) then the priority will hold the default value;
+                    // this is ok since the Sender will ignore the priority
+                    // field for resends of purely unscheduled packets (see
+                    // Sender::handleResendPacket()).
                     ControlPacket::send<Protocol::Packet::ResendHeader>(
                         message->driver, message->source, message->id, index,
-                        num);
+                        num, message->priority);
                     num = 0;
                 }
             }
@@ -416,7 +425,8 @@ Receiver::checkResendTimeouts()
         if (num != 0) {
             // Send out the last range of packets found.
             ControlPacket::send<Protocol::Packet::ResendHeader>(
-                message->driver, message->source, message->id, index, num);
+                message->driver, message->source, message->id, index, num,
+                message->priority);
         }
     }
 }

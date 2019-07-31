@@ -141,6 +141,10 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     assert(resendEnd <= message->getNumPackets());
     if (message->grantIndex < resendEnd) {
         message->grantIndex = resendEnd;
+        // Note that the priority of messages under the unscheduled byte limit
+        // will never be overridden since the resend index will not exceed the
+        // preset grantIndex.
+        message->priority = header->priority;
         hintMessageReady(message, lock, lock_message);
     }
     lock.unlock();  // End Sender critical section
@@ -156,8 +160,11 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         // There are some packets to resend but only resend packets that have
         // already been sent.
         resendEnd = std::min(resendEnd, message->sentIndex);
+        int resendPriority = policyManager->getResendPriority();
         for (uint16_t i = index; i < resendEnd; ++i) {
             Driver::Packet* packet = message->getPacket(index++);
+            packet->priority = resendPriority;
+            // Packets will be sent at the priority their original priority.
             message->driver->sendPacket(packet);
         }
     }
@@ -241,13 +248,19 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
         // Restart sending the message from scratch.
         message->state.store(Message::State::IN_PROGRESS);
         message->sentIndex = 0;
-        // Reset to initial unschedule limit.
+        // Reuse the original unscheduledIndexLimit so that the headers don't
+        // have to be reset.
         Driver::Packet* packet = message->getPacket(0);
         assert(packet != nullptr);
         assert(packet->length >= sizeof(Protocol::Packet::DataHeader));
         message->grantIndex =
             static_cast<Protocol::Packet::DataHeader*>(packet->payload)
                 ->unscheduledIndexLimit;
+        // Reset the priority
+        message->priority = policyManager
+                                ->getUnscheduledPolicy(message->destination,
+                                                       message->rawLength())
+                                .priority;
         // Need to set the rawUnsentBytes before calling hintMessageReady(); the
         // member variable is used by the helper method.
         message->unsentBytes = message->rawLength();

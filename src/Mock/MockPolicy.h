@@ -33,10 +33,11 @@ class MockPolicyManager : public Core::Policy::Manager {
         : Core::Policy::Manager(nullptr)
     {}
 
+    MOCK_METHOD0(getResendPriority, int());
+    MOCK_METHOD0(getScheduledPolicy, Core::Policy::Scheduled());
     MOCK_METHOD2(getUnscheduledPolicy,
                  Core::Policy::Unscheduled(const Driver::Address destination,
                                            const uint32_t messageLength));
-    MOCK_METHOD0(getScheduledPolicy, Core::Policy::Scheduled());
     MOCK_METHOD3(signalNewMessage,
                  void(const Driver::Address source, uint8_t policyVersion,
                       uint32_t messageLength));

@@ -137,6 +137,7 @@ TEST_F(SenderTest, handleResendPacket_basic)
     }
     message->sentIndex = 5;
     message->grantIndex = 5;
+    message->priority = 6;
     EXPECT_EQ(10U, message->getNumPackets());
 
     Protocol::Packet::ResendHeader* resendHdr =
@@ -144,7 +145,9 @@ TEST_F(SenderTest, handleResendPacket_basic)
     resendHdr->common.messageId = id;
     resendHdr->index = 3;
     resendHdr->num = 5;
+    resendHdr->priority = 4;
 
+    EXPECT_CALL(mockPolicyManager, getResendPriority).WillOnce(Return(7));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packets[3]))).Times(1);
     EXPECT_CALL(mockDriver, sendPacket(Eq(packets[4]))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
@@ -154,8 +157,11 @@ TEST_F(SenderTest, handleResendPacket_basic)
 
     EXPECT_EQ(5U, message->sentIndex);
     EXPECT_EQ(8U, message->grantIndex);
+    EXPECT_EQ(4, message->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+    EXPECT_EQ(7, packets[3]->priority);
+    EXPECT_EQ(7, packets[4]->priority);
 
     for (int i = 0; i < 10; ++i) {
         delete packets[i];

@@ -69,9 +69,10 @@ class Manager {
   public:
     explicit Manager(Driver* driver);
     virtual ~Manager() = default;
+    virtual int getResendPriority();
+    virtual Scheduled getScheduledPolicy();
     virtual Unscheduled getUnscheduledPolicy(const Driver::Address destination,
                                              const uint32_t messageLength);
-    virtual Scheduled getScheduledPolicy();
     virtual void signalNewMessage(const Driver::Address source,
                                   uint8_t policyVersion,
                                   uint32_t messageLength);
