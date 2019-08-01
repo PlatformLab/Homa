@@ -42,7 +42,7 @@ Receiver::Receiver(Transport* transport, Policy::Manager* policyManager,
     , transport(transport)
     , policyManager(policyManager)
     , inboundMessages()
-    , scheduledMessages()
+    , scheduledPeers()
     , receivedMessages()
     , messagePool()
     , messageTimeouts(messageTimeoutCycles)
@@ -56,7 +56,8 @@ Receiver::Receiver(Transport* transport, Policy::Manager* policyManager,
 Receiver::~Receiver()
 {
     mutex.lock();
-    scheduledMessages.clear();
+    scheduledPeers.clear();
+    peerTable.clear();
     receivedMessages.mutex.lock();
     receivedMessages.queue.clear();
     messageTimeouts.list.clear();
@@ -109,10 +110,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
                                         header->totalLength);
 
         if (message->numExpectedPackets > message->grantIndexLimit) {
-            // Message needs to be scheduled.  Push the message to the back
-            // of the scheduledMessage list; it will be moved to the correct
-            // position during the schedule update.
-            scheduledMessages.push_back(&message->scheduledMessageNode);
+            // Message needs to be scheduled.
+            message->peer = schedule(message, &peerTable, &scheduledPeers);
         }
     }
 
@@ -144,37 +143,11 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         message->unreceivedBytes -= packetDataBytes;
         if (message->unreceivedBytes > 0) {
             // Message incomplete. Update the schedule.
-            if (scheduledMessages.contains(&message->scheduledMessageNode)) {
-                // See if the message can be moved up the list, every message
-                // following it in the list should be longer.
-                auto it_message =
-                    scheduledMessages.get(&message->scheduledMessageNode);
-                auto it_pos = it_message;
-                while (it_pos != scheduledMessages.begin()) {
-                    --it_pos;
-                    // Notice: holding the Receiver::mutex during this operation
-                    // avoids the deadlock that can occur between lock_message
-                    // and lock_message_other.
-                    SpinLock::Lock lock_message_other(it_pos->mutex);
-                    if (it_pos->unreceivedBytes <= message->unreceivedBytes) {
-                        // Found the correct location; just after it_pos. The
-                        // message should be inserted just before what follows.
-                        ++it_pos;
-                        break;
-                    }
-                }
-                if (it_pos == it_message) {
-                    // Do nothing if the message is already in the right spot.
-                } else {
-                    // Move the message to the new position in the list.
-                    scheduledMessages.remove(it_message);
-                    scheduledMessages.insert(it_pos,
-                                             &message->scheduledMessageNode);
-                }
+            if (message->peer != nullptr) {
+                updateSchedule(message, message->peer, &scheduledPeers);
             }
         } else {
             // Message received
-            scheduledMessages.remove(&message->scheduledMessageNode);
             lock.unlock();  // End Receiver critical section
             message->state.store(Message::State::COMPLETED);
             SpinLock::Lock lock_received_messages(receivedMessages.mutex);
@@ -297,7 +270,7 @@ Receiver::dropMessage(Receiver::Message* message)
     SpinLock::Lock lock(mutex);
     message->mutex.lock();
     if (inboundMessages.erase(message->id) > 0) {
-        scheduledMessages.remove(&message->scheduledMessageNode);
+        assert(message->peer == nullptr);
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         resendTimeouts.cancelTimeout(&message->resendTimeout);
         messagePool.destroy(message);
@@ -310,7 +283,7 @@ Receiver::dropMessage(Receiver::Message* message)
 void
 Receiver::poll()
 {
-    schedule();
+    runScheduler();
     checkResendTimeouts();
     checkMessageTimeouts();
 }
@@ -337,11 +310,20 @@ Receiver::checkMessageTimeouts()
             break;
         }
         // Found expired timeout.
-        scheduledMessages.remove(&message->scheduledMessageNode);
+        // Unschedule the message
+        if (message->peer != nullptr) {
+            unschedule(message, message->peer, &scheduledPeers);
+            message->peer = nullptr;
+        }
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         resendTimeouts.cancelTimeout(&message->resendTimeout);
         if (message->state == Message::State::IN_PROGRESS) {
             // Message timed out before being fully received; drop the message.
+            // Unschedule the message
+            if (message->peer != nullptr) {
+                unschedule(message, message->peer, &scheduledPeers);
+                message->peer = nullptr;
+            }
             lock_message.release();
             if (inboundMessages.erase(message->id) > 0) {
                 messagePool.destroy(message);
@@ -349,6 +331,7 @@ Receiver::checkMessageTimeouts()
         } else {
             // Message timed out but we already made it available to the
             // Transport; let the Transport know.
+            assert(message->peer == nullptr);
             message->state.store(Message::State::DROPPED);
             transport->hintUpdatedOp(message->op);
         }
@@ -435,7 +418,7 @@ Receiver::checkResendTimeouts()
  * Schedule incoming messages by sending GRANTs.
  */
 void
-Receiver::schedule()
+Receiver::runScheduler()
 {
     // Skip scheduling if another poller is already working on it.
     if (scheduling.test_and_set()) {
@@ -458,13 +441,13 @@ Receiver::schedule()
     assert(policy.degreeOvercommitment > policy.maxScheduledPriority);
     int unusedPriorities =
         std::max(0, (policy.maxScheduledPriority + 1) -
-                        Util::downCast<int>(scheduledMessages.size()));
+                        Util::downCast<int>(scheduledPeers.size()));
 
-    auto it = scheduledMessages.begin();
+    auto it = scheduledPeers.begin();
     int slot = 0;
-    while (it != scheduledMessages.end() &&
-           slot < policy.degreeOvercommitment) {
-        Message* message = &(*it);
+    while (it != scheduledPeers.end() && slot < policy.degreeOvercommitment) {
+        assert(!it->scheduledMessages.empty());
+        Message* message = &it->scheduledMessages.front();
         SpinLock::Lock lock_message(message->mutex);
         message->priority =
             std::max(0, policy.maxScheduledPriority - slot - unusedPriorities);
@@ -480,11 +463,128 @@ Receiver::schedule()
                 message->driver, message->source, message->id,
                 message->grantIndexLimit, message->priority);
         }
-        ++it;
+        if (message->numExpectedPackets > message->grantIndexLimit) {
+            // Continue to schedule this message.
+            ++it;
+        } else {
+            // All packets granted, unschedule the message.
+            it = unschedule(message, message->peer, &scheduledPeers);
+            message->peer = nullptr;
+        }
         ++slot;
     }
 
     scheduling.clear();
+}
+
+/**
+ * Add a Message to the schedule.
+ *
+ * Helper function separated mostly for ease of testing.
+ *
+ * @param message
+ *      Message to be added.
+ * @param peerTable
+ *      Allocates and holds Peer objects.
+ * @param scheduledPeers
+ *      List that holds the schedule to which the message will be added.
+ * @return
+ *      The Peer object that holds the newly scheduled message.
+ */
+Receiver::Peer*
+Receiver::schedule(
+    Receiver::Message* message,
+    std::unordered_map<Driver::Address, Receiver::Peer>* peerTable,
+    Intrusive::List<Peer>* scheduledPeers)
+
+{
+    // Push the message to the back of the scheduledMessage list; it will be
+    // moved to the correct position during the schedule update.
+    Peer* peer = &(*peerTable)[message->source];
+    peer->scheduledMessages.push_back(&message->scheduledMessageNode);
+    if (!scheduledPeers->contains(&peer->scheduledPeerNode)) {
+        // Must be the only message of this peer; push the peer to the
+        // end of list to be moved later.
+        assert(peer->scheduledMessages.size() == 1);
+        scheduledPeers->push_back(&peer->scheduledPeerNode);
+    }
+    return peer;
+}
+
+/**
+ * Remove a Message from the schedule.
+ *
+ * Helper function separated mostly for ease of testing.
+ *
+ * @param message
+ *      Message to be removed.
+ * @param peer
+ *      Peer to which the Message belongs.
+ * @param scheduledPeers
+ *      List that holds the schedule from which the message should be removed.
+ * @return
+ *      Iterator to the Peer following the removed Message's Peer.
+ */
+Intrusive::List<Receiver::Peer>::Iterator
+Receiver::unschedule(Receiver::Message* message, Receiver::Peer* peer,
+                     Intrusive::List<Peer>* scheduledPeers)
+
+{
+    Intrusive::List<Peer>::Iterator it =
+        scheduledPeers->get(&peer->scheduledPeerNode);
+    Peer::ComparePriority comp;
+
+    // Remove message.
+    assert(peer->scheduledMessages.contains(&message->scheduledMessageNode));
+    peer->scheduledMessages.remove(&message->scheduledMessageNode);
+
+    // Cleanup the schedule
+    if (peer->scheduledMessages.empty()) {
+        // Remove the empty peer.
+        it = scheduledPeers->remove(it);
+    } else if (std::next(it) == scheduledPeers->end() ||
+               !comp(*std::next(it), *it)) {
+        // Peer already in the right place (peer incremented as part
+        // of the check).
+        ++it;
+    } else {
+        // Peer needs to be moved.
+        it = scheduledPeers->remove(it);
+        scheduledPeers->push_back(&peer->scheduledPeerNode);
+        prioritize<Peer>(scheduledPeers, &peer->scheduledPeerNode, comp);
+    }
+    return it;
+}
+
+/**
+ * Update Message's position in the schedule.
+ *
+ * Called when new data has arrived for the Message.
+ *
+ * Helper function separated mostly for ease of testing.
+ *
+ * @param message
+ *      Message whose position should be updated.
+ * @param peer
+ *      Peer to which the Message belongs.
+ * @param scheduledPeers
+ *      List that holds the schedule to be updated.
+ */
+void
+Receiver::updateSchedule(Receiver::Message* message, Receiver::Peer* peer,
+                         Intrusive::List<Peer>* scheduledPeers)
+{
+    // Update the message's position within its Peer scheduled message queue.
+    prioritize<Message>(&peer->scheduledMessages,
+                        &message->scheduledMessageNode,
+                        Message::ComparePriority());
+
+    // Update the Peer's position in the queue if this message is now the first
+    // scheduled message.
+    if (&peer->scheduledMessages.front() == message) {
+        prioritize<Peer>(scheduledPeers, &peer->scheduledPeerNode,
+                         Peer::ComparePriority());
+    }
 }
 
 }  // namespace Core

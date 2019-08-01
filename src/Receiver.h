@@ -41,6 +41,10 @@ namespace Core {
  * This class is thread-safe.
  */
 class Receiver {
+  private:
+    // Forward declaration
+    struct Peer;
+
   public:
     /**
      * Represents an incoming message that is being assembled or being processed
@@ -71,6 +75,7 @@ class Receiver {
             , unreceivedBytes(messageLength)
             , state(Message::State::IN_PROGRESS)
             , op(nullptr)
+            , peer(nullptr)
             , scheduledMessageNode(this)
             , receivedMessageNode(this)
             , messageTimeout(this)
@@ -97,6 +102,17 @@ class Receiver {
         }
 
       private:
+        /**
+         * Implements a binary comparison function for the strict weak priority
+         * ordering of two Message objects.
+         */
+        struct ComparePriority {
+            bool operator()(const Message& a, const Message& b)
+            {
+                return a.unreceivedBytes < b.unreceivedBytes;
+            }
+        };
+
         /// Monitor style lock.
         mutable SpinLock mutex;
         /// Contains the unique identifier for this message.
@@ -110,11 +126,13 @@ class Receiver {
         /// The network priority at which the Receiver requests Message be sent.
         uint8_t priority;
         /// The number of bytes that still need to be received for this Message.
-        uint32_t unreceivedBytes;
+        std::atomic<uint32_t> unreceivedBytes;
         /// This message's current state.
         std::atomic<State> state;
         /// Transport::Op associated with this message.
         void* op;
+        /// Peer object if any that holds this message (if any).
+        Peer* peer;
         /// Intrusive structure used by the Receiver to keep track of when this
         /// message should be issued grants.
         Intrusive::List<Message>::Node scheduledMessageNode;
@@ -173,9 +191,103 @@ class Receiver {
     }
 
   private:
+    /**
+     * Holds the incoming scheduled messages from another transport.
+     */
+    struct Peer {
+        /**
+         * Peer constructor.
+         */
+        Peer()
+            : scheduledMessages()
+            , scheduledPeerNode(this)
+        {}
+
+        /**
+         * Peer destructor.
+         */
+        ~Peer()
+        {
+            scheduledMessages.clear();
+        }
+
+        /**
+         * Implements a binary comparison function for the strict weak priority
+         * ordering of two Peer objects.
+         */
+        struct ComparePriority {
+            bool operator()(const Peer& a, const Peer& b)
+            {
+                assert(!a.scheduledMessages.empty());
+                assert(!b.scheduledMessages.empty());
+                Message::ComparePriority comp;
+                return comp(a.scheduledMessages.front(),
+                            b.scheduledMessages.front());
+            }
+        };
+
+        /// Contains all the scheduled messages coming from a single transport.
+        Intrusive::List<Message> scheduledMessages;
+        /// Intrusive structure to track all Peers with scheduled messages.
+        Intrusive::List<Peer>::Node scheduledPeerNode;
+    };
+
     void checkMessageTimeouts();
     void checkResendTimeouts();
-    void schedule();
+    void runScheduler();
+    static Peer* schedule(Message* message,
+                          std::unordered_map<Driver::Address, Peer>* peerTable,
+                          Intrusive::List<Peer>* scheduledPeers);
+    static Intrusive::List<Peer>::Iterator unschedule(
+        Message* message, Receiver::Peer* peer,
+        Intrusive::List<Peer>* scheduledPeers);
+    static void updateSchedule(Message* message, Peer* peer,
+                               Intrusive::List<Peer>* scheduledPeers);
+
+    /**
+     * Given an element in a list, move the element forward in the list until
+     * the preceding element compares less than or equal to the given element.
+     *
+     * This function will call:
+     *      bool ElementType::operator<(const ElementType&) const;
+     *
+     * @tparam ElementType
+     *      Type of the element held in the Intrusive::List.
+     * @tparam Compare
+     *      A weak strict ordering binary comparator for objects of ElementType.
+     * @param list
+     *      List that contains the element.
+     * @parma node
+     *      Intrusive list node for the element that should be prioritized.
+     * @param comp
+     *      Comparison function object which returns true when the first
+     *      argument should be ordered before the second.  The signature should
+     *      be equivalent to the following:
+     *          bool comp(const ElementType& a, const ElementType& b);
+     */
+    template <typename ElementType, typename Compare>
+    static void prioritize(Intrusive::List<ElementType>* list,
+                           typename Intrusive::List<ElementType>::Node* node,
+                           Compare comp)
+    {
+        assert(list->contains(node));
+        auto it_node = list->get(node);
+        auto it_pos = it_node;
+        while (it_pos != list->begin()) {
+            if (!comp(*it_node, *std::prev(it_pos))) {
+                // Found the correct location; just before it_pos.
+                break;
+            }
+            --it_pos;
+        }
+        if (it_pos == it_node) {
+            // Do nothing if the node is already in the right spot.
+        } else {
+            // Move the node to the new position in the list.
+            list->remove(it_node);
+            list->insert(it_pos, node);
+        }
+    }
 
     /// Mutex for monitor-style locking of Receiver state.
     SpinLock mutex;
@@ -191,8 +303,11 @@ class Receiver {
                        Protocol::MessageId::Hasher>
         inboundMessages;
 
-    /// List of inbound messages that require grants to complete.
-    Intrusive::List<Message> scheduledMessages;
+    /// Collection of all peers; used for fast access.
+    std::unordered_map<Driver::Address, Peer> peerTable;
+
+    /// List of peers with inbound messages that require grants to complete.
+    Intrusive::List<Peer> scheduledPeers;
 
     /// Message objects to be processed by the transport.
     struct {

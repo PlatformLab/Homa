@@ -16,6 +16,8 @@
 #ifndef HOMA_CORE_INTRUSIVE_H
 #define HOMA_CORE_INTRUSIVE_H
 
+#include <iterator>
+
 namespace Homa {
 namespace Core {
 /**
@@ -93,7 +95,8 @@ class List {
     /**
      * A dereferenceable reference to an element in the list.
      */
-    class Iterator {
+    class Iterator
+        : public std::iterator<std::bidirectional_iterator_tag, ElementType> {
       public:
         /**
          * Iterator empty constructor.
@@ -232,11 +235,31 @@ class List {
     }
 
     /**
+     * Return a const reference to the first element in the List.
+     *
+     * Calling front() on an empty List is undefined.
+     */
+    const ElementType& front() const
+    {
+        return *root.next->owner;
+    }
+
+    /**
      * Return a reference to the last element in the List.
      *
      * Calling back() on an empty List is undefined.
      */
     ElementType& back()
+    {
+        return *root.prev->owner;
+    }
+
+    /**
+     * Return a const reference to the last element in the List.
+     *
+     * Calling back() on an empty List is undefined.
+     */
+    const ElementType& back() const
     {
         return *root.prev->owner;
     }

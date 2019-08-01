@@ -86,7 +86,9 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     for (int i = 0; i < 3; ++i) {
         others[i] = receiver->messagePool.construct(
             &mockDriver, sizeof(Protocol::Packet::DataHeader), 10000);
-        receiver->scheduledMessages.push_back(&others[i]->scheduledMessageNode);
+        others[i]->source = Driver::Address(22);
+        others[i]->peer = Receiver::schedule(others[i], &receiver->peerTable,
+                                             &receiver->scheduledPeers);
     }
     others[0]->unreceivedBytes = 1100;
     others[1]->unreceivedBytes = 1500;
@@ -133,8 +135,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
     EXPECT_EQ(1U, message->getNumPackets());
     EXPECT_EQ(2500U, message->unreceivedBytes);
-    EXPECT_TRUE(
-        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
+    EXPECT_EQ(&receiver->peerTable.at(mockPacket.address), message->peer);
     EXPECT_EQ(&others[1]->scheduledMessageNode,
               message->scheduledMessageNode.prev);
     EXPECT_EQ(&others[2]->scheduledMessageNode,
@@ -166,8 +167,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 
     EXPECT_EQ(2U, message->getNumPackets());
     EXPECT_EQ(1500U, message->unreceivedBytes);
-    EXPECT_TRUE(
-        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
     EXPECT_EQ(&others[1]->scheduledMessageNode,
               message->scheduledMessageNode.prev);
     EXPECT_EQ(&others[2]->scheduledMessageNode,
@@ -187,8 +186,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 
     EXPECT_EQ(3U, message->getNumPackets());
     EXPECT_EQ(1000U, message->unreceivedBytes);
-    EXPECT_TRUE(
-        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
     EXPECT_EQ(&others[0]->scheduledMessageNode,
               message->scheduledMessageNode.next);
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -206,8 +203,6 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
 
     EXPECT_EQ(4U, message->getNumPackets());
     EXPECT_EQ(0U, message->unreceivedBytes);
-    EXPECT_FALSE(
-        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
     EXPECT_EQ(Receiver::Message::State::COMPLETED, message->state);
     EXPECT_EQ(message, &receiver->receivedMessages.queue.back());
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -306,8 +301,7 @@ TEST_F(ReceiverTest, handleDataPacket_unscheduled)
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
     EXPECT_EQ(1U, message->getNumPackets());
     EXPECT_EQ(2500U, message->unreceivedBytes);
-    EXPECT_FALSE(
-        receiver->scheduledMessages.contains(&message->scheduledMessageNode));
+    EXPECT_EQ(nullptr, message->peer);
     Mock::VerifyAndClearExpectations(&mockDriver);
 }
 
@@ -439,12 +433,10 @@ TEST_F(ReceiverTest, dropMessage)
         receiver->messagePool.construct(&mockDriver, 0, 0);
     message->id = id;
     receiver->inboundMessages.insert({id, message});
-    receiver->scheduledMessages.push_back(&message->scheduledMessageNode);
     receiver->messageTimeouts.list.push_back(&message->messageTimeout.node);
     receiver->resendTimeouts.list.push_back(&message->resendTimeout.node);
     EXPECT_EQ(1U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(message, receiver->inboundMessages.find(id)->second);
-    EXPECT_FALSE(receiver->scheduledMessages.empty());
     EXPECT_FALSE(receiver->messageTimeouts.list.empty());
     EXPECT_FALSE(receiver->resendTimeouts.list.empty());
 
@@ -453,7 +445,6 @@ TEST_F(ReceiverTest, dropMessage)
     EXPECT_EQ(0U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(receiver->inboundMessages.end(),
               receiver->inboundMessages.find(id));
-    EXPECT_TRUE(receiver->scheduledMessages.empty());
     EXPECT_TRUE(receiver->messageTimeouts.list.empty());
     EXPECT_TRUE(receiver->resendTimeouts.list.empty());
 }
@@ -526,6 +517,8 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     // Message[0]: Normal timeout: IN_PROGRESS
     message[0]->messageTimeout.expirationCycleTime = 9998;
     message[0]->state = Receiver::Message::State::IN_PROGRESS;
+    message[0]->peer = Receiver::schedule(message[0], &receiver->peerTable,
+                                          &receiver->scheduledPeers);
     // Message[1]: Normal timeout: COMPLETED
     message[1]->messageTimeout.expirationCycleTime = 10000;
     message[1]->state = Receiver::Message::State::COMPLETED;
@@ -539,6 +532,7 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     // Message[0]: Normal timeout: IN_PROGRESS
     EXPECT_EQ(nullptr, message[0]->messageTimeout.node.list);
     EXPECT_EQ(nullptr, message[0]->resendTimeout.node.list);
+    EXPECT_EQ(nullptr, message[0]->peer);
     EXPECT_EQ(0U, receiver->inboundMessages.count(message[0]->id));
     EXPECT_EQ(2U, receiver->messagePool.outstandingObjects);
     EXPECT_EQ(0U, transport->updateHints.ops.count(op[0]));
@@ -660,19 +654,20 @@ TEST_F(ReceiverTest, checkResendTimeouts_empty)
     receiver->checkResendTimeouts();
 }
 
-TEST_F(ReceiverTest, schedule)
+TEST_F(ReceiverTest, runScheduler)
 {
-    Receiver::Message* message[3];
-    for (uint64_t i = 0; i < 3; ++i) {
+    Receiver::Message* message[4];
+    for (uint64_t i = 0; i < 4; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messagePool.construct(
-            &mockDriver, sizeof(Protocol::Packet::DataHeader), 3000);
+            &mockDriver, sizeof(Protocol::Packet::DataHeader), 10000 * (i + 1));
         message[i]->id = id;
+        message[i]->source = Driver::Address(100 + i);
         message[i]->priority = 10;  // bogus number that should be reset.
-        message[i]->grantIndexLimit = 1;
-        message[i]->numExpectedPackets = 3;
-        receiver->scheduledMessages.push_back(
-            &message[i]->scheduledMessageNode);
+        message[i]->grantIndexLimit = 10 * (i + 1) - 5;
+        message[i]->numExpectedPackets = 10 * (i + 1);
+        message[i]->peer = Receiver::schedule(message[i], &receiver->peerTable,
+                                              &receiver->scheduledPeers);
     }
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
@@ -681,10 +676,11 @@ TEST_F(ReceiverTest, schedule)
     //-------------------------------------------------------------------------
     // Test:
     //      - more grantable packets than needed
+    //      - message full granted
     //      - more messages than overcommit level
-    policy.maxScheduledPriority = 0;
-    policy.degreeOvercommitment = 1;
-    policy.scheduledByteLimit = 5000;
+    policy.maxScheduledPriority = 1;
+    policy.degreeOvercommitment = 2;
+    policy.scheduledByteLimit = 15000;
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
@@ -692,21 +688,23 @@ TEST_F(ReceiverTest, schedule)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    receiver->schedule();
+    receiver->runScheduler();
 
-    EXPECT_EQ(0, message[0]->priority);
-    EXPECT_EQ(3, message[0]->grantIndexLimit);
+    EXPECT_EQ(1, message[0]->priority);
+    EXPECT_EQ(10, message[0]->grantIndexLimit);
+    EXPECT_EQ(nullptr, message[0]->peer);
     EXPECT_EQ(message[0]->id, header->common.messageId);
+    EXPECT_EQ(0, message[1]->priority);
+    EXPECT_EQ(15, message[1]->grantIndexLimit);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     //-------------------------------------------------------------------------
     // Test:
     //      - fewer grantable packets than needed (message[1])
-    //      - no new grants needed (message[0])
-    policy.maxScheduledPriority = 1;
-    policy.degreeOvercommitment = 2;
-    policy.scheduledByteLimit = 1001;
+    policy.maxScheduledPriority = 0;
+    policy.degreeOvercommitment = 1;
+    policy.scheduledByteLimit = 15001;
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
@@ -714,11 +712,10 @@ TEST_F(ReceiverTest, schedule)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    receiver->schedule();
+    receiver->runScheduler();
 
-    EXPECT_EQ(1, message[0]->priority);
     EXPECT_EQ(0, message[1]->priority);
-    EXPECT_EQ(2, message[1]->grantIndexLimit);
+    EXPECT_EQ(16, message[1]->grantIndexLimit);
     EXPECT_EQ(message[1]->id, header->common.messageId);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -733,11 +730,11 @@ TEST_F(ReceiverTest, schedule)
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, sendPacket(_)).Times(0);
 
-    receiver->schedule();
+    receiver->runScheduler();
 
-    EXPECT_EQ(1, message[0]->priority);
-    EXPECT_EQ(0, message[1]->priority);
+    EXPECT_EQ(1, message[1]->priority);
     EXPECT_EQ(0, message[2]->priority);
+    EXPECT_EQ(0, message[3]->priority);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
 
@@ -751,13 +748,269 @@ TEST_F(ReceiverTest, schedule)
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, sendPacket(_)).Times(0);
 
-    receiver->schedule();
+    receiver->runScheduler();
 
-    EXPECT_EQ(2, message[0]->priority);
-    EXPECT_EQ(1, message[1]->priority);
-    EXPECT_EQ(0, message[2]->priority);
+    EXPECT_EQ(2, message[1]->priority);
+    EXPECT_EQ(1, message[2]->priority);
+    EXPECT_EQ(0, message[3]->priority);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
+}
+
+TEST_F(ReceiverTest, schedule)
+{
+    Receiver::Message* message[3];
+    for (uint64_t i = 0; i < 3; ++i) {
+        Protocol::MessageId id = {42, 10 + i};
+        message[i] = receiver->messagePool.construct(
+            &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
+        message[i]->id = id;
+    }
+
+    //--------------------------------------------------------------------------
+    message[0]->source = Driver::Address(22);
+    message[0]->peer = Receiver::schedule(message[0], &receiver->peerTable,
+                                          &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->peerTable.at(22), message[0]->peer);
+    EXPECT_EQ(message[0], &message[0]->peer->scheduledMessages.back());
+    EXPECT_EQ(message[0]->peer, &receiver->scheduledPeers.back());
+
+    //--------------------------------------------------------------------------
+    message[1]->source = Driver::Address(33);
+    message[1]->peer = Receiver::schedule(message[1], &receiver->peerTable,
+                                          &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->peerTable.at(33), message[1]->peer);
+    EXPECT_EQ(message[1], &message[1]->peer->scheduledMessages.back());
+    EXPECT_EQ(message[1]->peer, &receiver->scheduledPeers.back());
+
+    //--------------------------------------------------------------------------
+    message[2]->source = Driver::Address(22);
+    message[2]->peer = Receiver::schedule(message[2], &receiver->peerTable,
+                                          &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->peerTable.at(22), message[2]->peer);
+    EXPECT_EQ(message[2], &message[2]->peer->scheduledMessages.back());
+    EXPECT_EQ(message[2]->peer, &receiver->scheduledPeers.front());
+}
+
+TEST_F(ReceiverTest, unschedule)
+{
+    Receiver::Message* message[5];
+    for (uint64_t i = 0; i < 5; ++i) {
+        Protocol::MessageId id = {42, 10 + i};
+        message[i] = receiver->messagePool.construct(
+            &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
+        message[i]->id = id;
+        message[i]->source = Driver::Address((i / 3) + 10);
+        message[i]->peer = Receiver::schedule(message[i], &receiver->peerTable,
+                                              &receiver->scheduledPeers);
+    }
+    ASSERT_EQ(Driver::Address(10), message[0]->source);
+    ASSERT_EQ(Driver::Address(10), message[1]->source);
+    ASSERT_EQ(Driver::Address(10), message[2]->source);
+    ASSERT_EQ(Driver::Address(11), message[3]->source);
+    ASSERT_EQ(Driver::Address(11), message[4]->source);
+    ASSERT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
+    ASSERT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+    // 10 : [10][20][30]
+    // 11 : [10][20]
+    message[0]->unreceivedBytes = 10;
+    message[1]->unreceivedBytes = 20;
+    message[2]->unreceivedBytes = 30;
+    message[3]->unreceivedBytes = 10;
+    message[4]->unreceivedBytes = 20;
+
+    auto it = receiver->scheduledPeers.begin();
+
+    //--------------------------------------------------------------------------
+    // Remove message[4]; peer already at end.
+    // 10 : [10][20][30]
+    // 11 : [10]
+
+    it = Receiver::unschedule(message[4], message[4]->peer,
+                              &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
+    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+    EXPECT_EQ(3U, receiver->peerTable.at(10).scheduledMessages.size());
+    EXPECT_EQ(1U, receiver->peerTable.at(11).scheduledMessages.size());
+    EXPECT_EQ(receiver->scheduledPeers.end(), it);
+
+    //--------------------------------------------------------------------------
+    // Remove message[1]; peer in correct position.
+    // 10 : [10][30]
+    // 11 : [10]
+
+    it = Receiver::unschedule(message[1], message[1]->peer,
+                              &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
+    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+    EXPECT_EQ(2U, receiver->peerTable.at(10).scheduledMessages.size());
+    EXPECT_EQ(1U, receiver->peerTable.at(11).scheduledMessages.size());
+    EXPECT_EQ(std::next(receiver->scheduledPeers.begin()), it);
+
+    //--------------------------------------------------------------------------
+    // Remove message[0]; peer needs to be reordered.
+    // 11 : [10]
+    // 10 : [30]
+
+    it = Receiver::unschedule(message[0], message[0]->peer,
+                              &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(11));
+    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(10));
+    EXPECT_EQ(1U, receiver->peerTable.at(11).scheduledMessages.size());
+    EXPECT_EQ(1U, receiver->peerTable.at(10).scheduledMessages.size());
+    EXPECT_EQ(receiver->scheduledPeers.begin(), it);
+
+    //--------------------------------------------------------------------------
+    // Remove message[3]; peer needs to be removed.
+    // 10 : [30]
+
+    it = Receiver::unschedule(message[3], message[3]->peer,
+                              &receiver->scheduledPeers);
+
+    EXPECT_FALSE(receiver->scheduledPeers.contains(
+        &message[3]->peer->scheduledPeerNode));
+    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
+    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(10));
+    EXPECT_EQ(1U, receiver->peerTable.at(10).scheduledMessages.size());
+    EXPECT_EQ(0U, receiver->peerTable.at(11).scheduledMessages.size());
+    EXPECT_EQ(receiver->scheduledPeers.begin(), it);
+}
+
+TEST_F(ReceiverTest, updateSchedule)
+{
+    // 10 : [10]
+    // 11 : [20][30]
+    Receiver::Message* other[3];
+    for (uint64_t i = 0; i < 3; ++i) {
+        Protocol::MessageId id = {42, 10 + i};
+        other[i] = receiver->messagePool.construct(
+            &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
+        other[i]->id = id;
+        other[i]->source = Driver::Address(((i + 1) / 2) + 10);
+        other[i]->peer = Receiver::schedule(other[i], &receiver->peerTable,
+                                            &receiver->scheduledPeers);
+        other[i]->unreceivedBytes = 10 * (i + 1);
+    }
+    Receiver::Message* message = receiver->messagePool.construct(
+        &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
+    message->source = Driver::Address(11);
+    message->peer = Receiver::schedule(message, &receiver->peerTable,
+                                       &receiver->scheduledPeers);
+    ASSERT_EQ(&receiver->peerTable.at(10), other[0]->peer);
+    ASSERT_EQ(&receiver->peerTable.at(11), other[1]->peer);
+    ASSERT_EQ(&receiver->peerTable.at(11), other[2]->peer);
+    ASSERT_EQ(&receiver->peerTable.at(11), message->peer);
+    ASSERT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
+    ASSERT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+
+    //--------------------------------------------------------------------------
+    // Move message up within peer.
+    // 10 : [10]
+    // 11 : [20][XX][30]
+    message->unreceivedBytes = 25;
+
+    Receiver::updateSchedule(message, message->peer, &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+    Receiver::Peer* peer = &receiver->scheduledPeers.back();
+    auto it = peer->scheduledMessages.begin();
+    EXPECT_TRUE(
+        std::next(receiver->peerTable.at(11).scheduledMessages.begin()) ==
+        message->peer->scheduledMessages.get(&message->scheduledMessageNode));
+
+    //--------------------------------------------------------------------------
+    // Move message to front within peer.  No peer reordering.
+    // 10 : [10]
+    // 11 : [XX][20][30]
+    message->unreceivedBytes = 10;
+
+    Receiver::updateSchedule(message, message->peer, &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+    EXPECT_EQ(
+        receiver->peerTable.at(11).scheduledMessages.begin(),
+        message->peer->scheduledMessages.get(&message->scheduledMessageNode));
+
+    //--------------------------------------------------------------------------
+    // Reorder peer.
+    // 11 : [XX][20][30]
+    // 10 : [10]
+    message->unreceivedBytes = 9;
+
+    Receiver::updateSchedule(message, message->peer, &receiver->scheduledPeers);
+
+    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(11));
+    EXPECT_EQ(
+        receiver->peerTable.at(11).scheduledMessages.begin(),
+        message->peer->scheduledMessages.get(&message->scheduledMessageNode));
+}
+
+TEST_F(ReceiverTest, prioritize)
+{
+    struct Foo {
+        Foo()
+            : val(0)
+            , node(this)
+        {}
+        struct Compare {
+            bool operator()(const Foo& a, const Foo& b)
+            {
+                return a.val < b.val;
+            }
+        };
+        int val;
+        Intrusive::List<Foo>::Node node;
+    };
+
+    // [2][4][6][8]
+    Foo foo[4];
+    Intrusive::List<Foo> list;
+    for (int i = 0; i < 4; ++i) {
+        foo[i].val = i * 2 + 2;
+        list.push_back(&foo[i].node);
+    }
+
+    auto it = list.begin();
+    EXPECT_EQ(&foo[0], &(*it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+    EXPECT_EQ(&foo[3], &(*++it));
+
+    // [2][4][6][7]
+    foo[3].val = 7;
+    Receiver::prioritize<Foo>(&list, &foo[3].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[0], &(*it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+    EXPECT_EQ(&foo[3], &(*++it));
+
+    // [2][2][4][6]
+    foo[3].val = 2;
+    Receiver::prioritize<Foo>(&list, &foo[3].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[0], &(*it));
+    EXPECT_EQ(&foo[3], &(*++it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+
+    // [0][2][4][6]
+    foo[3].val = 0;
+    Receiver::prioritize<Foo>(&list, &foo[3].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[3], &(*it));
+    EXPECT_EQ(&foo[0], &(*++it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
 }
 
 }  // namespace
