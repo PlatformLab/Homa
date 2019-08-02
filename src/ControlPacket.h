@@ -41,6 +41,7 @@ send(Driver* driver, Driver::Address address, Args&&... args)
     new (packet->payload) PacketHeaderType(static_cast<Args&&>(args)...);
     packet->length = sizeof(PacketHeaderType);
     packet->address = address;
+    packet->priority = driver->getHighestPacketPriority();
     driver->sendPacket(packet);
     driver->releasePackets(&packet, 1);
 }
