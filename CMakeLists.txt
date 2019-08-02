@@ -136,7 +136,6 @@ target_compile_options(FakeDriver
 ## lib DpdkDriver ##############################################################
 add_library(DpdkDriver
     src/Drivers/DPDK/DpdkDriver.cc
-    src/Drivers/DPDK/DpdkDriverImpl.cc
     src/Drivers/DPDK/MacAddress.cc
 )
 add_library(Homa::DpdkDriver ALIAS DpdkDriver)
@@ -144,6 +143,8 @@ target_include_directories(DpdkDriver
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
         $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_link_libraries(DpdkDriver
     PRIVATE

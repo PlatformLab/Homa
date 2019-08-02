@@ -16,13 +16,11 @@
 #ifndef HOMA_INCLUDE_HOMA_DRIVERS_DPDK_DPDKDRIVER_H
 #define HOMA_INCLUDE_HOMA_DRIVERS_DPDK_DPDKDRIVER_H
 
-#include "Homa/Driver.h"
+#include <Homa/Driver.h>
 
 namespace Homa {
 namespace Drivers {
 namespace DPDK {
-// Forward declartion
-class DpdkDriverImpl;
 
 /**
  * A Driver for [DPDK](dpdk.org) communication. Simple packet send/receive style
@@ -93,6 +91,11 @@ class DpdkDriver : public Driver {
      */
     DpdkDriver(int port, NoEalInit _);
 
+    /**
+     * DpdkDriver Destructor.
+     */
+    virtual ~DpdkDriver();
+
     /// See Driver::getAddress()
     virtual Address getAddress(std::string const* const addressString);
     virtual Address getAddress(WireFormatAddress const* const wireAddress);
@@ -123,6 +126,9 @@ class DpdkDriver : public Driver {
     /// See Driver::getMaxPayloadSize()
     virtual uint32_t getMaxPayloadSize();
 
+    /// See Driver::getBandwidth()
+    virtual uint32_t getBandwidth();
+
     /// See Driver::getLocalAddress()
     virtual Driver::Address getLocalAddress();
 
@@ -136,9 +142,13 @@ class DpdkDriver : public Driver {
     virtual void setLocalAddress(std::string const* const addressString);
 
   private:
-    /// Contains the actually implementation of the driver.  Hides the details
-    /// of the driver from users of libDpdkDriver.
-    std::unique_ptr<DpdkDriverImpl> impl;
+    /// Contains the private members of the driver.  Hides the details of the
+    /// driver from users of libDpdkDriver.
+    char members[104];
+
+    // Disable copy and assign
+    DpdkDriver(const DpdkDriver&) = delete;
+    DpdkDriver& operator=(const DpdkDriver&) = delete;
 };
 
 }  // namespace DPDK
