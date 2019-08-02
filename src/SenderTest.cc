@@ -41,7 +41,7 @@ class SenderTest : public ::testing::Test {
     SenderTest()
         : mockDriver()
         , mockPacket(&payload)
-        , mockPolicyManager()
+        , mockPolicyManager(&mockDriver)
         , transport()
         , sender()
         , savedLogPolicy(Debug::getLogPolicy())

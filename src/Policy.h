@@ -17,6 +17,8 @@
 #define HOMA_CORE_POLICY_H
 
 #include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 #include <Homa/Driver.h>
 
@@ -79,10 +81,35 @@ class Manager {
     virtual void poll();
 
   private:
+    /**
+     * Holds the known network priority policy for a particular Homa::Transport
+     * on the network.
+     */
+    struct UnscheduledPolicy {
+        /// The version number of this policy.
+        uint8_t version;
+        /// The highest network priority that should be used for the unscheduled
+        /// bytes of a message.
+        int highestPriority;
+        /// The number of bytes below which a particular network priority should
+        /// be used.
+        std::vector<uint32_t> priorityCutoffBytes;
+    };
+
     /// Monitor-style lock
     SpinLock mutex;
     /// Driver used by the Transport that owns this Manager.
     Driver* const driver;
+    /// The unscheduled policy for the Transport that owns this Policy::Manager.
+    UnscheduledPolicy localUnscheduledPolicy;
+    /// The scheduled policy for the Transport that owns this Policy::Manager.
+    Scheduled localScheduledPolicy;
+    /// Collection of the known Policies for each peered Homa::Transport;
+    std::unordered_map<Driver::Address, UnscheduledPolicy> peerPolicies;
+    /// Number of bytes that can be transmitted in one round-trip-time.
+    const uint32_t RTT_BYTES;
+    /// The highest network packet priority that the driver supports.
+    const int MAX_PRIORITY;
 };
 
 }  // namespace Policy

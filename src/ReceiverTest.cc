@@ -45,7 +45,7 @@ class ReceiverTest : public ::testing::Test {
     ReceiverTest()
         : mockDriver()
         , mockPacket(&payload)
-        , mockPolicyManager()
+        , mockPolicyManager(&mockDriver)
         , payload()
         , receiver()
         , savedLogPolicy(Debug::getLogPolicy())

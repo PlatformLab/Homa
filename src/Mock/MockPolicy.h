@@ -29,8 +29,8 @@ namespace Mock {
  */
 class MockPolicyManager : public Core::Policy::Manager {
   public:
-    MockPolicyManager()
-        : Core::Policy::Manager(nullptr)
+    explicit MockPolicyManager(Driver* driver)
+        : Core::Policy::Manager(driver)
     {}
 
     MOCK_METHOD0(getResendPriority, int());

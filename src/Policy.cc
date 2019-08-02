@@ -15,15 +15,24 @@
 
 #include "Policy.h"
 
+#include <iterator>
+
 #include "Transport.h"
 
 namespace Homa {
 namespace Core {
 namespace Policy {
 
-namespace {
-const uint32_t RTT_TIME_US = 5;
-}
+/**
+ * Contains the default policy configuration information that is used when no
+ * other policy is specified.
+ */
+namespace Default {
+// Set to the policy configuration used to run homa+dpdk W3 in the Homa paper.
+const uint32_t RTT_TIME_US = 8;
+const uint32_t UNSCHEDULED_PRIORITY_CUTOFFS[] = {469, 5521, 15267};
+const int MAX_OVERCOMMIT_COUNT = 4;
+}  // namespace Default
 
 /**
  * Construct a Policy::Manager.
@@ -32,17 +41,38 @@ const uint32_t RTT_TIME_US = 5;
  *      The transport that owns this Policy::Manager.
  */
 Manager::Manager(Driver* driver)
-    : driver(driver)
-{}
+    : mutex()
+    , driver(driver)
+    , localUnscheduledPolicy()
+    , localScheduledPolicy()
+    , peerPolicies()
+    , RTT_BYTES(Default::RTT_TIME_US * (driver->getBandwidth() / 8))
+    , MAX_PRIORITY(driver->getHighestPacketPriority())
+{
+    // Set default unschedule policy
+    localUnscheduledPolicy.version = 0;
+    localUnscheduledPolicy.highestPriority = MAX_PRIORITY;
+    localUnscheduledPolicy.priorityCutoffBytes =
+        std::vector<uint32_t>(std::begin(Default::UNSCHEDULED_PRIORITY_CUTOFFS),
+                              std::end(Default::UNSCHEDULED_PRIORITY_CUTOFFS));
+
+    // Set default scheduled policy
+    localScheduledPolicy.maxScheduledPriority = std::max(
+        0, MAX_PRIORITY -
+               Util::downCast<int>(
+                   localUnscheduledPolicy.priorityCutoffBytes.size() + 1));
+    localScheduledPolicy.degreeOvercommitment = Default::MAX_OVERCOMMIT_COUNT;
+    localScheduledPolicy.scheduledByteLimit = RTT_BYTES;
+}
 
 /**
- * Return the network priority that should be used for resent packets (i.e.
- * packets that were lost and need to be resent).
+ * Return the network priority that should be used for resent packets
+ * (i.e. packets that were lost and need to be resent).
  */
 int
 Manager::getResendPriority()
 {
-    return 0;
+    return MAX_PRIORITY;
 }
 
 /**
@@ -56,19 +86,16 @@ Manager::getResendPriority()
 Scheduled
 Manager::getScheduledPolicy()
 {
-    Scheduled policy;
-    policy.maxScheduledPriority = 0;
-    policy.degreeOvercommitment = 1;
-    policy.scheduledByteLimit = RTT_TIME_US * (driver->getBandwidth() / 8);
-    return policy;
+    SpinLock::Lock lock(mutex);
+    return localScheduledPolicy;
 }
 
 /**
- * Return the unscheduled policy for messages of a particular size bound for a
- * particular Transport.
+ * Return the unscheduled policy for messages of a particular size bound for
+ * a particular Transport.
  *
- * Used by the Sender to decided the initial priority and number of unilaterally
- * "granted" (unscheduled) bytes for a new Message to be sent.
+ * Used by the Sender to decided the initial priority and number of
+ * unilaterally "granted" (unscheduled) bytes for a new Message to be sent.
  *
  * @param destination
  *      The policy for the Transport at this Address will be returned.
@@ -81,13 +108,30 @@ Unscheduled
 Manager::getUnscheduledPolicy(const Driver::Address destination,
                               const uint32_t messageLength)
 {
-    (void)destination;
-    (void)messageLength;
+    SpinLock::Lock lock(mutex);
     Unscheduled policy;
-    policy.version = 0;
-    policy.unscheduledByteLimit =
-        std::min(RTT_TIME_US * (driver->getBandwidth() / 8), messageLength);
-    policy.priority = 0;
+    auto ret = peerPolicies.insert({destination, UnscheduledPolicy()});
+    UnscheduledPolicy* peer = &ret.first->second;
+    bool inserted = ret.second;
+    if (inserted) {
+        // No existing peer policy; set policy to the default.
+        peer->version = 0;
+        peer->highestPriority = MAX_PRIORITY;
+        peer->priorityCutoffBytes = std::vector<uint32_t>(
+            std::begin(Default::UNSCHEDULED_PRIORITY_CUTOFFS),
+            std::end(Default::UNSCHEDULED_PRIORITY_CUTOFFS));
+    }
+    policy.version = peer->version;
+    policy.unscheduledByteLimit = RTT_BYTES;
+    int rank = 0;
+    int numCutoffs = peer->priorityCutoffBytes.size();
+    for (; rank < numCutoffs; ++rank) {
+        if (messageLength < peer->priorityCutoffBytes.at(rank)) {
+            policy.unscheduledByteLimit = messageLength;
+            break;
+        }
+    }
+    policy.priority = std::max(0, peer->highestPriority - rank);
     return policy;
 }
 
@@ -109,6 +153,7 @@ void
 Manager::signalNewMessage(const Driver::Address source, uint8_t policyVersion,
                           uint32_t messageLength)
 {
+    SpinLock::Lock lock(mutex);
     (void)source;
     (void)policyVersion;
     (void)messageLength;
@@ -120,7 +165,9 @@ Manager::signalNewMessage(const Driver::Address source, uint8_t policyVersion,
  */
 void
 Manager::poll()
-{}
+{
+    SpinLock::Lock lock(mutex);
+}
 
 }  // namespace Policy
 }  // namespace Core

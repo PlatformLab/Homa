@@ -255,6 +255,7 @@ add_executable(unit_test
     src/IntrusiveTest.cc
     src/MessageTest.cc
     src/ObjectPoolTest.cc
+    src/PolicyTest.cc
     src/ReceiverTest.cc
     src/SenderTest.cc
     src/SpinLockTest.cc
