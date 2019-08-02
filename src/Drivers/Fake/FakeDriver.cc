@@ -221,7 +221,7 @@ void
 FakeDriver::addressToWireFormat(const Address address,
                                 WireFormatAddress* wireAddress)
 {
-    *reinterpret_cast<Address*>(wireAddress->bytes) = address;
+    new (reinterpret_cast<Address*>(wireAddress->bytes)) Address(address);
 }
 
 /**
