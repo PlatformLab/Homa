@@ -103,8 +103,40 @@ listSearchTest()
     return PerfUtils::Cycles::toSeconds(stop - start) / run;
 }
 
+TestInfo mapFindTestInfo = {
+    "mapFind", "std::unordered_map::find()",
+    R"(Measure the cost of std::unordered_map<uint64_t, uint64_t>::find() for a
+map containing 10k elements.)"};
+double
+mapFindTest()
+{
+    std::unordered_map<uint64_t, uint64_t> map;
+
+    int count = 1000000;
+    int numKeys = 10000;
+    uint64_t keys[numKeys];
+    for (int i = 0; i < numKeys; ++i) {
+        keys[i] = std::rand();
+        map.insert({keys[i], 1234});
+    }
+    uint64_t sum = 0;
+
+    int run = 0;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    while (run < count) {
+        for (int i = 0; i < numKeys; ++i, ++run) {
+            auto it = map.find(keys[i]);
+            if (it != map.end()) {
+                sum += it->second;
+            }
+        }
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / run;
+}
+
 TestInfo mapLookupTestInfo = {
-    "mapLookup", "Lookup an element in a std::unordered_map",
+    "mapLookup", "std::unordered_map::at()",
     R"(Measure the lookup cost for a std::unordered_map<uint64_t, uint64_t>
 containing 10k elements.)"};
 double
@@ -126,6 +158,36 @@ mapLookupTest()
     while (run < count) {
         for (int i = 0; i < numKeys; ++i, ++run) {
             sum += map.at(keys[i]);
+        }
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / run;
+}
+
+TestInfo mapNullInsertTestInfo = {
+    "mapNullInsert", "std::unordered_map::insert() with existing key",
+    R"(Measure the cost to insert an existing element with an existing key into
+an std::unordered_map<uint64_t, uint64_t> containing 10k elements.)"};
+double
+mapNullInsertTest()
+{
+    std::unordered_map<uint64_t, uint64_t> map;
+
+    int count = 1000000;
+    int numKeys = 10000;
+    uint64_t keys[numKeys];
+    for (int i = 0; i < numKeys; ++i) {
+        keys[i] = std::rand();
+        map.insert({keys[i], 1234});
+    }
+    uint64_t sum = 0;
+
+    int run = 0;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    while (run < count) {
+        for (int i = 0; i < numKeys; ++i, ++run) {
+            auto it = map.insert({keys[i], 0});
+            sum += it.first->second;
         }
     }
     uint64_t stop = PerfUtils::Cycles::rdtscp();
@@ -194,7 +256,9 @@ struct TestCase {
 };
 TestCase tests[] = {
     {listSearchTest, &listSearchTestInfo},
+    {mapFindTest, &mapFindTestInfo},
     {mapLookupTest, &mapLookupTestInfo},
+    {mapNullInsertTest, &mapNullInsertTestInfo},
     {queueEstimatorTest, &queueEstimatorTestInfo},
     {rdtscTest, &rdtscTestInfo},
     {rdhrcTest, &rdhrcTestInfo},
