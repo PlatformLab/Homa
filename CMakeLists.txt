@@ -272,14 +272,14 @@ target_link_libraries(unit_test Homa PerfUtils)
 # Drivers/Fake Tests
 target_sources(unit_test
     PUBLIC
-        src/Drivers/Fake/FakeDriverTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Drivers/Fake/FakeDriverTest.cc
 )
 target_link_libraries(unit_test FakeDriver)
 
 #DPDK Tests
 target_sources(unit_test
     PUBLIC
-        src/Drivers/DPDK/MacAddressTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Drivers/DPDK/MacAddressTest.cc
 )
 target_link_libraries(unit_test DpdkDriver)
 
