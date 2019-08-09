@@ -57,6 +57,7 @@ RemoteOp::isReady()
             // Grant access to the received response.
             response = op->getInMessage();
             // Fall through to FAILED.
+            /* FALLTHRU */
         case Core::OpContext::State::FAILED:
             // Restore access to the request.
             request = op->getOutMessage();
