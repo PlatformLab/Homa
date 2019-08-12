@@ -108,7 +108,6 @@ target_compile_options(Homa
     PRIVATE
         -Wall
         -Wextra
-        $<$<CONFIG:Debug>:-Werror>
 )
 set_target_properties(Homa PROPERTIES
     VERSION ${Homa_VERSION}
@@ -135,7 +134,6 @@ target_compile_options(FakeDriver
     PRIVATE
         -Wall
         -Wextra
-        $<$<CONFIG:Debug>:-Werror>
 )
 
 ## lib DpdkDriver ##############################################################
@@ -162,7 +160,6 @@ target_compile_options(DpdkDriver
         -mssse3
         -Wall
         -Wextra
-        $<$<CONFIG:Debug>:-Werror>
 )
 
 ################################################################################
