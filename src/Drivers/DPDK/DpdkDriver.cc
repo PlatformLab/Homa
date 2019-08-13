@@ -325,7 +325,10 @@ DpdkDriver::sendPacket(Driver::Packet* packet)
 
     // Add the packet to the burst.
     SpinLock::Lock txLock(d->tx.mutex);
-    d->tx.stats.bufferedBytes += rte_pktmbuf_pkt_len(mbuf);
+    {
+        SpinLock::Lock statsLock(d->tx.stats.mutex);
+        d->tx.stats.bufferedBytes += rte_pktmbuf_pkt_len(mbuf);
+    }
     rte_eth_tx_buffer(d->port, 0, d->tx.buffer, mbuf);
 
     // Flush packets now if the driver is not corked.
@@ -479,6 +482,16 @@ DpdkDriver::getLocalAddress()
 {
     Internal* d = reinterpret_cast<Internal*>(members);
     return d->localMac.load().toAddress();
+}
+
+// See Driver::getQueuedBytes();
+uint32_t
+DpdkDriver::getQueuedBytes()
+{
+    Internal* d = reinterpret_cast<Internal*>(members);
+    SpinLock::Lock lock(d->tx.stats.mutex);
+    return d->tx.stats.bufferedBytes +
+           d->tx.stats.queueEstimator.getQueuedBytes();
 }
 
 void
@@ -656,6 +669,9 @@ Internal::_init()
             "using default of %d Mbps",
             bandwidthMbps.load());
     }
+    // Reset the queueEstimator with the updated bandwidth.
+    new (&tx.stats.queueEstimator)
+        Util::QueueEstimator<std::chrono::steady_clock>(bandwidthMbps);
 
     // create an in-memory ring, used as a software loopback in order to
     // handle packets that are addressed to the localhost.
@@ -748,16 +764,15 @@ Internal::txBurstCallback(uint16_t port_id, uint16_t queue,
 {
     (void)port_id;
     (void)queue;
-    // This method should only be called while processing a tx_burst which would
-    // only be called during a tx_buffer or tx_buffer_flush.  The tx.mutex is
-    // assumed to be held during this call.
-    Tx::Stats* stats = static_cast<Tx::Stats*>(user_param);
     uint64_t bytesToSend = 0;
     for (uint16_t i = 0; i < nb_pkts; ++i) {
         bytesToSend += rte_pktmbuf_pkt_len(pkts[i]);
     }
+    Tx::Stats* stats = static_cast<Tx::Stats*>(user_param);
+    SpinLock::Lock lock(stats->mutex);
     assert(bytesToSend <= stats->bufferedBytes);
     stats->bufferedBytes -= bytesToSend;
+    stats->queueEstimator.signalBytesSent(bytesToSend);
     return nb_pkts;
 }
 
@@ -768,15 +783,13 @@ void
 Internal::txBurstErrorCallback(struct rte_mbuf* pkts[], uint16_t unsent,
                                void* userdata)
 {
-    // This method should only be called while processing a tx_burst which would
-    // only be called during a tx_buffer or tx_buffer_flush.  The tx.mutex is
-    // assumed to be held during this call.
-    Tx::Stats* stats = static_cast<Tx::Stats*>(userdata);
     uint64_t bytesDropped = 0;
     for (int i = 0; i < unsent; ++i) {
         bytesDropped += rte_pktmbuf_pkt_len(pkts[i]);
         rte_pktmbuf_free(pkts[i]);
     }
+    Tx::Stats* stats = static_cast<Tx::Stats*>(userdata);
+    SpinLock::Lock lock(stats->mutex);
     assert(bytesDropped <= stats->bufferedBytes);
     stats->bufferedBytes -= bytesDropped;
 }

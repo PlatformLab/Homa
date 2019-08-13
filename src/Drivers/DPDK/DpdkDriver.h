@@ -17,7 +17,8 @@
 #define HOMA_DRIVERS_DPDK_DPDKDRIVER_H
 
 #include <Homa/Drivers/DPDK/DpdkDriver.h>
-#include <Homa/Drivers/Util/QueueEstimator.h>
+
+#include <chrono>
 
 #include <rte_common.h>
 #include <rte_config.h>
@@ -27,6 +28,8 @@
 #include <rte_memcpy.h>
 #include <rte_ring.h>
 #include <rte_version.h>
+
+#include <Homa/Drivers/Util/QueueEstimator.h>
 
 #include "ObjectPool.h"
 #include "SpinLock.h"
@@ -197,7 +200,7 @@ struct Internal {
             , stats()
         {}
 
-        /// Provides thread safe for transmit (tx) operations.
+        /// Provides thread safety for transmit (tx) operations.
         SpinLock mutex;
         /// Contains the packets buffered for sending when the driver is corked.
         struct rte_eth_dev_tx_buffer* buffer;
@@ -207,11 +210,18 @@ struct Internal {
              * Basic Constructor.
              */
             Stats()
-                : bufferedBytes(0)
+                : mutex()
+                , bufferedBytes(0)
+                , queueEstimator(0)
             {}
 
+            /// Provides thread safe access to the stats block.
+            SpinLock mutex;
             /// Number of bytes buffered but not sent.
             uint64_t bufferedBytes;
+            /// Estimates the number of bytes waiting to be transmitted in the
+            /// NICs transmit queue.
+            Util::QueueEstimator<std::chrono::steady_clock> queueEstimator;
         } stats;
     } tx;
 

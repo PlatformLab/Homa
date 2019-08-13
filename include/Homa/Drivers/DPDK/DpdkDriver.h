@@ -138,6 +138,9 @@ class DpdkDriver : public Driver {
     /// See Driver::getLocalAddress()
     virtual Driver::Address getLocalAddress();
 
+    /// See Driver::getQueuedBytes();
+    virtual uint32_t getQueuedBytes();
+
     /**
      * Override the local address provided to by the NIC. Used in testing when
      * the virtual NICs address is not actually routable.
@@ -150,7 +153,7 @@ class DpdkDriver : public Driver {
   private:
     /// Contains the private members of the driver.  Hides the details of the
     /// driver from users of libDpdkDriver.
-    char members[136];
+    char members[168];
 
     // Disable copy and assign
     DpdkDriver(const DpdkDriver&) = delete;
