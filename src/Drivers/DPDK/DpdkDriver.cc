@@ -19,11 +19,12 @@
 
 #include "DpdkDriver.h"
 
-#include "StringUtil.h"
-
-#include "../../CodeLocation.h"
-
 #include <unistd.h>
+
+#include <rte_malloc.h>
+
+#include "CodeLocation.h"
+#include "StringUtil.h"
 
 namespace Homa {
 
@@ -71,11 +72,11 @@ Internal::Internal(uint16_t port)
     , overflowBufferPool()
     , mbufPool(nullptr)
     , loopbackRing(nullptr)
-    , rxLock()
-    , txLock()
-    , hasTxLockFreeSupport(false)  // Set later if applicable
-    , hasHardwareFilter(true)      // Cleared later if not applicable
-    , bandwidthMbps(10000)         // Default bandwidth = 10 gbs
+    , rx()
+    , tx()
+    , hasHardwareFilter(true)  // Cleared later if not applicable
+    , corked(false)
+    , bandwidthMbps(10000)  // Default bandwidth = 10 gbs
 {}
 
 /**
@@ -120,7 +121,7 @@ DpdkDriver::DpdkDriver(int port, int argc, char* argv[])
 {
     // Construct the private members;
     static_assert(sizeof(members) == sizeof(Internal));
-    Internal* d = new (members) Internal(Util::downCast<uint16_t>(port));
+    Internal* d = new (members) Internal(Homa::Util::downCast<uint16_t>(port));
 
     // DPDK during initialization (rte_eal_init()) the running thread is pinned
     // to a single processor which may be not be what the applications wants.
@@ -168,7 +169,7 @@ DpdkDriver::DpdkDriver(int port, __attribute__((__unused__)) NoEalInit _)
     : members()
 {
     // Construct the private members;
-    Internal* d = new (members) Internal(Util::downCast<uint16_t>(port));
+    Internal* d = new (members) Internal(Homa::Util::downCast<uint16_t>(port));
     d->_init();
 }
 
@@ -235,121 +236,120 @@ void
 DpdkDriver::sendPacket(Driver::Packet* packet)
 {
     Internal* d = reinterpret_cast<Internal*>(members);
-    uint64_t bytesSent = 0;
-    // TODO(cstlee): Remove burst sending and replace with buffering.
-    const uint16_t numPackets = 1;
-    Driver::Packet* packets[1] = {packet};
-    constexpr uint16_t MAX_BURST = 32;
-    uint16_t nb_pkts = 0;
-    struct rte_mbuf* tx_pkts[MAX_BURST];
 
-    // Process each packet
-    for (uint16_t i = 0; i < numPackets; ++i) {
-        Internal::Packet* packet = static_cast<Internal::Packet*>(packets[i]);
-        bytesSent += packet->length;
-
-        struct rte_mbuf* mbuf = nullptr;
-        // If the packet is held in an Overflow buffer, we need to copy it out
-        // into a new mbuf.
-        if (unlikely(packet->bufType == Internal::Packet::OVERFLOW_BUF)) {
-            mbuf = rte_pktmbuf_alloc(d->mbufPool);
-            if (unlikely(NULL == mbuf)) {
-                uint32_t numMbufsAvail = rte_mempool_avail_count(d->mbufPool);
-                uint32_t numMbufsInUse = rte_mempool_in_use_count(d->mbufPool);
-                WARNING(
-                    "Failed to allocate a packet buffer; dropping packet; "
-                    "Failed to allocate a packet buffer; dropping packet; "
-                    "%u mbufs available, %u mbufs in use",
-                    numMbufsAvail, numMbufsInUse);
-                continue;
-            }
-            char* buf = rte_pktmbuf_append(
-                mbuf,
-                Util::downCast<uint16_t>(PACKET_HDR_LEN + packet->length));
-            if (unlikely(NULL == buf)) {
-                WARNING("rte_pktmbuf_append call failed; dropping packet");
-                rte_pktmbuf_free(mbuf);
-                continue;
-            }
-            char* data = buf + PACKET_HDR_LEN;
-            rte_memcpy(data, packet->payload, packet->length);
-        } else {
-            mbuf = packet->bufRef.mbuf;
-
-            // If the mbuf is still transmitting from a previous call to send,
-            // we don't want to modify the buffer when the send is occuring.
-            // Thus if the mbuf is in use and drop this send request.
-            if (unlikely(rte_mbuf_refcnt_read(mbuf) > 1)) {
-                NOTICE("Packet still sending; dropping resend request");
-                continue;
-            }
+    Internal::Packet* pkt = static_cast<Internal::Packet*>(packet);
+    struct rte_mbuf* mbuf = nullptr;
+    // If the packet is held in an Overflow buffer, we need to copy it out
+    // into a new mbuf.
+    if (unlikely(pkt->bufType == Internal::Packet::OVERFLOW_BUF)) {
+        mbuf = rte_pktmbuf_alloc(d->mbufPool);
+        if (unlikely(NULL == mbuf)) {
+            uint32_t numMbufsAvail = rte_mempool_avail_count(d->mbufPool);
+            uint32_t numMbufsInUse = rte_mempool_in_use_count(d->mbufPool);
+            WARNING(
+                "Failed to allocate a packet buffer; dropping packet; "
+                "Failed to allocate a packet buffer; dropping packet; "
+                "%u mbufs available, %u mbufs in use",
+                numMbufsAvail, numMbufsInUse);
+            return;
         }
-
-        // Fill out the destination and source MAC addresses plus the Ethernet
-        // frame type (i.e., IEEE 802.1Q VLAN tagging).
-        MacAddress macAddr(packet->address);
-        struct ether_hdr* ethHdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr*);
-        rte_memcpy(&ethHdr->d_addr, macAddr.address, ETHER_ADDR_LEN);
-        rte_memcpy(&ethHdr->s_addr, d->localMac.load().address, ETHER_ADDR_LEN);
-        ethHdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
-
-        // Fill out the PCP field and the Ethernet frame type of the
-        // encapsulated frame (DEI and VLAN ID are not relevant and trivially
-        // set to 0).
-        struct vlan_hdr* vlanHdr =
-            reinterpret_cast<struct vlan_hdr*>(ethHdr + 1);
-        vlanHdr->vlan_tci = rte_cpu_to_be_16(PRIORITY_TO_PCP[packet->priority]);
-        vlanHdr->eth_proto = rte_cpu_to_be_16(EthPayloadType::HOMA);
-
-        // In the normal case, we pre-allocate a pakcet's mbuf with enough
-        // storage to hold the MAX_PAYLOAD_SIZE.  If the actual payload is
-        // smaller, trim the mbuf to size to avoid sending unecessary bits.
-        uint32_t actualLength = PACKET_HDR_LEN + packet->length;
-        uint32_t mbufDataLength = rte_pktmbuf_pkt_len(mbuf);
-        if (actualLength < mbufDataLength) {
-            if (rte_pktmbuf_trim(mbuf, mbufDataLength - actualLength) < 0) {
-                WARNING(
-                    "Couldn't trim packet from length %u to %u; sending "
-                    "anyway.",
-                    mbufDataLength, actualLength);
-            }
+        char* buf = rte_pktmbuf_append(
+            mbuf, Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN + pkt->length));
+        if (unlikely(NULL == buf)) {
+            WARNING("rte_pktmbuf_append call failed; dropping packet");
+            rte_pktmbuf_free(mbuf);
+            return;
         }
+        char* data = buf + PACKET_HDR_LEN;
+        rte_memcpy(data, pkt->payload, pkt->length);
+    } else {
+        mbuf = pkt->bufRef.mbuf;
 
-        // loopback if src mac == dst mac
-        if (d->localMac.load().toAddress() == packet->address) {
-            struct rte_mbuf* mbuf_clone = rte_pktmbuf_clone(mbuf, d->mbufPool);
-            if (unlikely(mbuf_clone == NULL)) {
-                WARNING("Failed to clone packet for loopback; dropping packet");
-            }
-            int ret = rte_ring_enqueue(d->loopbackRing, mbuf_clone);
-            if (unlikely(ret != 0)) {
-                WARNING("rte_ring_enqueue returned %d; packet may be lost?",
-                        ret);
-                rte_pktmbuf_free(mbuf_clone);
-            }
-            continue;
+        // If the mbuf is still transmitting from a previous call to send,
+        // we don't want to modify the buffer when the send is occuring.
+        // Thus if the mbuf is in use and drop this send request.
+        if (unlikely(rte_mbuf_refcnt_read(mbuf) > 1)) {
+            NOTICE("Packet still sending; dropping resend request");
+            return;
         }
-
-        // If the packet is held in an mbuf, retain access to it so that the
-        // processing of sending the mbuf won't free it.
-        if (likely(packet->bufType == Internal::Packet::MBUF)) {
-            rte_pktmbuf_refcnt_update(mbuf, 1);
-        }
-
-        // Add the packet to the burst.
-        // If the tx_pkts is already full, send out a burst now before
-        // processing more packets.
-        if (nb_pkts >= MAX_BURST) {
-            d->_sendPackets(tx_pkts, nb_pkts);
-            nb_pkts = 0;
-        }
-        tx_pkts[nb_pkts++] = mbuf;
     }
 
-    // Send out the packets once we finished processing them.
-    d->_sendPackets(tx_pkts, nb_pkts);
+    // Fill out the destination and source MAC addresses plus the Ethernet
+    // frame type (i.e., IEEE 802.1Q VLAN tagging).
+    MacAddress macAddr(pkt->address);
+    struct ether_hdr* ethHdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr*);
+    rte_memcpy(&ethHdr->d_addr, macAddr.address, ETHER_ADDR_LEN);
+    rte_memcpy(&ethHdr->s_addr, d->localMac.load().address, ETHER_ADDR_LEN);
+    ethHdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
 
-    // bytesSent;
+    // Fill out the PCP field and the Ethernet frame type of the
+    // encapsulated frame (DEI and VLAN ID are not relevant and trivially
+    // set to 0).
+    struct vlan_hdr* vlanHdr = reinterpret_cast<struct vlan_hdr*>(ethHdr + 1);
+    vlanHdr->vlan_tci = rte_cpu_to_be_16(PRIORITY_TO_PCP[pkt->priority]);
+    vlanHdr->eth_proto = rte_cpu_to_be_16(EthPayloadType::HOMA);
+
+    // In the normal case, we pre-allocate a pakcet's mbuf with enough
+    // storage to hold the MAX_PAYLOAD_SIZE.  If the actual payload is
+    // smaller, trim the mbuf to size to avoid sending unecessary bits.
+    uint32_t actualLength = PACKET_HDR_LEN + pkt->length;
+    uint32_t mbufDataLength = rte_pktmbuf_pkt_len(mbuf);
+    if (actualLength < mbufDataLength) {
+        if (rte_pktmbuf_trim(mbuf, mbufDataLength - actualLength) < 0) {
+            WARNING(
+                "Couldn't trim packet from length %u to %u; sending "
+                "anyway.",
+                mbufDataLength, actualLength);
+        }
+    }
+
+    // loopback if src mac == dst mac
+    if (d->localMac.load().toAddress() == pkt->address) {
+        struct rte_mbuf* mbuf_clone = rte_pktmbuf_clone(mbuf, d->mbufPool);
+        if (unlikely(mbuf_clone == NULL)) {
+            WARNING("Failed to clone packet for loopback; dropping packet");
+        }
+        int ret = rte_ring_enqueue(d->loopbackRing, mbuf_clone);
+        if (unlikely(ret != 0)) {
+            WARNING("rte_ring_enqueue returned %d; packet may be lost?", ret);
+            rte_pktmbuf_free(mbuf_clone);
+        }
+        return;
+    }
+
+    // If the packet is held in an mbuf, retain access to it so that the
+    // processing of sending the mbuf won't free it.
+    if (likely(pkt->bufType == Internal::Packet::MBUF)) {
+        rte_pktmbuf_refcnt_update(mbuf, 1);
+    }
+
+    // Add the packet to the burst.
+    SpinLock::Lock txLock(d->tx.mutex);
+    d->tx.stats.bufferedBytes += rte_pktmbuf_pkt_len(mbuf);
+    rte_eth_tx_buffer(d->port, 0, d->tx.buffer, mbuf);
+
+    // Flush packets now if the driver is not corked.
+    if (!d->corked) {
+        rte_eth_tx_buffer_flush(d->port, 0, d->tx.buffer);
+    }
+}
+
+// See Driver::cork()
+void
+DpdkDriver::cork()
+{
+    Internal* d = reinterpret_cast<Internal*>(members);
+    d->corked.store(true);
+}
+
+// See Driver::uncork()
+void
+DpdkDriver::uncork()
+{
+    Internal* d = reinterpret_cast<Internal*>(members);
+    SpinLock::Lock txLock(d->tx.mutex);
+    d->corked.store(false);
+    rte_eth_tx_buffer_flush(d->port, 0, d->tx.buffer);
 }
 
 // See Driver::receivePackets()
@@ -370,9 +370,9 @@ DpdkDriver::receivePackets(uint32_t maxPackets,
     // as well as from the loopback ring.
     uint32_t incomingPkts = 0;
     {
-        SpinLock::Lock lock(d->rxLock);
-        incomingPkts = rte_eth_rx_burst(d->port, 0, mPkts,
-                                        Util::downCast<uint16_t>(maxPackets));
+        SpinLock::Lock lock(d->rx.mutex);
+        incomingPkts = rte_eth_rx_burst(
+            d->port, 0, mPkts, Homa::Util::downCast<uint16_t>(maxPackets));
     }
 
     uint32_t loopbackPkts = rte_ring_count(d->loopbackRing);
@@ -455,7 +455,7 @@ DpdkDriver::releasePackets(Driver::Packet* packets[], uint16_t numPackets)
 int
 DpdkDriver::getHighestPacketPriority()
 {
-    return Util::arrayLength(PRIORITY_TO_PCP) - 1;
+    return Homa::Util::arrayLength(PRIORITY_TO_PCP) - 1;
 }
 
 // See Driver::getMaxPayloadSize()
@@ -521,7 +521,6 @@ Internal::_init()
 {
     struct ether_addr mac;
     struct rte_eth_conf portConf;
-    struct rte_eth_dev_info devInfo;
     int ret;
     uint16_t mtu;
 
@@ -574,17 +573,37 @@ Internal::_init()
         }
     }
 
-    // Check if packets can be sent without locks.
-    rte_eth_dev_info_get(port, &devInfo);
-    if (devInfo.tx_offload_capa & DEV_TX_OFFLOAD_MT_LOCKFREE) {
-        hasTxLockFreeSupport = true;
-    }
-
     // setup and initialize the receive and transmit NIC queues,
     // and activate the port.
     rte_eth_rx_queue_setup(port, 0, NDESC, rte_eth_dev_socket_id(port), NULL,
                            mbufPool);
     rte_eth_tx_queue_setup(port, 0, NDESC, rte_eth_dev_socket_id(port), NULL);
+
+    // Install tx callback to track NIC queue length.
+    if (rte_eth_add_tx_callback(port, 0, txBurstCallback, &tx.stats) == NULL) {
+        throw DriverInitFailure(
+            HERE_STR,
+            StringUtil::format("Cannot set tx callback on port %u", port));
+    }
+
+    // Initialize TX buffers
+    tx.buffer = static_cast<rte_eth_dev_tx_buffer*>(
+        rte_zmalloc_socket("tx_buffer", RTE_ETH_TX_BUFFER_SIZE(MAX_PKT_BURST),
+                           0, rte_eth_dev_socket_id(port)));
+    if (tx.buffer == NULL) {
+        throw DriverInitFailure(
+            HERE_STR, StringUtil::format(
+                          "Cannot allocate buffer for tx on port %u", port));
+    }
+    rte_eth_tx_buffer_init(tx.buffer, MAX_PKT_BURST);
+    ret = rte_eth_tx_buffer_set_err_callback(tx.buffer, txBurstErrorCallback,
+                                             &tx.stats);
+    if (ret < 0) {
+        throw DriverInitFailure(
+            HERE_STR,
+            StringUtil::format(
+                "Cannot set error callback for tx buffer on port %u", port));
+    }
 
     // get the current MTU.
     ret = rte_eth_dev_get_mtu(port, &mtu);
@@ -647,12 +666,8 @@ Internal::_init()
                                          rte_strerror(rte_errno)));
     }
 
-    NOTICE(
-        "DpdkDriver address: %s, bandwidth: %d Mbits/sec, MTU: %u, "
-        "lock-free "
-        "tx support: %s",
-        localMac.load().toString().c_str(), bandwidthMbps.load(), mtu,
-        hasTxLockFreeSupport ? "YES" : "NO");
+    NOTICE("DpdkDriver address: %s, bandwidth: %d Mbits/sec, MTU: %u",
+           localMac.load().toString().c_str(), bandwidthMbps.load(), mtu);
 }
 
 /**
@@ -689,7 +704,8 @@ Internal::_allocMbufPacket()
     }
 
     char* buf = rte_pktmbuf_append(
-        mbuf, Util::downCast<uint16_t>(PACKET_HDR_LEN + MAX_PAYLOAD_SIZE));
+        mbuf,
+        Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN + MAX_PAYLOAD_SIZE));
 
     if (unlikely(NULL == buf)) {
         NOTICE("rte_pktmbuf_append call failed; dropping packet");
@@ -706,36 +722,63 @@ Internal::_allocMbufPacket()
 }
 
 /**
- * Queue a set of mbuf packets to be sent by the NIC.
+ * Called before a burst of packets is transmitted to update the transmit stats.
  *
- * @param tx_pkts
- *      Array of mbuf packets to be sent.
+ * This callback's signature is defined by DPDK.
+ *
+ * @param port_id
+ *      The Ethernet port on which TX is being performed.
+ * @param queue
+ *      The queue on the Ethernet port which is being used to transmit the
+ *      packets.
+ * @param pkts
+ *      The burst of packets that are about to be transmitted.
  * @param nb_pkts
- *      Number of packets to send.
+ *      The number of packets in the burst pointed to by "pkts".
+ * @param user_param
+ *      The arbitrary user parameter passed in by the application when the
+ *      callback was originally configured.
+ * @return
+ *      The number of packets to be written to the NIC.
+ */
+uint16_t
+Internal::txBurstCallback(uint16_t port_id, uint16_t queue,
+                          struct rte_mbuf* pkts[], uint16_t nb_pkts,
+                          void* user_param)
+{
+    (void)port_id;
+    (void)queue;
+    // This method should only be called while processing a tx_burst which would
+    // only be called during a tx_buffer or tx_buffer_flush.  The tx.mutex is
+    // assumed to be held during this call.
+    Tx::Stats* stats = static_cast<Tx::Stats*>(user_param);
+    uint64_t bytesToSend = 0;
+    for (uint16_t i = 0; i < nb_pkts; ++i) {
+        bytesToSend += rte_pktmbuf_pkt_len(pkts[i]);
+    }
+    assert(bytesToSend <= stats->bufferedBytes);
+    stats->bufferedBytes -= bytesToSend;
+    return nb_pkts;
+}
+
+/**
+ * Called to process the packets cannot be sent.
  */
 void
-Internal::_sendPackets(struct rte_mbuf* tx_pkts[], uint16_t nb_pkts)
+Internal::txBurstErrorCallback(struct rte_mbuf* pkts[], uint16_t unsent,
+                               void* userdata)
 {
-    uint16_t pkts_sent = 0;
-    uint32_t attempts = 0;
-    uint16_t ret = 0;
-    while (pkts_sent < nb_pkts) {
-        if (unlikely(attempts++ > 0)) {
-            NOTICE(
-                "rte_eth_tx_burst sent %u packets on attempt %u; %u of %u "
-                "packets sent; trying again on remaining packets",
-                ret, attempts, pkts_sent, nb_pkts);
-        }
-        // calls to rte_eth_tx_burst() may require a software lock.
-        std::unique_lock<SpinLock> lock(txLock, std::defer_lock);
-        if (!hasTxLockFreeSupport) {
-            lock.lock();
-        }
-
-        ret = rte_eth_tx_burst(port, 0, &(tx_pkts[pkts_sent]),
-                               nb_pkts - pkts_sent);
-        pkts_sent += ret;
+    // This method should only be called while processing a tx_burst which would
+    // only be called during a tx_buffer or tx_buffer_flush.  The tx.mutex is
+    // assumed to be held during this call.
+    Tx::Stats* stats = static_cast<Tx::Stats*>(userdata);
+    uint64_t bytesDropped = 0;
+    for (int i = 0; i < unsent; ++i) {
+        bytesDropped += rte_pktmbuf_pkt_len(pkts[i]);
+        rte_pktmbuf_free(pkts[i]);
     }
+    assert(bytesDropped <= stats->bufferedBytes);
+    stats->bufferedBytes -= bytesDropped;
 }
 
 }  // namespace DPDK

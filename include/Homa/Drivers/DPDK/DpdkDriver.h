@@ -113,6 +113,12 @@ class DpdkDriver : public Driver {
     /// See Driver::sendPacket()
     virtual void sendPacket(Packet* packet);
 
+    /// See Driver::cork()
+    virtual void cork();
+
+    /// See Driver::uncork()
+    virtual void uncork();
+
     /// See Driver::receivePackets()
     virtual uint32_t receivePackets(uint32_t maxPackets,
                                     Packet* receivedPackets[]);
@@ -144,7 +150,7 @@ class DpdkDriver : public Driver {
   private:
     /// Contains the private members of the driver.  Hides the details of the
     /// driver from users of libDpdkDriver.
-    char members[104];
+    char members[136];
 
     // Disable copy and assign
     DpdkDriver(const DpdkDriver&) = delete;

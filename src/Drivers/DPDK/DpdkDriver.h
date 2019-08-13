@@ -17,6 +17,7 @@
 #define HOMA_DRIVERS_DPDK_DPDKDRIVER_H
 
 #include <Homa/Drivers/DPDK/DpdkDriver.h>
+#include <Homa/Drivers/Util/QueueEstimator.h>
 
 #include <rte_common.h>
 #include <rte_config.h>
@@ -61,6 +62,9 @@ const int MEMPOOL_CACHE_SIZE = 32;
 // Prevents applications from claiming more mbufs once the number of available
 // mbufs reaches this level.
 const uint32_t NB_MBUF_RESERVED = 1024;
+
+// The number of packets that the driver can buffer while corked.
+const uint16_t MAX_PKT_BURST = 32;
 
 /// Size of VLAN tag, in bytes. We are using the PCP (Priority Code Point)
 /// field defined in the VLAN tag to specify the packet priority.
@@ -138,9 +142,14 @@ struct Internal {
     void _eal_init(int argc, char* argv[]);
     void _init();
     Packet* _allocMbufPacket();
-    void _sendPackets(struct rte_mbuf* tx_pkts[], uint16_t nb_pkts);
+    static uint16_t txBurstCallback(uint16_t port_id, uint16_t queue,
+                                    struct rte_mbuf* pkts[], uint16_t nb_pkts,
+                                    void* user_param);
+    static void txBurstErrorCallback(struct rte_mbuf* pkts[], uint16_t unsent,
+                                     void* userdata);
 
-    /// Stores the NIC's physical port id addressed by the instantiated driver.
+    /// Stores the NIC's physical port id addressed by the instantiated
+    /// driver.
     const uint16_t port;
 
     /// Stores the MAC address of the NIC (either native or set by override).
@@ -164,17 +173,54 @@ struct Internal {
     /// the HW queues.
     struct rte_ring* loopbackRing;
 
-    /// Provides thread safety for receive (rx) operations.
-    SpinLock rxLock;
+    /// Members involved with receive (rx) operations.
+    struct Rx {
+        /**
+         * Basic Constructor.
+         */
+        Rx()
+            : mutex()
+        {}
 
-    /// Provides thread safe for transmit (tx) operations.
-    SpinLock txLock;
+        /// Provides thread safety for receive (rx) operations.
+        SpinLock mutex;
+    } rx;
 
-    /// NIC allows queuing of transmit packets without holding a software lock.
-    std::atomic<bool> hasTxLockFreeSupport;
+    /// Members involved with transmit (tx) operations.
+    struct Tx {
+        /**
+         * Basic Constructor.
+         */
+        Tx()
+            : mutex()
+            , buffer(nullptr)
+            , stats()
+        {}
+
+        /// Provides thread safe for transmit (tx) operations.
+        SpinLock mutex;
+        /// Contains the packets buffered for sending when the driver is corked.
+        struct rte_eth_dev_tx_buffer* buffer;
+        /// Contains the transmit statistics.
+        struct Stats {
+            /**
+             * Basic Constructor.
+             */
+            Stats()
+                : bufferedBytes(0)
+            {}
+
+            /// Number of bytes buffered but not sent.
+            uint64_t bufferedBytes;
+        } stats;
+    } tx;
 
     /// Hardware packet filter is provided by the NIC
     std::atomic<bool> hasHardwareFilter;
+
+    /// True if the Driver should buffer sends for batched transmission. False,
+    /// if the Driver should
+    std::atomic<bool> corked;
 
     /// Effective network bandwidth, in Mbits/second.
     std::atomic<uint32_t> bandwidthMbps;
