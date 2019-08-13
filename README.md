@@ -37,7 +37,7 @@ This implementation is under active development but is currently incomplete.
 
 Required:
   * CMake (>= 3.11)
-  * DPDK (17.11)
+  * DPDK (18.11)
   
 Optional:
   * Doxygen

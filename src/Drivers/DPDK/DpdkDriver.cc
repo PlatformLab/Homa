@@ -63,12 +63,12 @@ Internal::Packet::Packet(OverflowBuffer* overflowBuf)
 /**
  * Constructor for the internal state of a DpdkDriver.
  */
-Internal::Internal()
-    : packetLock()
+Internal::Internal(uint16_t port)
+    : port(port)
+    , localMac(MacAddress(Driver::Address(0)))
+    , packetLock()
     , packetPool()
     , overflowBufferPool()
-    , localMac()
-    , portId(0)
     , mbufPool(nullptr)
     , loopbackRing(nullptr)
     , rxLock()
@@ -120,7 +120,7 @@ DpdkDriver::DpdkDriver(int port, int argc, char* argv[])
 {
     // Construct the private members;
     static_assert(sizeof(members) == sizeof(Internal));
-    Internal* d = new (members) Internal;
+    Internal* d = new (members) Internal(Util::downCast<uint16_t>(port));
 
     // DPDK during initialization (rte_eal_init()) the running thread is pinned
     // to a single processor which may be not be what the applications wants.
@@ -138,7 +138,7 @@ DpdkDriver::DpdkDriver(int port, int argc, char* argv[])
     }
 
     d->_eal_init(argc, argv);
-    d->_init(port);
+    d->_init();
 
     // restore the original thread affinity
     s = pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
@@ -168,8 +168,8 @@ DpdkDriver::DpdkDriver(int port, __attribute__((__unused__)) NoEalInit _)
     : members()
 {
     // Construct the private members;
-    Internal* d = new (members) Internal;
-    d->_init(port);
+    Internal* d = new (members) Internal(Util::downCast<uint16_t>(port));
+    d->_init();
 }
 
 /**
@@ -181,8 +181,8 @@ DpdkDriver::~DpdkDriver()
     // Free the various allocated resources (e.g. ring, mempool) and close
     // the NIC.
     rte_ring_free(d->loopbackRing);
-    rte_eth_dev_stop(d->portId);
-    rte_eth_dev_close(d->portId);
+    rte_eth_dev_stop(d->port);
+    rte_eth_dev_close(d->port);
     rte_mempool_free(d->mbufPool);
 }
 
@@ -290,7 +290,7 @@ DpdkDriver::sendPacket(Driver::Packet* packet)
         MacAddress macAddr(packet->address);
         struct ether_hdr* ethHdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr*);
         rte_memcpy(&ethHdr->d_addr, macAddr.address, ETHER_ADDR_LEN);
-        rte_memcpy(&ethHdr->s_addr, d->localMac->address, ETHER_ADDR_LEN);
+        rte_memcpy(&ethHdr->s_addr, d->localMac.load().address, ETHER_ADDR_LEN);
         ethHdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
 
         // Fill out the PCP field and the Ethernet frame type of the
@@ -316,7 +316,7 @@ DpdkDriver::sendPacket(Driver::Packet* packet)
         }
 
         // loopback if src mac == dst mac
-        if (d->localMac.get()->toAddress() == packet->address) {
+        if (d->localMac.load().toAddress() == packet->address) {
             struct rte_mbuf* mbuf_clone = rte_pktmbuf_clone(mbuf, d->mbufPool);
             if (unlikely(mbuf_clone == NULL)) {
                 WARNING("Failed to clone packet for loopback; dropping packet");
@@ -371,7 +371,7 @@ DpdkDriver::receivePackets(uint32_t maxPackets,
     uint32_t incomingPkts = 0;
     {
         SpinLock::Lock lock(d->rxLock);
-        incomingPkts = rte_eth_rx_burst(d->portId, 0, mPkts,
+        incomingPkts = rte_eth_rx_burst(d->port, 0, mPkts,
                                         Util::downCast<uint16_t>(maxPackets));
     }
 
@@ -478,16 +478,16 @@ Driver::Address
 DpdkDriver::getLocalAddress()
 {
     Internal* d = reinterpret_cast<Internal*>(members);
-    return d->localMac.get()->toAddress();
+    return d->localMac.load().toAddress();
 }
 
 void
 DpdkDriver::setLocalAddress(std::string const* const addressString)
 {
     Internal* d = reinterpret_cast<Internal*>(members);
-    d->localMac.construct(addressString->c_str());
+    d->localMac.store(MacAddress(addressString->c_str()));
     NOTICE("Driver address override; new address: %s",
-           d->localMac->toString().c_str());
+           d->localMac.load().toString().c_str());
 }
 
 /**
@@ -515,23 +515,18 @@ Internal::_eal_init(int argc, char* argv[])
  * construction.
  *
  * Separated out to be used by different constructor methods.
- *
- * @param port
- *      Selects which physical port to use for communication.
  */
 void
-Internal::_init(int port)
+Internal::_init()
 {
     struct ether_addr mac;
-    uint8_t numPorts;
     struct rte_eth_conf portConf;
     struct rte_eth_dev_info devInfo;
     int ret;
     uint16_t mtu;
 
-    portId = Util::downCast<uint8_t>(port);
-    std::string poolName = StringUtil::format("homa_mbuf_pool_%u", portId);
-    std::string ringName = StringUtil::format("homa_loopback_ring_%u", portId);
+    std::string poolName = StringUtil::format("homa_mbuf_pool_%u", port);
+    std::string ringName = StringUtil::format("homa_loopback_ring_%u", port);
 
     NOTICE("Using DPDK version %s", rte_version());
 
@@ -547,34 +542,31 @@ Internal::_init(int port)
     }
 
     // ensure that DPDK was able to detect a compatible and available NIC
-    numPorts = rte_eth_dev_count();
-
-    if (numPorts <= portId) {
+    if (!rte_eth_dev_is_valid_port(port)) {
         throw DriverInitFailure(
-            HERE_STR, StringUtil::format(
-                          "Ethernet port %u doesn't exist (%u ports available)",
-                          portId, numPorts));
+            HERE_STR,
+            StringUtil::format("Ethernet port %u doesn't exist", port));
     }
 
     // Read the MAC address from the NIC via DPDK.
-    rte_eth_macaddr_get(portId, &mac);
-    localMac.construct(mac.addr_bytes);
+    rte_eth_macaddr_get(port, &mac);
+    localMac.store(MacAddress(mac.addr_bytes));
 
     // configure some default NIC port parameters
     memset(&portConf, 0, sizeof(portConf));
     portConf.rxmode.max_rx_pkt_len = ETHER_MAX_VLAN_FRAME_LEN;
-    rte_eth_dev_configure(portId, 1, 1, &portConf);
+    rte_eth_dev_configure(port, 1, 1, &portConf);
 
     // Set up a NIC/HW-based filter on the ethernet type so that only
     // traffic to a particular port is received by this driver.
     struct rte_eth_ethertype_filter filter;
-    ret = rte_eth_dev_filter_supported(portId, RTE_ETH_FILTER_ETHERTYPE);
+    ret = rte_eth_dev_filter_supported(port, RTE_ETH_FILTER_ETHERTYPE);
     if (ret < 0) {
-        NOTICE("ethertype filter is not supported on port %u.", portId);
+        NOTICE("ethertype filter is not supported on port %u.", port);
         hasHardwareFilter = false;
     } else {
         memset(&filter, 0, sizeof(filter));
-        ret = rte_eth_dev_filter_ctrl(portId, RTE_ETH_FILTER_ETHERTYPE,
+        ret = rte_eth_dev_filter_ctrl(port, RTE_ETH_FILTER_ETHERTYPE,
                                       RTE_ETH_FILTER_ADD, &filter);
         if (ret < 0) {
             WARNING("failed to add ethertype filter\n");
@@ -583,56 +575,54 @@ Internal::_init(int port)
     }
 
     // Check if packets can be sent without locks.
-    rte_eth_dev_info_get(portId, &devInfo);
+    rte_eth_dev_info_get(port, &devInfo);
     if (devInfo.tx_offload_capa & DEV_TX_OFFLOAD_MT_LOCKFREE) {
         hasTxLockFreeSupport = true;
     }
 
     // setup and initialize the receive and transmit NIC queues,
     // and activate the port.
-    rte_eth_rx_queue_setup(portId, 0, NDESC, rte_eth_dev_socket_id(portId),
-                           NULL, mbufPool);
-    rte_eth_tx_queue_setup(portId, 0, NDESC, rte_eth_dev_socket_id(portId),
-                           NULL);
+    rte_eth_rx_queue_setup(port, 0, NDESC, rte_eth_dev_socket_id(port), NULL,
+                           mbufPool);
+    rte_eth_tx_queue_setup(port, 0, NDESC, rte_eth_dev_socket_id(port), NULL);
 
     // get the current MTU.
-    ret = rte_eth_dev_get_mtu(portId, &mtu);
+    ret = rte_eth_dev_get_mtu(port, &mtu);
     if (ret < 0) {
         throw DriverInitFailure(
             HERE_STR,
             StringUtil::format("rte_eth_dev_get_mtu on port %u returned "
                                "ENODEV; unable to read current mtu",
-                               portId));
+                               port));
     }
     // set the MTU that the NIC port should support
     if (mtu != MAX_PAYLOAD_SIZE) {
-        ret = rte_eth_dev_set_mtu(portId, MAX_PAYLOAD_SIZE);
+        ret = rte_eth_dev_set_mtu(port, MAX_PAYLOAD_SIZE);
         if (ret != 0) {
             throw DriverInitFailure(
                 HERE_STR,
                 StringUtil::format("Failed to set the MTU on Ethernet port %u: "
                                    "%s; current MTU is %u",
-                                   portId, strerror(ret), mtu));
+                                   port, strerror(ret), mtu));
         }
         mtu = MAX_PAYLOAD_SIZE;
     }
 
-    ret = rte_eth_dev_start(portId);
+    ret = rte_eth_dev_start(port);
     if (ret != 0) {
         throw DriverInitFailure(
             HERE_STR,
-            StringUtil::format("Couldn't start port %u, error %d (%s)", portId,
+            StringUtil::format("Couldn't start port %u, error %d (%s)", port,
                                ret, strerror(ret)));
     }
 
     // Retrieve the link speed and compute information based on it.
     struct rte_eth_link link;
-    rte_eth_link_get(portId, &link);
+    rte_eth_link_get(port, &link);
     if (!link.link_status) {
         throw DriverInitFailure(
-            HERE_STR,
-            StringUtil::format("Failed to detect a link on Ethernet port %u",
-                               portId));
+            HERE_STR, StringUtil::format(
+                          "Failed to detect a link on Ethernet port %u", port));
     }
     if (link.link_speed != ETH_SPEED_NUM_NONE) {
         // Be conservative about the link speed. We use bandwidth in
@@ -645,7 +635,7 @@ Internal::_init(int port)
         WARNING(
             "Can't retrieve network bandwidth from DPDK; "
             "using default of %d Mbps",
-            bandwidthMbps);
+            bandwidthMbps.load());
     }
 
     // create an in-memory ring, used as a software loopback in order to
@@ -661,7 +651,7 @@ Internal::_init(int port)
         "DpdkDriver address: %s, bandwidth: %d Mbits/sec, MTU: %u, "
         "lock-free "
         "tx support: %s",
-        localMac->toString().c_str(), bandwidthMbps, mtu,
+        localMac.load().toString().c_str(), bandwidthMbps.load(), mtu,
         hasTxLockFreeSupport ? "YES" : "NO");
 }
 
@@ -742,7 +732,7 @@ Internal::_sendPackets(struct rte_mbuf* tx_pkts[], uint16_t nb_pkts)
             lock.lock();
         }
 
-        ret = rte_eth_tx_burst(portId, 0, &(tx_pkts[pkts_sent]),
+        ret = rte_eth_tx_burst(port, 0, &(tx_pkts[pkts_sent]),
                                nb_pkts - pkts_sent);
         pkts_sent += ret;
     }

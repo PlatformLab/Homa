@@ -134,11 +134,17 @@ struct Internal {
         Packet& operator=(const Packet&) = delete;
     };
 
-    Internal();
+    explicit Internal(uint16_t port);
     void _eal_init(int argc, char* argv[]);
-    void _init(int port);
+    void _init();
     Packet* _allocMbufPacket();
     void _sendPackets(struct rte_mbuf* tx_pkts[], uint16_t nb_pkts);
+
+    /// Stores the NIC's physical port id addressed by the instantiated driver.
+    const uint16_t port;
+
+    /// Stores the MAC address of the NIC (either native or set by override).
+    std::atomic<MacAddress> localMac;
 
     /// Provides thread safety for Packet management operations.
     SpinLock packetLock;
@@ -149,12 +155,6 @@ struct Internal {
 
     /// Provides memory allocation for packet storage when mbuf are running out.
     ObjectPool<OverflowBuffer> overflowBufferPool;
-
-    /// Stores the MAC address of the NIC (either native or overriden).
-    Tub<MacAddress> localMac;
-
-    /// Stores the NIC's physical port id addressed by the instantiated driver.
-    uint8_t portId;
 
     /// Holds packet buffers that are dequeued from the NIC's HW queues
     /// via DPDK.
@@ -167,17 +167,17 @@ struct Internal {
     /// Provides thread safety for receive (rx) operations.
     SpinLock rxLock;
 
-    /// Provides thread safte for transmit (tx) operations.
+    /// Provides thread safe for transmit (tx) operations.
     SpinLock txLock;
 
     /// NIC allows queuing of transmit packets without holding a software lock.
-    bool hasTxLockFreeSupport;
+    std::atomic<bool> hasTxLockFreeSupport;
 
     /// Hardware packet filter is provided by the NIC
-    bool hasHardwareFilter;
+    std::atomic<bool> hasHardwareFilter;
 
     /// Effective network bandwidth, in Mbits/second.
-    uint32_t bandwidthMbps;
+    std::atomic<uint32_t> bandwidthMbps;
 };
 
 }  // namespace DPDK

@@ -55,6 +55,13 @@ TEST(MacAddressTest, constructorAddress)
     EXPECT_EQ("de:ad:be:ef:98:76", MacAddress(addr).toString());
 }
 
+TEST(MacAddressTest, construct_DefaultCopy)
+{
+    MacAddress source("de:ad:be:ef:98:76");
+    MacAddress dest(source);
+    EXPECT_EQ("de:ad:be:ef:98:76", dest.toString());
+}
+
 TEST(MacAddressTest, toString)
 {
     // tested sufficiently in constructor tests

@@ -30,7 +30,7 @@ struct MacAddress {
     explicit MacAddress(const char* macStr);
     explicit MacAddress(const Driver::WireFormatAddress* const wireAddress);
     explicit MacAddress(const Driver::Address addr);
-    MacAddress(const MacAddress& other);
+    MacAddress(const MacAddress&) = default;
     std::string toString() const;
     void toWireFormat(Driver::WireFormatAddress* wireAddress) const;
     Driver::Address toAddress() const;

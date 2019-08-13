@@ -83,17 +83,6 @@ MacAddress::MacAddress(const Driver::Address addr)
 }
 
 /**
- * Create a new copy of the provided MacAddress.
- *
- * @param other
- *      MacAddress to be copied.
- */
-MacAddress::MacAddress(const MacAddress& other)
-{
-    memcpy(address, other.address, 6);
-}
-
-/**
  * Return the string representation of this address.
  */
 std::string
