@@ -262,25 +262,15 @@ class Transport {
     ServerOp receiveServerOp();
 
     /**
-     * Return a network address handle for the given string representation of
-     * the address. Addresses and address strings are Driver specific.
-     *
-     * @param addressString
-     *      See above.
-     * @return
-     *      Address handle.
-     * @throw BadAddress
-     *      _addressString_ is malformed.
-     */
-    Driver::Address getAddress(std::string const* const addressString);
-
-    /**
      * Make incremental progress performing all Transport functionality.
      *
      * This method MUST be called for the Transport to make progress and should
      * be called frequently to ensure timely progress.
      */
     void poll();
+
+    /// The Driver that handles sending and receiving this Transport's packets.
+    Driver* const driver;
 
   private:
     /// Contains the internal implementation of Homa::Transport which does most

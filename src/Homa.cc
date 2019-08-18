@@ -145,7 +145,8 @@ ServerOp::delegate(Driver::Address destination)
 }
 
 Transport::Transport(Driver* driver, uint64_t transportId)
-    : internal(new Core::Transport(driver, transportId))
+    : driver(driver)
+    , internal(new Core::Transport(driver, transportId))
 {}
 
 Transport::~Transport() = default;
@@ -160,12 +161,6 @@ Transport::receiveServerOp()
         op.response = op.op->getOutMessage();
     }
     return op;
-}
-
-Driver::Address
-Transport::getAddress(std::string const* const addressString)
-{
-    return internal->driver->getAddress(addressString);
 }
 
 void
