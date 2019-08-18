@@ -4,7 +4,7 @@ include(CMakeFindDependencyMacro)
 ## Find dependencies ###########################################################
 ################################################################################
 
-find_dependency(Threads)
+find_dependency(PerfUtils)
 find_dependency(Dpdk)
 
 ################################################################################

@@ -9,9 +9,6 @@ project(Homa VERSION 0.1.0.0 LANGUAGES CXX)
 # Tell CMake where to find our custom/3rd-party "Find" modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/modules)
 
-# Thread library
-find_package(Threads)
-
 # Doxygen documentation generation tool (http://www.doxygen.org)
 find_package(Doxygen OPTIONAL_COMPONENTS dot mscgen dia)
 
@@ -150,14 +147,12 @@ target_include_directories(DpdkDriver
 )
 target_link_libraries(DpdkDriver
     PRIVATE
-        -Wl,--whole-archive Dpdk::Dpdk -Wl,--no-whole-archive
-        Threads::Threads
+        Dpdk::Dpdk
     PUBLIC
         Homa
 )
 target_compile_options(DpdkDriver
     PRIVATE
-        -mssse3
         -Wall
         -Wextra
 )

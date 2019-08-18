@@ -1,4 +1,4 @@
-# Copyright (c) 2018, Stanford University
+# Copyright (c) 2018-2019, Stanford University
 #
 # Permission to use, copy, modify, and/or distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -34,7 +34,6 @@ find_path(Dpdk_INCLUDE_DIR rte_config.h
 find_library(Dpdk_LIBRARY dpdk)
 find_library(Numa_LIBRARY numa)
 find_library(Dl_LIBRARY dl)
-find_library(Pcap_LIBRARY pcap)
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Dpdk
@@ -44,15 +43,14 @@ find_package_handle_standard_args(Dpdk
         Dpdk_LIBRARY
         Numa_LIBRARY
         Dl_LIBRARY
-        Pcap_LIBRARY
 )
 
 if(Dpdk_FOUND AND NOT TARGET Dpdk::Dpdk)
     add_library(Dpdk::Dpdk STATIC IMPORTED)
     set_target_properties(Dpdk::Dpdk PROPERTIES
         IMPORTED_LOCATION "${Dpdk_LIBRARY}"
-        INTERFACE_COMPILE_OPTIONS ""
+        INTERFACE_COMPILE_OPTIONS "-march=native"
         INTERFACE_INCLUDE_DIRECTORIES "${Dpdk_INCLUDE_DIR}"
-        INTERFACE_LINK_LIBRARIES "${Numa_LIBRARY};${Dl_LIBRARY};${Pcap_LIBRARY}"
+        INTERFACE_LINK_LIBRARIES "${Numa_LIBRARY};${Dl_LIBRARY};"
     )
 endif()

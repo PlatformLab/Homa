@@ -2,6 +2,9 @@
 ##  TESTS  #####################################################################
 ################################################################################
 
+# Thread library
+find_package(Threads)
+
 include(FetchContent)
 FetchContent_Declare(
     docopt
