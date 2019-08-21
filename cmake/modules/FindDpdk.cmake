@@ -34,6 +34,7 @@ find_path(Dpdk_INCLUDE_DIR rte_config.h
 find_library(Dpdk_LIBRARY dpdk)
 find_library(Numa_LIBRARY numa)
 find_library(Dl_LIBRARY dl)
+find_package(Threads REQUIRED)
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Dpdk
@@ -52,5 +53,9 @@ if(Dpdk_FOUND AND NOT TARGET Dpdk::Dpdk)
         INTERFACE_COMPILE_OPTIONS "-march=native"
         INTERFACE_INCLUDE_DIRECTORIES "${Dpdk_INCLUDE_DIR}"
         INTERFACE_LINK_LIBRARIES "${Numa_LIBRARY};${Dl_LIBRARY};"
+    )
+    target_link_libraries(Dpdk::Dpdk
+        INTERFACE
+            Threads::Threads
     )
 endif()
