@@ -141,15 +141,6 @@ class DpdkDriver : public Driver {
     /// See Driver::getQueuedBytes();
     virtual uint32_t getQueuedBytes();
 
-    /**
-     * Override the local address provided to by the NIC. Used in testing when
-     * the virtual NICs address is not actually routable.
-     *
-     * @param addressString
-     *      String representing the local address that this driver should use.
-     */
-    virtual void setLocalAddress(std::string const* const addressString);
-
   private:
     /// Contains the private members of the driver.  Hides the details of the
     /// driver from users of libDpdkDriver.

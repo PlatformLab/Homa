@@ -66,7 +66,7 @@ Internal::Packet::Packet(OverflowBuffer* overflowBuf)
  */
 Internal::Internal(uint16_t port)
     : port(port)
-    , localMac(MacAddress(Driver::Address(0)))
+    , localMac(Driver::Address(0))
     , packetLock()
     , packetPool()
     , overflowBufferPool()
@@ -279,7 +279,7 @@ DpdkDriver::sendPacket(Driver::Packet* packet)
     MacAddress macAddr(pkt->address);
     struct ether_hdr* ethHdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr*);
     rte_memcpy(&ethHdr->d_addr, macAddr.address, ETHER_ADDR_LEN);
-    rte_memcpy(&ethHdr->s_addr, d->localMac.load().address, ETHER_ADDR_LEN);
+    rte_memcpy(&ethHdr->s_addr, d->localMac.address, ETHER_ADDR_LEN);
     ethHdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
 
     // Fill out the PCP field and the Ethernet frame type of the
@@ -304,7 +304,7 @@ DpdkDriver::sendPacket(Driver::Packet* packet)
     }
 
     // loopback if src mac == dst mac
-    if (d->localMac.load().toAddress() == pkt->address) {
+    if (d->localMac.toAddress() == pkt->address) {
         struct rte_mbuf* mbuf_clone = rte_pktmbuf_clone(mbuf, d->mbufPool);
         if (unlikely(mbuf_clone == NULL)) {
             WARNING("Failed to clone packet for loopback; dropping packet");
@@ -481,7 +481,7 @@ Driver::Address
 DpdkDriver::getLocalAddress()
 {
     Internal* d = reinterpret_cast<Internal*>(members);
-    return d->localMac.load().toAddress();
+    return d->localMac.toAddress();
 }
 
 // See Driver::getQueuedBytes();
@@ -492,15 +492,6 @@ DpdkDriver::getQueuedBytes()
     SpinLock::Lock lock(d->tx.stats.mutex);
     return d->tx.stats.bufferedBytes +
            d->tx.stats.queueEstimator.getQueuedBytes();
-}
-
-void
-DpdkDriver::setLocalAddress(std::string const* const addressString)
-{
-    Internal* d = reinterpret_cast<Internal*>(members);
-    d->localMac.store(MacAddress(addressString->c_str()));
-    NOTICE("Driver address override; new address: %s",
-           d->localMac.load().toString().c_str());
 }
 
 /**
@@ -562,7 +553,7 @@ Internal::_init()
 
     // Read the MAC address from the NIC via DPDK.
     rte_eth_macaddr_get(port, &mac);
-    localMac.store(MacAddress(mac.addr_bytes));
+    new (const_cast<MacAddress*>(&localMac)) MacAddress(mac.addr_bytes);
 
     // configure some default NIC port parameters
     memset(&portConf, 0, sizeof(portConf));
@@ -683,7 +674,7 @@ Internal::_init()
     }
 
     NOTICE("DpdkDriver address: %s, bandwidth: %d Mbits/sec, MTU: %u",
-           localMac.load().toString().c_str(), bandwidthMbps.load(), mtu);
+           localMac.toString().c_str(), bandwidthMbps.load(), mtu);
 }
 
 /**

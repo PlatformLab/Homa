@@ -152,6 +152,10 @@ target_link_libraries(DpdkDriver
     PUBLIC
         Homa
 )
+target_compile_features(DpdkDriver
+    PUBLIC
+        cxx_std_11
+)
 target_compile_options(DpdkDriver
     PRIVATE
         -Wall

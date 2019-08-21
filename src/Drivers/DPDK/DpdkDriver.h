@@ -155,8 +155,8 @@ struct Internal {
     /// driver.
     const uint16_t port;
 
-    /// Stores the MAC address of the NIC (either native or set by override).
-    std::atomic<MacAddress> localMac;
+    /// Stores the address of the NIC (either native or set by override).
+    const MacAddress localMac;
 
     /// Provides thread safety for Packet management operations.
     SpinLock packetLock;
