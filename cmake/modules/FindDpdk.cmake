@@ -36,6 +36,9 @@ find_library(Numa_LIBRARY numa)
 find_library(Dl_LIBRARY dl)
 find_package(Threads REQUIRED)
 
+find_library(DPDK_rte_pmd_mlx4_LIBRARY rte_pmd_mlx4)
+find_library(DPDK_rte_pmd_mlx5_LIBRARY rte_pmd_mlx5)
+
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Dpdk
     FOUND_VAR Dpdk_FOUND
@@ -47,15 +50,33 @@ find_package_handle_standard_args(Dpdk
 )
 
 if(Dpdk_FOUND AND NOT TARGET Dpdk::Dpdk)
-    add_library(Dpdk::Dpdk STATIC IMPORTED)
+    add_library(Dpdk::Dpdk INTERFACE IMPORTED)
     set_target_properties(Dpdk::Dpdk PROPERTIES
-        IMPORTED_LOCATION "${Dpdk_LIBRARY}"
         INTERFACE_COMPILE_OPTIONS "-march=native"
         INTERFACE_INCLUDE_DIRECTORIES "${Dpdk_INCLUDE_DIR}"
-        INTERFACE_LINK_LIBRARIES "${Numa_LIBRARY};${Dl_LIBRARY};"
     )
     target_link_libraries(Dpdk::Dpdk
         INTERFACE
+            -Wl,--whole-archive
+            ${Dpdk_LIBRARY}
+            -Wl,--no-whole-archive
+            ${Numa_LIBRARY}
+            ${Dl_LIBRARY}
             Threads::Threads
     )
+    if (DPDK_rte_pmd_mlx4_LIBRARY)
+        target_link_libraries(Dpdk::Dpdk
+            INTERFACE
+                -lmnl
+                -lmlx4
+                -libverbs
+        )
+    endif()
+    if (DPDK_rte_pmd_mlx5_LIBRARY)
+        target_link_libraries(Dpdk::Dpdk
+            INTERFACE
+                -libverbs
+                -lmlx5
+        )
+    endif()
 endif()
