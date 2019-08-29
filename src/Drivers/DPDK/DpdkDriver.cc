@@ -64,9 +64,13 @@ Internal::Packet::Packet(OverflowBuffer* overflowBuf)
 /**
  * Constructor for the internal state of a DpdkDriver.
  */
-Internal::Internal(uint16_t port)
+Internal::Internal(uint16_t port, const DpdkDriver::Config* const config)
     : port(port)
     , localMac(Driver::Address(0))
+    , HIGHEST_PACKET_PRIORITY(
+          (config == nullptr || config->HIGHEST_PACKET_PRIORITY_OVERRIDE < 0)
+              ? Homa::Util::arrayLength(PRIORITY_TO_PCP) - 1
+              : config->HIGHEST_PACKET_PRIORITY_OVERRIDE)
     , packetLock()
     , packetPool()
     , overflowBufferPool()
@@ -79,49 +83,19 @@ Internal::Internal(uint16_t port)
     , bandwidthMbps(10000)  // Default bandwidth = 10 gbs
 {}
 
-/**
- * Construct a DpdkDriver.
- *
- * This constructor should be used in the common case where this DpdkDriver
- * is the only part the application using DPDK. Note: This constructor will
- * initialize the DPDK EAL with default values.
- *
- * @param port
- *      Selects which physical port to use for communication.
- * @throw DriverInitFailure
- *      Thrown if DpdkDriver fails to initialize for any reason.
- */
-DpdkDriver::DpdkDriver(int port)
-    : DpdkDriver(port, default_eal_argc, const_cast<char**>(default_eal_argv))
+DpdkDriver::DpdkDriver(int port, const Config* const config)
+    : DpdkDriver(port, default_eal_argc, const_cast<char**>(default_eal_argv),
+                 config)
 {}
 
-/**
- * Construct a DpdkDriver and initialize the DPDK EAL using the provided
- * _argc_ and _argv_. [Advanced Usage]
- *
- * This constructor should be used if the caller wants to control what
- * parameters are provided to DPDK EAL initialization. The input parameters
- * _argc_ and _argv_ will be provided to rte_eal_init() directly. See the
- * DPDK documentation for initialization options.
- *
- * This constructor will maintain the currently set thread affinity by
- * overriding the default affinity set by rte_eal_init().
- *
- * @param port
- *      Selects which physical port to use for communication.
- * @param argc
- *      Parameter passed to rte_eal_init().
- * @param argv
- *      Parameter passed to rte_eal_init().
- * @throw DriverInitFailure
- *      Thrown if DpdkDriver fails to initialize for any reason.
- */
-DpdkDriver::DpdkDriver(int port, int argc, char* argv[])
+DpdkDriver::DpdkDriver(int port, int argc, char* argv[],
+                       const Config* const config)
     : members()
 {
     // Construct the private members;
     static_assert(sizeof(members) == sizeof(Internal));
-    Internal* d = new (members) Internal(Homa::Util::downCast<uint16_t>(port));
+    Internal* d =
+        new (members) Internal(Homa::Util::downCast<uint16_t>(port), config);
 
     // DPDK during initialization (rte_eal_init()) the running thread is pinned
     // to a single processor which may be not be what the applications wants.
@@ -149,27 +123,13 @@ DpdkDriver::DpdkDriver(int port, int argc, char* argv[])
     }
 }
 
-/**
- * Construct a DpdkDriver without DPDK EAL initialization. [Advanced Usage]
- *
- * This constructor is used when parts of the application other than the
- * DpdkDriver are using DPDK and the caller wants to take responsibility for
- * calling rte_eal_init(). The caller must ensure that rte_eal_init() is
- * called before calling this constructor.
- *
- * @param port
- *      Selects which physical port to use for communication.
- * @param _
- *      Parameter is used only to define this constructors alternate
- *      signature.
- * @throw DriverInitFailure
- *      Thrown if DpdkDriver fails to initialize for any reason.
- */
-DpdkDriver::DpdkDriver(int port, __attribute__((__unused__)) NoEalInit _)
+DpdkDriver::DpdkDriver(int port, __attribute__((__unused__)) NoEalInit _,
+                       const Config* const config)
     : members()
 {
     // Construct the private members;
-    Internal* d = new (members) Internal(Homa::Util::downCast<uint16_t>(port));
+    Internal* d =
+        new (members) Internal(Homa::Util::downCast<uint16_t>(port), config);
     d->_init();
 }
 
@@ -458,7 +418,8 @@ DpdkDriver::releasePackets(Driver::Packet* packets[], uint16_t numPackets)
 int
 DpdkDriver::getHighestPacketPriority()
 {
-    return Homa::Util::arrayLength(PRIORITY_TO_PCP) - 1;
+    Internal* d = reinterpret_cast<Internal*>(members);
+    return d->HIGHEST_PACKET_PRIORITY;
 }
 
 // See Driver::getMaxPayloadSize()

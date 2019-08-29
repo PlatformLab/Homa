@@ -141,7 +141,7 @@ struct Internal {
         Packet& operator=(const Packet&) = delete;
     };
 
-    explicit Internal(uint16_t port);
+    explicit Internal(uint16_t port, const DpdkDriver::Config* const config);
     void _eal_init(int argc, char* argv[]);
     void _init();
     Packet* _allocMbufPacket();
@@ -157,6 +157,10 @@ struct Internal {
 
     /// Stores the address of the NIC (either native or set by override).
     const MacAddress localMac;
+
+    /// Stores the driver's maximum network packet priority (either default or
+    /// set by override).
+    const int HIGHEST_PACKET_PRIORITY;
 
     /// Provides thread safety for Packet management operations.
     SpinLock packetLock;

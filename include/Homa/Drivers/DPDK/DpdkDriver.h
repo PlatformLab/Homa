@@ -33,6 +33,18 @@ namespace DPDK {
 class DpdkDriver : public Driver {
   public:
     /**
+     * Provides optional configuration information for the DpdkDriver instance.
+     */
+    struct Config {
+        /// Override and set the Driver's maximum packet priority to this value.
+        ///
+        /// Default:
+        ///   -1 indicates that no override should occur and Driver's default
+        ///   value should be used.
+        int HIGHEST_PACKET_PRIORITY_OVERRIDE = -1;
+    };
+
+    /**
      * Construct a DpdkDriver.
      *
      * This constructor should be used in the common case where the DpdkDriver
@@ -41,10 +53,12 @@ class DpdkDriver : public Driver {
      *
      * @param port
      *      Selects which physical port to use for communication.
+     * @param config
+     *      Optional configuration parameters (see Config).
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    DpdkDriver(int port);
+    DpdkDriver(int port, const Config* const config = nullptr);
 
     /**
      * Construct a DpdkDriver and initialize the DPDK EAL using the provided
@@ -64,10 +78,13 @@ class DpdkDriver : public Driver {
      *      Parameter passed to rte_eal_init().
      * @param argv
      *      Parameter passed to rte_eal_init().
+     * @param config
+     *      Optional configuration parameters (see Config).
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    DpdkDriver(int port, int argc, char* argv[]);
+    DpdkDriver(int port, int argc, char* argv[],
+               const Config* const config = nullptr);
 
     /// Used to signal to the DpdkDriver constructor that the DPDK EAL should
     /// not be initialized.
@@ -86,10 +103,12 @@ class DpdkDriver : public Driver {
      * @param _
      *      Parameter is used only to define this constructors alternate
      *      signature.
+     * @param config
+     *      Optional configuration parameters (see Config).
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    DpdkDriver(int port, NoEalInit _);
+    DpdkDriver(int port, NoEalInit _, const Config* const config = nullptr);
 
     /**
      * DpdkDriver Destructor.
