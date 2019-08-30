@@ -416,7 +416,7 @@ TEST_F(SenderTest, sendMessage_basic)
     message->messageLength = 420;
     mockPacket.length = message->messageLength + message->PACKET_HEADER_LENGTH;
     Driver::Address destination = (Driver::Address)22;
-    Core::Policy::Unscheduled policy = {1, 420, 2};
+    Core::Policy::Unscheduled policy = {1, 0, 2};
 
     EXPECT_FALSE(sender->outboundMessages.find(id) !=
                  sender->outboundMessages.end());
@@ -428,13 +428,12 @@ TEST_F(SenderTest, sendMessage_basic)
     sender->sendMessage(message, destination);
 
     EXPECT_EQ(22U, (uint64_t)mockPacket.address);
-    EXPECT_EQ(0U, mockPacket.priority);
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     EXPECT_EQ(id, header->common.messageId);
     EXPECT_EQ(destination, message->destination);
     EXPECT_EQ(Sender::Message::State::IN_PROGRESS, message->state);
-    EXPECT_EQ(1U, message->grantIndex);
+    EXPECT_EQ(0U, message->grantIndex);
     EXPECT_EQ(2, message->priority);
     EXPECT_EQ(420U, message->unsentBytes);
     EXPECT_EQ(message->messageLength, header->totalLength);

@@ -383,6 +383,9 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         pingTimeouts.setTimeout(&message->pingTimeout);
         hintMessageReady(message, lock, lock_message);
     }
+
+    // Try to send the message immediately
+    trySend();
 }
 
 /**
@@ -488,14 +491,12 @@ Sender::checkPingTimeouts()
 }
 
 /**
- * Does most of the work of actually trying to send out packets for messages.
- *
- * Pulled out of poll() for clarity.
+ * Send out packets for any messages with unscheduled/granted bytes.
  */
 void
 Sender::trySend()
 {
-    // Skip sending if another poller is already working on it.
+    // Skip sending if another thread is already working on it.
     if (sending.test_and_set()) {
         return;
     }
