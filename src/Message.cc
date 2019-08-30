@@ -46,7 +46,6 @@ Message::Message(Driver* driver, uint16_t packetHeaderLength,
     , messageLength(messageLength)
     , numPackets(0)
     , occupied()
-    , packets()
 {}
 
 /**
