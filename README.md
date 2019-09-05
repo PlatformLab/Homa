@@ -54,7 +54,7 @@ git clone https://github.com/PlatformLab/Homa.git
 From the `Homa` project directory:
 ```
 cmake -E make_directory build
-cmake -E chdir build
+cmake -E chdir build cmake ..
 cmake --build build
 ```
 
