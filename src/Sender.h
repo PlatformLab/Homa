@@ -20,9 +20,11 @@
 #include <unordered_map>
 
 #include <Homa/Driver.h>
+#include <Homa/Homa.h>
 
 #include "Intrusive.h"
 #include "Message.h"
+#include "ObjectPool.h"
 #include "Policy.h"
 #include "Protocol.h"
 #include "SpinLock.h"
@@ -42,61 +44,82 @@ class Transport;
  */
 class Sender {
   public:
+    explicit Sender(Transport* transport, uint64_t transportId,
+                    Policy::Manager* policyManager,
+                    uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
+    virtual ~Sender();
+
+    virtual Homa::OutMessage* allocMessage();
+    virtual void handleDonePacket(Driver::Packet* packet, Driver* driver);
+    virtual void handleGrantPacket(Driver::Packet* packet, Driver* driver);
+    virtual void handleResendPacket(Driver::Packet* packet, Driver* driver);
+    virtual void handleUnknownPacket(Driver::Packet* packet, Driver* driver);
+    virtual void handleErrorPacket(Driver::Packet* packet, Driver* driver);
+    virtual void poll();
+
+  private:
     /**
      * Represents an outgoing message that can be sent.
      *
      * Sender::Message objects are contained in the Transport::Op but should
      * only be accessed by the Sender.
      */
-    class Message : public Core::Message {
+    class Message : public Homa::OutMessage, public Core::Message {
       public:
-        /**
-         * Defines the possible states of this Sender::Message.
-         */
-        enum class State {
-            NOT_STARTED,  //< This message has not yet been passed to Sender.
-            IN_PROGRESS,  //< Sender is in the process of sending this message.
-            SENT,         //< Sender has sent out every packet of the message.
-            COMPLETED,    //< Receiver has acknowledged receipt of this message.
-            FAILED,       //< Sender failed to send out this message.
-        };
-
         /**
          * Construct an Message.
          */
-        explicit Message(Driver* driver, void* op)
+        explicit Message(Sender* sender, Driver* driver)
             : Core::Message(driver, sizeof(Protocol::Packet::DataHeader), 0)
             , mutex()
+            , sender(sender)
             , id(0, 0)
             , destination()
-            , state(Message::State::NOT_STARTED)
+            , state(Status::NOT_STARTED)
             , grantIndex(0)
             , priority(0)
             , sentIndex(0)
             , unsentBytes(0)
-            , op(op)
             , readyQueueNode(this)
             , messageTimeout(this)
             , pingTimeout(this)
         {}
 
-        /**
-         * Return the current state of this message.
-         */
-        State getState() const
+        /// See Homa::OutMessage::send()
+        virtual void send(Driver::Address destination)
+        {
+            sender->sendMessage(this, destination);
+        }
+
+        /// See Homa::OutMessage::cancel()
+        virtual void cancel()
+        {
+            sender->cancelMessage(this);
+        }
+
+        /// See Homa::OutMessage::getStatus()
+        virtual Status getStatus() const
         {
             return state.load();
+        }
+
+        /// See Homa::OutMessage::release()
+        virtual void release()
+        {
+            sender->dropMessage(this);
         }
 
       private:
         /// Monitor style lock.
         mutable SpinLock mutex;
+        /// The Sender responsible for sending this message.
+        Sender* const sender;
         /// Contains the unique identifier for this message.
         Protocol::MessageId id;
         /// Contains destination address this message.
         Driver::Address destination;
         /// This message's current state.
-        std::atomic<State> state;
+        std::atomic<Status> state;
         /// Packets up to (but excluding) this index can be sent.
         uint16_t grantIndex;
         /// The network priority at which this Message should be sent.
@@ -105,8 +128,6 @@ class Sender {
         uint16_t sentIndex;
         /// The number of bytes that still need to be sent for this Message.
         uint32_t unsentBytes;
-        /// Transport::Op associated with this message.
-        void* const op;
         /// Intrusive structure used by the Sender to keep track of this message
         /// when it has packets to send.
         Intrusive::List<Message>::Node readyQueueNode;
@@ -120,22 +141,9 @@ class Sender {
         friend class Sender;
     };
 
-    explicit Sender(Transport* transport, uint64_t transportId,
-                    Policy::Manager* policyManager,
-                    uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
-    virtual ~Sender();
-
-    virtual void handleDonePacket(Driver::Packet* packet, Driver* driver);
-    virtual void handleGrantPacket(Driver::Packet* packet, Driver* driver);
-    virtual void handleResendPacket(Driver::Packet* packet, Driver* driver);
-    virtual void handleUnknownPacket(Driver::Packet* packet, Driver* driver);
-    virtual void handleErrorPacket(Driver::Packet* packet, Driver* driver);
-    virtual void sendMessage(Sender::Message* message,
-                             Driver::Address destination);
-    virtual void dropMessage(Sender::Message* message);
-    virtual void poll();
-
-  private:
+    void sendMessage(Sender::Message* message, Driver::Address destination);
+    void cancelMessage(Sender::Message* message);
+    void dropMessage(Sender::Message* message);
     void checkMessageTimeouts();
     void checkPingTimeouts();
     void trySend();
@@ -178,6 +186,19 @@ class Sender {
     /// True if the Sender is currently executing trySend(); false, otherwise.
     /// Use to prevent concurrent trySend() calls from blocking on each other.
     std::atomic_flag sending = ATOMIC_FLAG_INIT;
+
+    /// Used to allocate Message objects.
+    struct MessageAllocator {
+        /// Default constructor.
+        MessageAllocator()
+            : mutex()
+            , pool()
+        {}
+        /// Allocator monitor lock.
+        SpinLock mutex;
+        /// Pool allocator for Message objects.
+        ObjectPool<Message> pool;
+    } messageAllocator;
 };
 
 }  // namespace Core

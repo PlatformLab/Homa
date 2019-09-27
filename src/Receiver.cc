@@ -95,8 +95,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     } else {
         // New message
         uint32_t messageLength = header->totalLength;
-        message =
-            messagePool.construct(driver, dataHeaderLength, messageLength);
+        message = messagePool.construct(this, driver, dataHeaderLength,
+                                        messageLength);
         message->id = id;
         message->source = packet->address;
         message->numExpectedPackets =
@@ -245,7 +245,7 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
  *
  * @sa dropMessage()
  */
-Receiver::Message*
+Homa::InMessage*
 Receiver::receiveMessage()
 {
     SpinLock::Lock lock_received_messages(receivedMessages.mutex);
@@ -255,6 +255,17 @@ Receiver::receiveMessage()
         receivedMessages.queue.pop_front();
     }
     return message;
+}
+
+/**
+ * Allow the Receiver to make incremental progress on background tasks.
+ */
+void
+Receiver::poll()
+{
+    runScheduler();
+    checkResendTimeouts();
+    checkMessageTimeouts();
 }
 
 /**
@@ -275,17 +286,6 @@ Receiver::dropMessage(Receiver::Message* message)
         resendTimeouts.cancelTimeout(&message->resendTimeout);
         messagePool.destroy(message);
     }
-}
-
-/**
- * Allow the Receiver to make incremental progress on background tasks.
- */
-void
-Receiver::poll()
-{
-    runScheduler();
-    checkResendTimeouts();
-    checkMessageTimeouts();
 }
 
 /**
@@ -333,7 +333,6 @@ Receiver::checkMessageTimeouts()
             // Transport; let the Transport know.
             assert(message->peer == nullptr);
             message->state.store(Message::State::DROPPED);
-            transport->hintUpdatedOp(message->op);
         }
     }
 }

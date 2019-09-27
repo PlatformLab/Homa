@@ -43,8 +43,7 @@ class MockReceiver : public Core::Receiver {
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD2(handlePingPacket,
                  void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD0(receiveMessage, Core::Receiver::Message*());
-    MOCK_METHOD1(dropMessage, void(Core::Receiver::Message* message));
+    MOCK_METHOD0(receiveMessage, Homa::InMessage*());
     MOCK_METHOD0(poll, void());
 };
 

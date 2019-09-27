@@ -32,7 +32,7 @@ namespace Core {
  * This class is not thread-safe but should only be modified by one part of
  * the transport a time.
  */
-class Message : public Homa::Message {
+class Message : public virtual Homa::Message {
   public:
     /// Define the maximum number of packets that a message can hold.
     static const uint16_t MAX_MESSAGE_PACKETS = 1024;
@@ -45,87 +45,15 @@ class Message : public Homa::Message {
     virtual uint32_t get(uint32_t offset, void* destination,
                          uint32_t num) const;
     virtual uint32_t length() const;
+    virtual void prepend(const void* source, uint32_t num);
+    virtual void reserve(uint32_t num);
+    virtual void strip(uint32_t num);
 
     Driver::Packet* getPacket(uint16_t index) const;
     bool setPacket(uint16_t index, Driver::Packet* packet);
     uint16_t getNumPackets() const;
 
     uint32_t rawLength() const;
-
-    /**
-     * Reserve space for the message header.
-     *
-     * This method must be called before any other data appended to the Message
-     * and should be only called once per Message.
-     *
-     * @tparam MessageHeader
-     *    The type of the message header for which space should be reserved.
-     */
-    template <typename MessageHeader>
-    void allocHeader()
-    {
-        assert(MESSAGE_HEADER_LENGTH == 0);
-        // As an optimization, assume the header fits within the first packet of
-        // the message.
-        assert(MESSAGE_HEADER_LENGTH <= PACKET_DATA_LENGTH);
-        MESSAGE_HEADER_LENGTH = sizeof(MessageHeader);
-        if (!occupied.test(0)) {
-            assert(messageLength == 0);
-            packets[0] = driver->allocPacket();
-            occupied.set(0);
-            numPackets++;
-            messageLength = MESSAGE_HEADER_LENGTH;
-            assert(packets[0]->length == 0);
-            // TODO(cstlee): A Message probably shouldn't be in charge of
-            //               setting the packet length.
-            packets[0]->length = Util::downCast<uint16_t>(
-                PACKET_HEADER_LENGTH + MESSAGE_HEADER_LENGTH);
-        } else {
-            assert(messageLength >= MESSAGE_HEADER_LENGTH);
-            assert(packets[0]->length >=
-                   Util::downCast<uint16_t>(PACKET_HEADER_LENGTH +
-                                            MESSAGE_HEADER_LENGTH));
-        }
-    }
-
-    /**
-     * Construct the message header in the previously reserved region within
-     * this Message.
-     *
-     * The allocHeader() method should have been called prior to calling this
-     * method.
-     *
-     * @tparam MessageHeader
-     *      The type of the message header that should be constructed.
-     * @param args
-     *      Arguments to the MessageHeader's constructor.
-     *
-     * @sa allocHeader()
-     */
-    template <typename MessageHeader, typename... Args>
-    MessageHeader* setHeader(Args&&... args)
-    {
-        assert(MESSAGE_HEADER_LENGTH == sizeof(MessageHeader));
-        assert(occupied.test(0));
-        MessageHeader* header = static_cast<MessageHeader*>(getHeader());
-        new (header) MessageHeader(static_cast<Args&&>(args)...);
-        return header;
-    }
-
-    /**
-     * Return a pointer to a contiguous memory region where the header of type
-     * MessageHeader is assumed to be stored.  Used by the Transport to read the
-     * header of inbound messages.
-     */
-    template <typename MessageHeader>
-    const MessageHeader* getHeader()
-    {
-        // As an optimization, assume the header fits within the first packet of
-        // the message.
-        assert(sizeof(MessageHeader) <= PACKET_DATA_LENGTH);
-        assert(sizeof(MessageHeader) <= messageLength);
-        return reinterpret_cast<const MessageHeader*>(getHeader());
-    }
 
     /// Driver from which packets were allocated and to which they should be
     /// returned when this message is no longer needed.
@@ -139,11 +67,11 @@ class Message : public Homa::Message {
     const uint16_t PACKET_DATA_LENGTH;
 
   private:
-    /// Number of bytes used at the beginning of the Message for the Homa
-    /// protocol Message header.
-    uint32_t MESSAGE_HEADER_LENGTH;
+    /// The byte index of the current logical beginning of this Message.
+    uint32_t start;
 
-    /// Number of bytes in this Message including the header.
+    /// Number of bytes in this Message including any amount of reserved or
+    /// stripped headroom.
     uint32_t messageLength;
 
     /// Number of packets contained in this context.
@@ -158,7 +86,6 @@ class Message : public Homa::Message {
     Driver::Packet* packets[MAX_MESSAGE_PACKETS];
 
     Driver::Packet* getOrAllocPacket(uint16_t index);
-    void* getHeader();
 
     Message(const Message&) = delete;
     Message& operator=(const Message&) = delete;

@@ -85,7 +85,7 @@ TEST_F(ReceiverTest, handleDataPacket_basic)
     Receiver::Message* others[3];
     for (int i = 0; i < 3; ++i) {
         others[i] = receiver->messagePool.construct(
-            &mockDriver, sizeof(Protocol::Packet::DataHeader), 10000);
+            receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 10000);
         others[i]->source = Driver::Address(22);
         others[i]->peer = Receiver::schedule(others[i], &receiver->peerTable,
                                              &receiver->scheduledPeers);
@@ -309,7 +309,7 @@ TEST_F(ReceiverTest, handleBusyPacket_basic)
 {
     Protocol::MessageId id(42, 32);
     Receiver::Message* message =
-        receiver->messagePool.construct(&mockDriver, 0, 0);
+        receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
     message->id = id;
     receiver->inboundMessages.insert({id, message});
 
@@ -345,7 +345,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
     Protocol::MessageId id(42, 32);
     Driver::Address mockAddress = 22;
     Receiver::Message* message =
-        receiver->messagePool.construct(&mockDriver, 0, 0);
+        receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
     message->id = id;
     message->grantIndexLimit = 11;
     message->source = mockAddress;
@@ -408,9 +408,9 @@ TEST_F(ReceiverTest, handlePingPacket_unknown)
 TEST_F(ReceiverTest, receiveMessage)
 {
     Receiver::Message* msg0 =
-        receiver->messagePool.construct(&mockDriver, 0, 0);
+        receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
     Receiver::Message* msg1 =
-        receiver->messagePool.construct(&mockDriver, 0, 0);
+        receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
 
     receiver->receivedMessages.queue.push_back(&msg0->receivedMessageNode);
     receiver->receivedMessages.queue.push_back(&msg1->receivedMessageNode);
@@ -426,11 +426,57 @@ TEST_F(ReceiverTest, receiveMessage)
     EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 }
 
+TEST_F(ReceiverTest, Message_acknowledge)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message =
+        receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
+    message->source = (Driver::Address)22;
+    message->id = id;
+
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    message->acknowledge();
+
+    Protocol::Packet::CommonHeader* header =
+        static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
+    EXPECT_EQ(Protocol::Packet::DONE, header->opcode);
+    EXPECT_EQ(id, header->messageId);
+    EXPECT_EQ(sizeof(Protocol::Packet::DoneHeader), mockPacket.length);
+    EXPECT_EQ(message->source, mockPacket.address);
+}
+
+TEST_F(ReceiverTest, Message_fail)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message =
+        receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
+    message->source = (Driver::Address)22;
+    message->id = id;
+
+    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    message->fail();
+
+    Protocol::Packet::CommonHeader* header =
+        static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
+    EXPECT_EQ(Protocol::Packet::ERROR, header->opcode);
+    EXPECT_EQ(id, header->messageId);
+    EXPECT_EQ(sizeof(Protocol::Packet::ErrorHeader), mockPacket.length);
+    EXPECT_EQ(message->source, mockPacket.address);
+}
+
 TEST_F(ReceiverTest, dropMessage)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message =
-        receiver->messagePool.construct(&mockDriver, 0, 0);
+        receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
     message->id = id;
     receiver->inboundMessages.insert({id, message});
     receiver->messageTimeouts.list.push_back(&message->messageTimeout.node);
@@ -449,52 +495,6 @@ TEST_F(ReceiverTest, dropMessage)
     EXPECT_TRUE(receiver->resendTimeouts.list.empty());
 }
 
-TEST_F(ReceiverTest, sendDonePacket)
-{
-    Protocol::MessageId id = {42, 32};
-    Receiver::Message* message =
-        receiver->messagePool.construct(&mockDriver, 0, 0);
-    message->source = (Driver::Address)22;
-    message->id = id;
-
-    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
-    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-        .Times(1);
-
-    Receiver::sendDonePacket(message, &mockDriver);
-
-    Protocol::Packet::CommonHeader* header =
-        static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
-    EXPECT_EQ(Protocol::Packet::DONE, header->opcode);
-    EXPECT_EQ(id, header->messageId);
-    EXPECT_EQ(sizeof(Protocol::Packet::DoneHeader), mockPacket.length);
-    EXPECT_EQ(message->source, mockPacket.address);
-}
-
-TEST_F(ReceiverTest, sendErrorPacket)
-{
-    Protocol::MessageId id = {42, 32};
-    Receiver::Message* message =
-        receiver->messagePool.construct(&mockDriver, 0, 0);
-    message->source = (Driver::Address)22;
-    message->id = id;
-
-    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
-    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-        .Times(1);
-
-    Receiver::sendErrorPacket(message, &mockDriver);
-
-    Protocol::Packet::CommonHeader* header =
-        static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
-    EXPECT_EQ(Protocol::Packet::ERROR, header->opcode);
-    EXPECT_EQ(id, header->messageId);
-    EXPECT_EQ(sizeof(Protocol::Packet::ErrorHeader), mockPacket.length);
-    EXPECT_EQ(message->source, mockPacket.address);
-}
-
 TEST_F(ReceiverTest, checkMessageTimeouts_basic)
 {
     void* op[3];
@@ -502,10 +502,10 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     for (uint64_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         op[i] = reinterpret_cast<void*>(i);
-        message[i] = receiver->messagePool.construct(&mockDriver, 0, 0);
+        message[i] =
+            receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
         message[i]->id = id;
         receiver->inboundMessages.insert({id, message[i]});
-        message[i]->registerOp(op[i]);
         receiver->messageTimeouts.list.push_back(
             &message[i]->messageTimeout.node);
         receiver->resendTimeouts.list.push_back(
@@ -535,14 +535,12 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     EXPECT_EQ(nullptr, message[0]->peer);
     EXPECT_EQ(0U, receiver->inboundMessages.count(message[0]->id));
     EXPECT_EQ(2U, receiver->messagePool.outstandingObjects);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op[0]));
     // Message[1]: Normal timeout: COMPLETED
     EXPECT_EQ(nullptr, message[1]->messageTimeout.node.list);
     EXPECT_EQ(nullptr, message[1]->resendTimeout.node.list);
     EXPECT_EQ(Receiver::Message::State::DROPPED, message[1]->getState());
     EXPECT_EQ(1U, receiver->inboundMessages.count(message[1]->id));
     EXPECT_EQ(2U, receiver->messagePool.outstandingObjects);
-    EXPECT_EQ(1U, transport->updateHints.ops.count(op[1]));
     // Message[2]: No timeout
     EXPECT_EQ(&receiver->messageTimeouts.list,
               message[2]->messageTimeout.node.list);
@@ -550,7 +548,6 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
               message[2]->resendTimeout.node.list);
     EXPECT_EQ(1U, receiver->inboundMessages.count(message[2]->id));
     EXPECT_EQ(2U, receiver->messagePool.outstandingObjects);
-    EXPECT_EQ(0U, transport->updateHints.ops.count(op[2]));
 }
 
 TEST_F(ReceiverTest, checkMessageTimeouts_empty)
@@ -565,7 +562,8 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     Receiver::Message* message[5];
     for (uint64_t i = 0; i < 5; ++i) {
         Protocol::MessageId id = {42, 10 + i};
-        message[i] = receiver->messagePool.construct(&mockDriver, 0, 0);
+        message[i] =
+            receiver->messagePool.construct(receiver, &mockDriver, 0, 0);
         message[i]->id = id;
         receiver->resendTimeouts.list.push_back(
             &message[i]->resendTimeout.node);
@@ -660,7 +658,8 @@ TEST_F(ReceiverTest, runScheduler)
     for (uint64_t i = 0; i < 4; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messagePool.construct(
-            &mockDriver, sizeof(Protocol::Packet::DataHeader), 10000 * (i + 1));
+            receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader),
+            10000 * (i + 1));
         message[i]->id = id;
         message[i]->source = Driver::Address(100 + i);
         message[i]->priority = 10;  // bogus number that should be reset.
@@ -763,7 +762,7 @@ TEST_F(ReceiverTest, schedule)
     for (uint64_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messagePool.construct(
-            &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
+            receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
         message[i]->id = id;
     }
 
@@ -801,7 +800,7 @@ TEST_F(ReceiverTest, unschedule)
     for (uint64_t i = 0; i < 5; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messagePool.construct(
-            &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
+            receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
         message[i]->id = id;
         message[i]->source = Driver::Address((i / 3) + 10);
         message[i]->peer = Receiver::schedule(message[i], &receiver->peerTable,
@@ -890,7 +889,7 @@ TEST_F(ReceiverTest, updateSchedule)
     for (uint64_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         other[i] = receiver->messagePool.construct(
-            &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
+            receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
         other[i]->id = id;
         other[i]->source = Driver::Address(((i + 1) / 2) + 10);
         other[i]->peer = Receiver::schedule(other[i], &receiver->peerTable,
@@ -898,7 +897,7 @@ TEST_F(ReceiverTest, updateSchedule)
         other[i]->unreceivedBytes = 10 * (i + 1);
     }
     Receiver::Message* message = receiver->messagePool.construct(
-        &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
+        receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 0);
     message->source = Driver::Address(11);
     message->peer = Receiver::schedule(message, &receiver->peerTable,
                                        &receiver->scheduledPeers);

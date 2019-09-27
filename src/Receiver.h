@@ -21,6 +21,7 @@
 #include <unordered_map>
 
 #include <Homa/Driver.h>
+#include <Homa/Homa.h>
 
 #include "ControlPacket.h"
 #include "Intrusive.h"
@@ -41,16 +42,26 @@ namespace Core {
  * This class is thread-safe.
  */
 class Receiver {
+  public:
+    explicit Receiver(Transport* transport, Policy::Manager* policyManager,
+                      uint64_t messageTimeoutCycles,
+                      uint64_t resendIntervalCycles);
+    virtual ~Receiver();
+    virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
+    virtual void handleBusyPacket(Driver::Packet* packet, Driver* driver);
+    virtual void handlePingPacket(Driver::Packet* packet, Driver* driver);
+    virtual Homa::InMessage* receiveMessage();
+    virtual void poll();
+
   private:
     // Forward declaration
     struct Peer;
 
-  public:
     /**
      * Represents an incoming message that is being assembled or being processed
      * by the application.
      */
-    class Message : public Core::Message {
+    class Message : public Homa::InMessage, public Core::Message {
       public:
         /**
          * Defines the possible states of this Message.
@@ -63,10 +74,11 @@ class Receiver {
                           //< communication with the Sender.
         };
 
-        explicit Message(Driver* driver, uint16_t packetHeaderLength,
-                         uint32_t messageLength)
+        explicit Message(Receiver* receiver, Driver* driver,
+                         uint16_t packetHeaderLength, uint32_t messageLength)
             : Core::Message(driver, packetHeaderLength, messageLength)
             , mutex()
+            , receiver(receiver)
             , id(0, 0)
             , source()
             , numExpectedPackets(0)
@@ -74,7 +86,6 @@ class Receiver {
             , priority(0)
             , unreceivedBytes(messageLength)
             , state(Message::State::IN_PROGRESS)
-            , op(nullptr)
             , peer(nullptr)
             , scheduledMessageNode(this)
             , receivedMessageNode(this)
@@ -82,15 +93,32 @@ class Receiver {
             , resendTimeout(this)
         {}
 
-        /**
-         * Associate a particular Transport::Op with this Message.  Allows the
-         * receiver to single the Transport about this Message when update
-         * occur.
-         */
-        void registerOp(void* op)
+        /// See Homa::InMessage::acknowledge()
+        virtual void acknowledge() const
         {
-            SpinLock::Lock lock(mutex);
-            this->op = op;
+            SpinLock::Lock lock_message(mutex);
+            ControlPacket::send<Protocol::Packet::DoneHeader>(driver, source,
+                                                              id);
+        }
+
+        /// See Homa::InMessage::fail()
+        virtual void fail() const
+        {
+            SpinLock::Lock lock_message(mutex);
+            ControlPacket::send<Protocol::Packet::ErrorHeader>(driver, source,
+                                                               id);
+        }
+
+        /// See Homa::InMessage::dropped()
+        virtual bool dropped() const
+        {
+            return state.load() == State::DROPPED;
+        }
+
+        /// See Homa::InMessage::release()
+        virtual void release()
+        {
+            receiver->dropMessage(this);
         }
 
         /**
@@ -115,6 +143,8 @@ class Receiver {
 
         /// Monitor style lock.
         mutable SpinLock mutex;
+        /// The Receiver responsible for this message.
+        Receiver* const receiver;
         /// Contains the unique identifier for this message.
         Protocol::MessageId id;
         /// Contains source address this message.
@@ -129,8 +159,6 @@ class Receiver {
         std::atomic<uint32_t> unreceivedBytes;
         /// This message's current state.
         std::atomic<State> state;
-        /// Transport::Op associated with this message.
-        void* op;
         /// Peer object if any that holds this message (if any).
         Peer* peer;
         /// Intrusive structure used by the Receiver to keep track of when this
@@ -149,48 +177,6 @@ class Receiver {
         friend class Receiver;
     };
 
-    explicit Receiver(Transport* transport, Policy::Manager* policyManager,
-                      uint64_t messageTimeoutCycles,
-                      uint64_t resendIntervalCycles);
-    virtual ~Receiver();
-    virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
-    virtual void handleBusyPacket(Driver::Packet* packet, Driver* driver);
-    virtual void handlePingPacket(Driver::Packet* packet, Driver* driver);
-    virtual Receiver::Message* receiveMessage();
-    virtual void dropMessage(Receiver::Message* message);
-    virtual void poll();
-
-    /**
-     * Send a DONE packet to the Sender of an incoming request message.
-     *
-     * @param message
-     *      Incoming request (message) that should be acknowledged.
-     * @param driver
-     *      Driver with which the DONE packet should be sent.
-     */
-    static inline void sendDonePacket(Message* message, Driver* driver)
-    {
-        SpinLock::Lock lock_message(message->mutex);
-        ControlPacket::send<Protocol::Packet::DoneHeader>(
-            driver, message->source, message->id);
-    }
-
-    /**
-     * Send an ERROR packet to the Sender of an incoming request message.
-     *
-     * @param message
-     *      Incoming request (message) that should be failed.
-     * @param driver
-     *      Driver with which the ERROR packet should be sent.
-     */
-    static inline void sendErrorPacket(Message* message, Driver* driver)
-    {
-        SpinLock::Lock lock_message(message->mutex);
-        ControlPacket::send<Protocol::Packet::ErrorHeader>(
-            driver, message->source, message->id);
-    }
-
-  private:
     /**
      * Holds the incoming scheduled messages from another transport.
      */
@@ -232,6 +218,7 @@ class Receiver {
         Intrusive::List<Peer>::Node scheduledPeerNode;
     };
 
+    void dropMessage(Receiver::Message* message);
     void checkMessageTimeouts();
     void checkResendTimeouts();
     void runScheduler();

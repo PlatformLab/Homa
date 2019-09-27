@@ -37,6 +37,7 @@ class MockSender : public Core::Sender {
                  pingIntervalCycles)
     {}
 
+    MOCK_METHOD0(allocMessage, Homa::OutMessage*());
     MOCK_METHOD2(handleDonePacket,
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD2(handleGrantPacket,
@@ -47,9 +48,6 @@ class MockSender : public Core::Sender {
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD2(handleErrorPacket,
                  void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD2(sendMessage, void(Core::Sender::Message* message,
-                                   Driver::Address destination));
-    MOCK_METHOD1(dropMessage, void(Core::Sender::Message* message));
     MOCK_METHOD0(poll, void());
 };
 

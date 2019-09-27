@@ -13,60 +13,72 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <Homa/Homa.h>
-
-#include "OpContext.h"
+#include "Homa.h"
+#include "Message.h"
 #include "Transport.h"
 
 namespace Homa {
 
 RemoteOp::RemoteOp(Transport* transport)
-    : request(nullptr)
+    : request(transport->internal->alloc())
     , response(nullptr)
-    , op(transport->internal->allocOp())
+    , transport(transport)
+    , opId()
+    , state(State::NOT_STARTED)
 {
-    request = op->getOutMessage();
+    request->reserve(sizeof(Protocol::Message::Header));
 }
 
 RemoteOp::~RemoteOp()
 {
-    op->transport->releaseOp(op);
+    request->release();
+    if (response != nullptr) {
+        response->release();
+    }
+    SpinLock::Lock lock_transport(transport->members->mutex);
+    transport->members->remoteOps.erase(opId);
 }
 
 void
 RemoteOp::send(Driver::Address destination)
 {
-    // Don't let applications touch the outbound message while it is being
-    // processed by the Transport.
-    request = nullptr;
-    response = nullptr;
-    op->transport->sendRequest(op, destination);
+    state.store(State::IN_PROGRESS);
+    uint32_t outboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
+    Driver::Address replyAddress = transport->driver->getLocalAddress();
+    SpinLock::Lock lock_transport(transport->members->mutex);
+    opId = Protocol::OpId(transport->members->transportId,
+                          transport->members->nextOpSequenceNumber++);
+    Protocol::Message::Header outboundHeader(opId, outboundTag);
+    transport->driver->addressToWireFormat(replyAddress,
+                                           &outboundHeader.replyAddress);
+    request->prepend(&outboundHeader, sizeof(outboundHeader));
+    transport->members->remoteOps.insert({opId, this});
+    request->send(destination);
 }
 
 bool
 RemoteOp::isReady()
 {
-    Core::OpContext::State state = op->state.load();
-    switch (state) {
-        case Core::OpContext::State::NOT_STARTED:
-            // Fall through to IN_PROGRESS.
-        case Core::OpContext::State::IN_PROGRESS:
+    State copyOfState = state.load();
+    switch (copyOfState) {
+        case State::NOT_STARTED:
             return false;
             break;
-        case Core::OpContext::State::COMPLETED:
-            // Grant access to the received response.
-            response = op->getInMessage();
-            // Fall through to FAILED.
-            /* FALLTHRU */
-        case Core::OpContext::State::FAILED:
-            // Restore access to the request.
-            request = op->getOutMessage();
+        case State::IN_PROGRESS:
+            if (request->getStatus() == OutMessage::Status::FAILED) {
+                state.store(State::FAILED);
+                return true;
+            }
+            return false;
+            break;
+        case State::COMPLETED:
+            return true;
+            break;
+        case State::FAILED:
             return true;
             break;
         default:
-            ERROR("Unexpected operation state.");
-            return false;
-            break;
+            PANIC("Unknown RemoteOp state.");
     }
 }
 
@@ -74,30 +86,58 @@ void
 RemoteOp::wait()
 {
     while (!isReady()) {
-        op->transport->poll();
+        transport->poll();
     }
 }
 
 ServerOp::ServerOp()
     : request(nullptr)
     , response(nullptr)
-    , op(nullptr)
+    , transport(nullptr)
+    , state(State::NOT_STARTED)
+    , detached(false)
+    , opId()
+    , requestTag(0)
+    , replyAddress(0)
+    , delegated(false)
 {}
 
 ServerOp::ServerOp(ServerOp&& other)
     : request(std::move(other.request))
     , response(std::move(other.response))
-    , op(std::move(other.op))
+    , transport(std::move(other.transport))
+    , state(other.state.load())
+    , detached(other.detached.load())
+    , opId(other.opId)
+    , requestTag(other.requestTag)
+    , replyAddress(other.replyAddress)
+    , delegated(other.delegated)
 {
     other.request = nullptr;
     other.response = nullptr;
-    other.op = nullptr;
+    other.transport = nullptr;
+    other.state.store(State::NOT_STARTED);
+    other.detached.store(false);
+    other.opId = Protocol::OpId();
+    other.requestTag = 0;
+    other.replyAddress = 0;
+    other.delegated = false;
 }
 
 ServerOp::~ServerOp()
 {
-    if (op != nullptr) {
-        op->transport->releaseOp(op);
+    if (transport != nullptr && !detached && state != State::NOT_STARTED) {
+        // Automatically detach by default.
+        detached.store(true);
+        SpinLock::Lock lock_transport(transport->members->mutex);
+        transport->members->detachedServerOps.emplace_back(std::move(*this));
+    } else {
+        if (request != nullptr) {
+            request->release();
+        }
+        if (response != nullptr) {
+            response->release();
+        }
     }
 }
 
@@ -106,28 +146,89 @@ ServerOp::operator=(ServerOp&& other)
 {
     request = std::move(other.request);
     response = std::move(other.response);
-    op = std::move(other.op);
+    transport = std::move(other.transport);
+    state = other.state.load();
+    detached = other.detached.load();
+    opId = other.opId;
+    requestTag = other.requestTag;
+    replyAddress = other.replyAddress;
+    delegated = other.delegated;
+
     other.request = nullptr;
     other.response = nullptr;
-    other.op = nullptr;
+    other.transport = nullptr;
+    other.state.store(State::NOT_STARTED);
+    other.detached.store(false);
+    other.opId = Protocol::OpId();
+    other.requestTag = 0;
+    other.replyAddress = 0;
+    other.delegated = false;
     return *this;
 }
 
 ServerOp::operator bool() const
 {
-    if (op != nullptr) {
+    if (request != nullptr) {
         return true;
     } else {
         return false;
     }
 }
 
+ServerOp::State
+ServerOp::checkProgress()
+{
+    State copyOfState = state.load();
+    OutMessage::Status outState = OutMessage::Status::NOT_STARTED;
+    if (response != nullptr) {
+        outState = response->getStatus();
+    }
+    if (copyOfState == State::NOT_STARTED) {
+        // Nothing to do.
+    } else if (copyOfState == State::IN_PROGRESS) {
+        // ServerOp must have an inboundMessage to be IN_PROGRESS
+        assert(request != nullptr);
+        if (request->dropped()) {
+            state.store(State::DROPPED);
+        } else if ((outState == Homa::OutMessage::Status::COMPLETED) ||
+                   (outState == Homa::OutMessage::Status::SENT && !delegated)) {
+            state.store(State::COMPLETED);
+            if (requestTag != Protocol::Message::INITIAL_REQUEST_TAG) {
+                request->acknowledge();
+            }
+        } else if (outState == Homa::OutMessage::Status::FAILED) {
+            state.store(State::FAILED);
+            // Deregister the outbound message in case the application wants
+            // to try again.
+            response->cancel();
+        }
+    } else if (copyOfState == State::COMPLETED) {
+        // Nothing to do.
+    } else if (copyOfState == State::DROPPED) {
+        // Nothing to do.
+    } else if (copyOfState == State::FAILED) {
+        if (detached) {
+            assert(request != nullptr);
+            // If detached, automatically return an ERROR back to the Sender now
+            // that the Server has given up.
+            request->fail();
+        }
+    } else {
+        PANIC("Unknown ServerOp state.");
+    }
+    return state.load();
+}
+
 void
 ServerOp::reply()
 {
-    if (op != nullptr) {
-        response = nullptr;
-        op->transport->sendReply(op);
+    if (request != nullptr) {
+        Protocol::Message::Header header(
+            opId, Protocol::Message::ULTIMATE_RESPONSE_TAG);
+        transport->driver->addressToWireFormat(replyAddress,
+                                               &header.replyAddress);
+        response->prepend(&header, sizeof(header));
+        response->send(replyAddress);
     } else {
         WARNING("Calling reply() on empty ServerOp; nothing will be sent.");
     }
@@ -136,9 +237,13 @@ ServerOp::reply()
 void
 ServerOp::delegate(Driver::Address destination)
 {
-    if (op != nullptr) {
-        response = nullptr;
-        op->transport->sendRequest(op, destination);
+    if (request != nullptr) {
+        delegated = true;
+        Protocol::Message::Header header(opId, requestTag + 1);
+        transport->driver->addressToWireFormat(replyAddress,
+                                               &header.replyAddress);
+        response->prepend(&header, sizeof(header));
+        response->send(destination);
     } else {
         WARNING("Calling delegate() on empty ServerOp; nothing will be sent.");
     }
@@ -147,18 +252,36 @@ ServerOp::delegate(Driver::Address destination)
 Transport::Transport(Driver* driver, uint64_t transportId)
     : driver(driver)
     , internal(new Core::Transport(driver, transportId))
+    , members(new TransportInternal(transportId))
 {}
 
-Transport::~Transport() = default;
+Transport::~Transport()
+{
+    members->mutex.lock();
+    members->remoteOps.clear();
+    for (auto it = members->pendingServerOps.begin();
+         it != members->pendingServerOps.end();) {
+        it = members->pendingServerOps.erase(it);
+    }
+    for (auto it = members->detachedServerOps.begin();
+         it != members->detachedServerOps.end();) {
+        it = members->detachedServerOps.erase(it);
+    }
+    members->detachedServerOps.clear();
+}
 
 ServerOp
 Transport::receiveServerOp()
 {
     ServerOp op;
-    op.op = internal->receiveOp();
-    if (op.op != nullptr) {
-        op.request = op.op->getInMessage();
-        op.response = op.op->getOutMessage();
+    if (!members->pendingServerOps.empty()) {
+        op = std::move(members->pendingServerOps.front());
+        members->pendingServerOps.pop_front();
+
+        op.response = internal->alloc();
+        op.response->reserve(sizeof(Protocol::Message::Header));
+        op.transport = this;
+        op.state.store(ServerOp::State::IN_PROGRESS);
     }
     return op;
 }
@@ -167,6 +290,49 @@ void
 Transport::poll()
 {
     internal->poll();
+    // Process incoming messages
+    for (InMessage* message = internal->receive(); message != nullptr;
+         message = internal->receive()) {
+        Protocol::Message::Header header;
+        message->get(0, &header, sizeof(header));
+        message->strip(sizeof(header));
+        if (header.tag == Protocol::Message::ULTIMATE_RESPONSE_TAG) {
+            // Incoming message is a response
+            SpinLock::Lock lock_transport(members->mutex);
+            auto it = members->remoteOps.find(header.opId);
+            if (it != members->remoteOps.end()) {
+                RemoteOp* op = it->second;
+                op->response = message;
+                op->state.store(RemoteOp::State::COMPLETED);
+            } else {
+                // There is no RemoteOp waiting for this message; Drop it.
+                message->release();
+            }
+        } else {
+            // Incoming message is a request.
+            ServerOp op;
+            op.request = message;
+            op.opId = header.opId;
+            op.requestTag = header.tag;
+            op.replyAddress = driver->getAddress(&header.replyAddress);
+            SpinLock::Lock lock_transport(members->mutex);
+            members->pendingServerOps.emplace_back(std::move(op));
+        }
+    }
+    // Check detached ServerOps
+    {
+        SpinLock::Lock lock_transport(members->mutex);
+        auto it = members->detachedServerOps.begin();
+        while (it != members->detachedServerOps.end()) {
+            ServerOp::State state = it->checkProgress();
+            assert(state != ServerOp::State::NOT_STARTED);
+            if (state == ServerOp::State::IN_PROGRESS) {
+                ++it;
+            } else {
+                it = members->detachedServerOps.erase(it);
+            }
+        }
+    }
 }
 
 }  // namespace Homa

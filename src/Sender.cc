@@ -56,12 +56,23 @@ Sender::Sender(Transport* transport, uint64_t transportId,
     , messageTimeouts(messageTimeoutCycles)
     , pingTimeouts(pingIntervalCycles)
     , sending()
+    , messageAllocator()
 {}
 
 /**
  * Sender Destructor
  */
 Sender::~Sender() {}
+
+/**
+ * Allocate an OutMessage that can be sent with this Sender.
+ */
+Homa::OutMessage*
+Sender::allocMessage()
+{
+    SpinLock::Lock lock_allocator(messageAllocator.mutex);
+    return messageAllocator.pool.construct(this, transport->driver);
+}
 
 /**
  * Process an incoming DONE packet.
@@ -97,8 +108,7 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
     readyQueue.remove(&message->readyQueueNode);
     lock.unlock();  // End Sender critical section
 
-    message->state.store(Message::State::COMPLETED);
-    transport->hintUpdatedOp(message->op);
+    message->state.store(OutMessage::Status::COMPLETED);
     driver->releasePackets(&packet, 1);
 }
 
@@ -243,10 +253,10 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
 
     // Lock handoff.
     SpinLock::Lock lock_message(message->mutex);
-    if (message->state == Message::State::IN_PROGRESS ||
-        message->state == Message::State::SENT) {
+    if (message->state == OutMessage::Status::IN_PROGRESS ||
+        message->state == OutMessage::Status::SENT) {
         // Restart sending the message from scratch.
-        message->state.store(Message::State::IN_PROGRESS);
+        message->state.store(OutMessage::Status::IN_PROGRESS);
         message->sentIndex = 0;
         // Reuse the original unscheduledIndexLimit so that the headers don't
         // have to be reset.
@@ -308,10 +318,20 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
     readyQueue.remove(&message->readyQueueNode);
     lock.unlock();  // End Sender critical section
 
-    assert(message->state != Message::State::COMPLETED);
-    message->state.store(Message::State::FAILED);
-    transport->hintUpdatedOp(message->op);
+    assert(message->state != OutMessage::Status::COMPLETED);
+    message->state.store(OutMessage::Status::FAILED);
     driver->releasePackets(&packet, 1);
+}
+
+/**
+ * Allow the Sender to make incremental progress on background tasks.
+ */
+void
+Sender::poll()
+{
+    trySend();
+    checkPingTimeouts();
+    checkMessageTimeouts();
 }
 
 /**
@@ -341,7 +361,7 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
 
         message->id = id;
         message->destination = destination;
-        message->state.store(Message::State::IN_PROGRESS);
+        message->state.store(OutMessage::Status::IN_PROGRESS);
         message->grantIndex = Util::downCast<uint16_t>(
             ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
              message->PACKET_DATA_LENGTH));
@@ -389,13 +409,13 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
 }
 
 /**
- * Inform the Sender that a Message is no longer needed.
+ * Inform the Sender that a Message no longer needs to be sent.
  *
  * @param message
- *      The Sender::Message that is no longer needed.
+ *      The Sender::Message that is no longer needs to be sent.
  */
 void
-Sender::dropMessage(Sender::Message* message)
+Sender::cancelMessage(Sender::Message* message)
 {
     SpinLock::Lock lock(mutex);
     SpinLock::Lock lock_message(message->mutex);
@@ -410,14 +430,17 @@ Sender::dropMessage(Sender::Message* message)
 }
 
 /**
- * Allow the Sender to make incremental progress on background tasks.
+ * Inform the Sender that a Message is no longer needed.
+ *
+ * @param message
+ *      The Sender::Message that is no longer needed.
  */
 void
-Sender::poll()
+Sender::dropMessage(Sender::Message* message)
 {
-    trySend();
-    checkPingTimeouts();
-    checkMessageTimeouts();
+    cancelMessage(message);
+    SpinLock::Lock lock_allocator(messageAllocator.mutex);
+    messageAllocator.pool.destroy(message);
 }
 
 /**
@@ -442,13 +465,12 @@ Sender::checkMessageTimeouts()
             break;
         }
         // Found expired timeout.
-        if (message->state != Message::State::COMPLETED) {
-            message->state.store(Message::State::FAILED);
+        if (message->state != OutMessage::Status::COMPLETED) {
+            message->state.store(OutMessage::Status::FAILED);
         }
         messageTimeouts.cancelTimeout(&message->messageTimeout);
         pingTimeouts.cancelTimeout(&message->pingTimeout);
         readyQueue.remove(&message->readyQueueNode);
-        transport->hintUpdatedOp(message->op);
     }
 }
 
@@ -474,8 +496,8 @@ Sender::checkPingTimeouts()
             break;
         }
         // Found expired timeout.
-        if (message->state == Message::State::COMPLETED ||
-            message->state == Message::State::FAILED) {
+        if (message->state == OutMessage::Status::COMPLETED ||
+            message->state == OutMessage::Status::FAILED) {
             pingTimeouts.cancelTimeout(&message->pingTimeout);
             continue;
         } else {
@@ -534,8 +556,7 @@ Sender::trySend()
         }
         if (message.sentIndex >= message.getNumPackets()) {
             // We have finished sending the message.
-            message.state.store(Message::State::SENT);
-            transport->hintUpdatedOp(message.op);
+            message.state.store(OutMessage::Status::SENT);
             it = readyQueue.remove(it);
         } else if (message.sentIndex >= message.grantIndex) {
             // We have sent every granted packet.

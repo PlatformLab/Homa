@@ -16,9 +16,10 @@
 
 #include <gtest/gtest.h>
 
-#include <Homa/Homa.h>
+#include "Homa.h"
 
 #include "Mock/MockDriver.h"
+#include "Mock/MockMessage.h"
 #include "Mock/MockReceiver.h"
 #include "Mock/MockSender.h"
 #include "Transport.h"
@@ -26,6 +27,10 @@
 namespace Homa {
 namespace {
 
+using ::testing::_;
+using ::testing::A;
+using ::testing::Eq;
+using ::testing::Mock;
 using ::testing::NiceMock;
 using ::testing::Return;
 
@@ -69,80 +74,111 @@ class HomaTest : public ::testing::Test {
 
 TEST_F(HomaTest, RemoteOp_constructor)
 {
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    EXPECT_CALL(*mockSender, allocMessage).WillOnce(Return(&mockOutMessage));
+    EXPECT_CALL(mockOutMessage, reserve(Eq(sizeof(Protocol::Message::Header))));
     RemoteOp op(transport);
 
-    EXPECT_EQ(op.op->getOutMessage(), op.request);
+    EXPECT_EQ(&mockOutMessage, op.request);
+    EXPECT_EQ(nullptr, op.response);
+    EXPECT_EQ(transport, op.transport);
+    EXPECT_EQ(RemoteOp::State::NOT_STARTED, op.state.load());
 }
 
 TEST_F(HomaTest, RemoteOp_destructor)
 {
-    // Nothing to test.
-}
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    ON_CALL(*mockSender, allocMessage).WillByDefault(Return(&mockOutMessage));
 
-TEST_F(HomaTest, RemoteOp_setDestination)
-{
-    // Nothing to test.
+    EXPECT_CALL(mockOutMessage, release);
+    EXPECT_CALL(mockInMessage, release);
+    {
+        RemoteOp op(transport);
+        op.opId = Protocol::OpId(42, 22);
+        transport->members->remoteOps.insert({op.opId, &op});
+        op.response = &mockInMessage;
+    }
+    EXPECT_TRUE(transport->members->remoteOps.empty());
+
+    EXPECT_CALL(mockOutMessage, release);
+    {
+        RemoteOp op(transport);
+    }
 }
 
 TEST_F(HomaTest, RemoteOp_send)
 {
-    // Nothing to test.
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    ON_CALL(*mockSender, allocMessage).WillByDefault(Return(&mockOutMessage));
+    RemoteOp op(transport);
+
+    Protocol::OpId opId(transport->members->transportId,
+                        transport->members->nextOpSequenceNumber);
+    Homa::Driver::Address localAddress = 22;
+    Homa::Driver::Address destination = 42;
+
+    EXPECT_FALSE(transport->members->remoteOps.end() !=
+                 transport->members->remoteOps.find(opId));
+
+    EXPECT_CALL(mockDriver, getLocalAddress).WillOnce(Return(localAddress));
+    EXPECT_CALL(mockDriver, addressToWireFormat(Eq(localAddress), _));
+    EXPECT_CALL(mockOutMessage, prepend(_, sizeof(Protocol::Message::Header)));
+    EXPECT_CALL(mockOutMessage, send(Eq(destination)));
+
+    op.send(destination);
+
+    EXPECT_TRUE(transport->members->remoteOps.end() !=
+                transport->members->remoteOps.find(opId));
+    EXPECT_EQ(&op, transport->members->remoteOps.find(opId)->second);
 }
 
 TEST_F(HomaTest, RemoteOp_isReady_NOT_STARTED)
 {
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    ON_CALL(*mockSender, allocMessage).WillByDefault(Return(&mockOutMessage));
     RemoteOp op(transport);
-    op.request = nullptr;
-    op.response = nullptr;
+    op.state.store(RemoteOp::State::NOT_STARTED);
 
-    op.op->state = Core::OpContext::State::NOT_STARTED;
     EXPECT_FALSE(op.isReady());
-    EXPECT_EQ(nullptr, op.request);
-    EXPECT_EQ(nullptr, op.response);
 }
 
 TEST_F(HomaTest, RemoteOp_isReady_IN_PROGRESS)
 {
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    ON_CALL(*mockSender, allocMessage).WillByDefault(Return(&mockOutMessage));
     RemoteOp op(transport);
-    op.request = nullptr;
-    op.response = nullptr;
+    op.state.store(RemoteOp::State::IN_PROGRESS);
 
-    op.op->state = Core::OpContext::State::IN_PROGRESS;
+    EXPECT_CALL(mockOutMessage, getStatus)
+        .WillOnce(Return(OutMessage::Status::SENT));
     EXPECT_FALSE(op.isReady());
-    EXPECT_EQ(nullptr, op.request);
-    EXPECT_EQ(nullptr, op.response);
-}
+    EXPECT_EQ(RemoteOp::State::IN_PROGRESS, op.state.load());
 
-TEST_F(HomaTest, RemoteOp_isReady_FAILED)
-{
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
-    RemoteOp op(transport);
-    op.request = nullptr;
-    op.response = nullptr;
-
-    op.op->state = Core::OpContext::State::FAILED;
+    EXPECT_CALL(mockOutMessage, getStatus)
+        .WillOnce(Return(OutMessage::Status::FAILED));
     EXPECT_TRUE(op.isReady());
-    EXPECT_EQ(op.op->getOutMessage(), op.request);
-    EXPECT_EQ(nullptr, op.response);
+    EXPECT_EQ(RemoteOp::State::FAILED, op.state.load());
 }
 
 TEST_F(HomaTest, RemoteOp_isReady_COMPLETED)
 {
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    ON_CALL(*mockSender, allocMessage).WillByDefault(Return(&mockOutMessage));
     RemoteOp op(transport);
-    op.request = nullptr;
-    op.response = nullptr;
-    Core::Receiver::Message inMessage(&mockDriver, 28, 0);
-    inMessage.id = Protocol::MessageId(42, 32);
-    static_cast<Core::Transport::Op*>(op.op)->inMessage = &inMessage;
+    op.state.store(RemoteOp::State::COMPLETED);
 
-    op.op->state = Core::OpContext::State::COMPLETED;
     EXPECT_TRUE(op.isReady());
-    EXPECT_EQ(op.op->getOutMessage(), op.request);
-    EXPECT_EQ(op.op->getInMessage(), op.response);
+}
+
+TEST_F(HomaTest, RemoteOp_isReady_FAILED)
+{
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    ON_CALL(*mockSender, allocMessage).WillByDefault(Return(&mockOutMessage));
+    RemoteOp op(transport);
+    op.state.store(RemoteOp::State::FAILED);
+
+    EXPECT_TRUE(op.isReady());
 }
 
 TEST_F(HomaTest, RemoteOp_wait)
@@ -155,85 +191,585 @@ TEST_F(HomaTest, ServerOp_constructor)
     ServerOp op;
     EXPECT_EQ(nullptr, op.request);
     EXPECT_EQ(nullptr, op.response);
-    EXPECT_EQ(nullptr, op.op);
+    EXPECT_EQ(nullptr, op.transport);
+    EXPECT_EQ(ServerOp::State::NOT_STARTED, op.state.load());
+    EXPECT_EQ(false, op.detached.load());
+    EXPECT_EQ(false, op.delegated);
 }
 
 TEST_F(HomaTest, ServerOp_constructor_move)
 {
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    Protocol::OpId opId(42, 21);
+
     ServerOp srcOp;
-    srcOp.request = (const Message*)41;
-    srcOp.response = (Message*)42;
-    srcOp.op = (Core::OpContext*)43;
+    srcOp.request = &mockInMessage;
+    srcOp.response = &mockOutMessage;
+    srcOp.transport = transport;
+    srcOp.state = ServerOp::State::IN_PROGRESS;
+    srcOp.detached = true;
+    srcOp.opId = opId;
+    srcOp.requestTag = 33;
+    srcOp.replyAddress = 99;
+    srcOp.delegated = true;
 
     ServerOp destOp(std::move(srcOp));
 
     EXPECT_EQ(nullptr, srcOp.request);
     EXPECT_EQ(nullptr, srcOp.response);
-    EXPECT_EQ(nullptr, srcOp.op);
+    EXPECT_EQ(nullptr, srcOp.transport);
+    EXPECT_EQ(ServerOp::State::NOT_STARTED, srcOp.state.load());
+    EXPECT_EQ(false, srcOp.detached.load());
+    EXPECT_EQ(Protocol::OpId(), srcOp.opId);
+    EXPECT_EQ(0U, srcOp.requestTag);
+    EXPECT_EQ(0U, srcOp.replyAddress);
+    EXPECT_EQ(false, srcOp.delegated);
 
-    EXPECT_EQ((const Message*)41, destOp.request);
-    EXPECT_EQ((Message*)42, destOp.response);
-    EXPECT_EQ((Core::OpContext*)43, destOp.op);
-
-    destOp.op = nullptr;
+    EXPECT_EQ(&mockInMessage, destOp.request);
+    EXPECT_EQ(&mockOutMessage, destOp.response);
+    EXPECT_EQ(transport, destOp.transport);
+    EXPECT_EQ(ServerOp::State::IN_PROGRESS, destOp.state.load());
+    EXPECT_EQ(true, destOp.detached.load());
+    EXPECT_EQ(opId, destOp.opId);
+    EXPECT_EQ(33U, destOp.requestTag);
+    EXPECT_EQ(99U, destOp.replyAddress);
+    EXPECT_EQ(true, destOp.delegated);
 }
 
-TEST_F(HomaTest, ServerOp_destructor)
+TEST_F(HomaTest, ServerOp_destructor_detach)
 {
-    // Nothing to test.
+    EXPECT_TRUE(transport->members->detachedServerOps.empty());
+    {
+        ServerOp op;
+        op.transport = transport;
+        op.detached = false;
+        op.state = ServerOp::State::IN_PROGRESS;
+    }
+    EXPECT_FALSE(transport->members->detachedServerOps.empty());
+}
+
+TEST_F(HomaTest, ServerOp_destructor_release)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+
+    EXPECT_CALL(mockInMessage, release);
+    EXPECT_CALL(mockOutMessage, release);
+    {
+        ServerOp op;
+        op.request = &mockInMessage;
+        op.response = &mockOutMessage;
+        op.transport = transport;
+        op.detached = false;
+        op.state = ServerOp::State::NOT_STARTED;
+    }
+
+    EXPECT_CALL(mockInMessage, release).Times(0);
+    EXPECT_CALL(mockOutMessage, release);
+    {
+        ServerOp op;
+        op.request = nullptr;
+        op.response = &mockOutMessage;
+        op.transport = transport;
+        op.detached = true;
+        op.state = ServerOp::State::IN_PROGRESS;
+    }
+
+    EXPECT_CALL(mockInMessage, release);
+    EXPECT_CALL(mockOutMessage, release).Times(0);
+    {
+        ServerOp op;
+        op.request = &mockInMessage;
+        op.response = nullptr;
+        op.transport = nullptr;
+        op.detached = false;
+        op.state = ServerOp::State::IN_PROGRESS;
+    }
 }
 
 TEST_F(HomaTest, ServerOp_assignment_move)
 {
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    Protocol::OpId opId(42, 21);
+
     ServerOp srcOp;
-    srcOp.request = (const Message*)41;
-    srcOp.response = (Message*)42;
-    srcOp.op = (Core::OpContext*)43;
+    srcOp.request = &mockInMessage;
+    srcOp.response = &mockOutMessage;
+    srcOp.transport = transport;
+    srcOp.state = ServerOp::State::IN_PROGRESS;
+    srcOp.detached = true;
+    srcOp.opId = opId;
+    srcOp.requestTag = 33;
+    srcOp.replyAddress = 99;
+    srcOp.delegated = true;
 
     ServerOp destOp;
-
     destOp = std::move(srcOp);
 
     EXPECT_EQ(nullptr, srcOp.request);
     EXPECT_EQ(nullptr, srcOp.response);
-    EXPECT_EQ(nullptr, srcOp.op);
+    EXPECT_EQ(nullptr, srcOp.transport);
+    EXPECT_EQ(ServerOp::State::NOT_STARTED, srcOp.state.load());
+    EXPECT_EQ(false, srcOp.detached.load());
+    EXPECT_EQ(Protocol::OpId(), srcOp.opId);
+    EXPECT_EQ(0U, srcOp.requestTag);
+    EXPECT_EQ(0U, srcOp.replyAddress);
+    EXPECT_EQ(false, srcOp.delegated);
 
-    EXPECT_EQ((const Message*)41, destOp.request);
-    EXPECT_EQ((Message*)42, destOp.response);
-    EXPECT_EQ((Core::OpContext*)43, destOp.op);
+    EXPECT_EQ(&mockInMessage, destOp.request);
+    EXPECT_EQ(&mockOutMessage, destOp.response);
+    EXPECT_EQ(transport, destOp.transport);
+    EXPECT_EQ(ServerOp::State::IN_PROGRESS, destOp.state.load());
+    EXPECT_EQ(true, destOp.detached.load());
+    EXPECT_EQ(opId, destOp.opId);
+    EXPECT_EQ(33U, destOp.requestTag);
+    EXPECT_EQ(99U, destOp.replyAddress);
+    EXPECT_EQ(true, destOp.delegated);
+}
 
-    destOp.op = nullptr;
+TEST_F(HomaTest, ServerOp_operator_bool)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    ServerOp op;
+    op.request = &mockInMessage;
+
+    EXPECT_TRUE(op);
+
+    op.request = nullptr;
+
+    EXPECT_FALSE(op);
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_NOT_STARTED)
+{
+    ServerOp op;
+    op.state.store(ServerOp::State::NOT_STARTED);
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::NOT_STARTED, retState);
+    EXPECT_EQ(ServerOp::State::NOT_STARTED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_IN_PROGRESS_DROPPED)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+
+    ServerOp op;
+    op.state.store(ServerOp::State::IN_PROGRESS);
+    op.request = &mockInMessage;
+
+    EXPECT_CALL(mockInMessage, dropped).WillOnce(Return(true));
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::DROPPED, retState);
+    EXPECT_EQ(ServerOp::State::DROPPED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_IN_PROGRESS_notDone)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+
+    ServerOp op;
+    op.state.store(ServerOp::State::IN_PROGRESS);
+    op.request = &mockInMessage;
+
+    EXPECT_CALL(mockInMessage, dropped).WillOnce(Return(false));
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::IN_PROGRESS, retState);
+    EXPECT_EQ(ServerOp::State::IN_PROGRESS, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_IN_PROGRESS_notDone_reply)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+
+    ServerOp op;
+    op.state.store(ServerOp::State::IN_PROGRESS);
+    op.request = &mockInMessage;
+    op.response = &mockOutMessage;
+    op.delegated = false;
+
+    EXPECT_CALL(mockInMessage, dropped).WillOnce(Return(false));
+    EXPECT_CALL(mockOutMessage, getStatus)
+        .WillOnce(Return(OutMessage::Status::IN_PROGRESS));
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::IN_PROGRESS, retState);
+    EXPECT_EQ(ServerOp::State::IN_PROGRESS, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_IN_PROGRESS_done_acked)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+
+    ServerOp op;
+    op.state.store(ServerOp::State::IN_PROGRESS);
+    op.request = &mockInMessage;
+    op.response = &mockOutMessage;
+    op.requestTag = Protocol::Message::INITIAL_REQUEST_TAG;
+    op.delegated = true;
+
+    EXPECT_CALL(mockInMessage, dropped).WillOnce(Return(false));
+    EXPECT_CALL(mockInMessage, acknowledge).Times(0);
+    EXPECT_CALL(mockOutMessage, getStatus)
+        .WillOnce(Return(OutMessage::Status::COMPLETED));
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::COMPLETED, retState);
+    EXPECT_EQ(ServerOp::State::COMPLETED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_IN_PROGRESS_done_reply_sent)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+
+    ServerOp op;
+    op.state.store(ServerOp::State::IN_PROGRESS);
+    op.request = &mockInMessage;
+    op.response = &mockOutMessage;
+    op.requestTag = Protocol::Message::INITIAL_REQUEST_TAG;
+    op.delegated = false;
+
+    EXPECT_CALL(mockInMessage, dropped).WillOnce(Return(false));
+    EXPECT_CALL(mockInMessage, acknowledge).Times(0);
+    EXPECT_CALL(mockOutMessage, getStatus)
+        .WillOnce(Return(OutMessage::Status::SENT));
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::COMPLETED, retState);
+    EXPECT_EQ(ServerOp::State::COMPLETED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_IN_PROGRESS_done_acknowledgeRequest)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+
+    ServerOp op;
+    op.state.store(ServerOp::State::IN_PROGRESS);
+    op.request = &mockInMessage;
+    op.response = &mockOutMessage;
+    op.requestTag = Protocol::Message::INITIAL_REQUEST_TAG + 1;
+    op.delegated = false;
+
+    EXPECT_CALL(mockInMessage, dropped).WillOnce(Return(false));
+    EXPECT_CALL(mockInMessage, acknowledge).Times(1);
+    EXPECT_CALL(mockOutMessage, getStatus)
+        .WillOnce(Return(OutMessage::Status::SENT));
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::COMPLETED, retState);
+    EXPECT_EQ(ServerOp::State::COMPLETED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_IN_PROGRESS_FAILED)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+
+    ServerOp op;
+    op.state.store(ServerOp::State::IN_PROGRESS);
+    op.request = &mockInMessage;
+    op.response = &mockOutMessage;
+
+    EXPECT_CALL(mockInMessage, dropped).WillOnce(Return(false));
+    EXPECT_CALL(mockOutMessage, getStatus)
+        .WillOnce(Return(OutMessage::Status::FAILED));
+    EXPECT_CALL(mockOutMessage, cancel).Times(1);
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::FAILED, retState);
+    EXPECT_EQ(ServerOp::State::FAILED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_COMPLETED)
+{
+    ServerOp op;
+    op.state.store(ServerOp::State::COMPLETED);
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::COMPLETED, retState);
+    EXPECT_EQ(ServerOp::State::COMPLETED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_DROPPED)
+{
+    ServerOp op;
+    op.state.store(ServerOp::State::DROPPED);
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::DROPPED, retState);
+    EXPECT_EQ(ServerOp::State::DROPPED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_FAILED)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+
+    ServerOp op;
+    op.request = &mockInMessage;
+    op.state.store(ServerOp::State::FAILED);
+    op.detached = false;
+
+    EXPECT_CALL(mockInMessage, fail).Times(0);
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::FAILED, retState);
+    EXPECT_EQ(ServerOp::State::FAILED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_checkProgress_FAILED_detached)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+
+    ServerOp op;
+    op.request = &mockInMessage;
+    op.state.store(ServerOp::State::FAILED);
+    op.detached = true;
+
+    EXPECT_CALL(mockInMessage, fail).Times(1);
+
+    ServerOp::State retState = op.checkProgress();
+
+    EXPECT_EQ(ServerOp::State::FAILED, retState);
+    EXPECT_EQ(ServerOp::State::FAILED, op.state.load());
+}
+
+TEST_F(HomaTest, ServerOp_reply)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    Homa::Driver::Address replyAddress = 22;
+
+    ServerOp op;
+    op.request = &mockInMessage;
+    op.response = &mockOutMessage;
+    op.transport = transport;
+    op.replyAddress = replyAddress;
+
+    EXPECT_CALL(mockDriver, addressToWireFormat(Eq(replyAddress), _)).Times(1);
+    EXPECT_CALL(mockOutMessage,
+                prepend(_, Eq(sizeof(Protocol::Message::Header))));
+    EXPECT_CALL(mockOutMessage, send(Eq(replyAddress)));
+
+    op.reply();
+}
+
+TEST_F(HomaTest, ServerOp_delegate)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    Homa::Driver::Address replyAddress = 22;
+    Homa::Driver::Address destination = 33;
+
+    ServerOp op;
+    op.request = &mockInMessage;
+    op.response = &mockOutMessage;
+    op.transport = transport;
+    op.replyAddress = replyAddress;
+
+    EXPECT_CALL(mockDriver, addressToWireFormat(Eq(replyAddress), _)).Times(1);
+    EXPECT_CALL(mockOutMessage,
+                prepend(_, Eq(sizeof(Protocol::Message::Header))));
+    EXPECT_CALL(mockOutMessage, send(Eq(destination)));
+
+    op.delegate(destination);
+
+    EXPECT_TRUE(op.delegated);
 }
 
 TEST_F(HomaTest, Transport_receiveServerOp)
 {
-    char payload[1024];
-    Homa::Mock::MockDriver::MockPacket packet(payload);
-    Protocol::OpId opId(42, 1);
-    Protocol::MessageId msgId(42, 1);
-    Core::Transport::Op* op = transport->internal->opPool.construct(
-        transport->internal.get(), transport->internal->driver, opId);
-    Core::Receiver::Message inMessage(&mockDriver,
-                                   sizeof(Protocol::Packet::DataHeader), 0);
-    inMessage.id = msgId;
-    op->inMessage = &inMessage;
-    transport->internal->pendingServerOps.queue.push_back(op);
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    Protocol::OpId opId(42, 22);
 
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet));
+    {
+        ServerOp op;
+        op.request = &mockInMessage;
+        op.opId = opId;
+        op.requestTag = 33;
+        op.replyAddress = 99;
+        transport->members->pendingServerOps.emplace_back(std::move(op));
+    }
 
-    ServerOp serverOp = transport->receiveServerOp();
+    ServerOp op;
 
-    EXPECT_TRUE(serverOp);
-    EXPECT_EQ(op, serverOp.op);
-    EXPECT_EQ(serverOp.request, serverOp.op->getInMessage());
-    EXPECT_EQ(serverOp.response, serverOp.op->getOutMessage());
+    EXPECT_FALSE(op);
+
+    EXPECT_CALL(*mockSender, allocMessage).WillOnce(Return(&mockOutMessage));
+    EXPECT_CALL(mockOutMessage, reserve(Eq(sizeof(Protocol::Message::Header))));
+
+    op = transport->receiveServerOp();
+
+    EXPECT_TRUE(op);
+    EXPECT_EQ(&mockInMessage, op.request);
+    EXPECT_EQ(&mockOutMessage, op.response);
+    EXPECT_EQ(transport, op.transport);
+    EXPECT_EQ(ServerOp::State::IN_PROGRESS, op.state.load());
+    EXPECT_EQ(false, op.detached);
+    EXPECT_EQ(opId, op.opId);
+    EXPECT_EQ(33U, op.requestTag);
+    EXPECT_EQ(99U, op.replyAddress);
+    EXPECT_EQ(false, op.delegated);
+
+    op.transport = nullptr;
 }
 
 TEST_F(HomaTest, Transport_receiveServerOp_empty)
 {
-    ServerOp serverOp = transport->receiveServerOp();
-    EXPECT_FALSE(serverOp);
-    EXPECT_EQ(nullptr, serverOp.op);
+    ServerOp op = transport->receiveServerOp();
+    EXPECT_FALSE(op);
+}
+
+ACTION_TEMPLATE(SetArgBuffer, HAS_1_TEMPLATE_PARAMS(int, k),
+                AND_2_VALUE_PARAMS(source, num))
+{
+    void* destination = ::std::get<k>(args);
+    ::std::memcpy(destination, source, num);
+}
+
+TEST_F(HomaTest, Transport_poll_processIncomingMessage_response)
+{
+    NiceMock<Homa::Mock::MockOutMessage> mockOutMessage;
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    Protocol::OpId opId(42, 32);
+    uint32_t tag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
+    Protocol::Message::Header header(opId, tag);
+
+    EXPECT_CALL(*mockSender, allocMessage).WillOnce(Return(&mockOutMessage));
+    RemoteOp op(transport);
+    op.state.store(RemoteOp::State::IN_PROGRESS);
+    op.opId = opId;
+    transport->members->remoteOps.insert({op.opId, &op});
+
+    EXPECT_CALL(*mockReceiver, receiveMessage)
+        .WillOnce(Return(&mockInMessage))
+        .WillOnce(Return(nullptr));
+    EXPECT_CALL(mockInMessage, get)
+        .WillOnce(SetArgBuffer<1>(&header, sizeof(header)));
+    EXPECT_CALL(mockInMessage, strip(Eq(sizeof(Protocol::Message::Header))));
+    EXPECT_CALL(mockInMessage, release).Times(0);
+
+    transport->poll();
+
+    EXPECT_EQ(&mockInMessage, op.response);
+    EXPECT_EQ(RemoteOp::State::COMPLETED, op.state.load());
+    Mock::VerifyAndClearExpectations(&mockInMessage);
+}
+
+TEST_F(HomaTest, Transport_poll_processIncomingMessage_response_drop)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    Protocol::OpId opId(42, 32);
+    uint32_t tag = Protocol::Message::ULTIMATE_RESPONSE_TAG;
+    Protocol::Message::Header header(opId, tag);
+
+    EXPECT_CALL(*mockReceiver, receiveMessage)
+        .WillOnce(Return(&mockInMessage))
+        .WillOnce(Return(nullptr));
+    EXPECT_CALL(mockInMessage, get)
+        .WillOnce(SetArgBuffer<1>(&header, sizeof(header)));
+    EXPECT_CALL(mockInMessage, strip(Eq(sizeof(Protocol::Message::Header))));
+    EXPECT_CALL(mockInMessage, release).Times(1);
+
+    transport->poll();
+
+    Mock::VerifyAndClearExpectations(&mockInMessage);
+}
+
+TEST_F(HomaTest, Transport_poll_processIncomingMessage_request)
+{
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage;
+    Protocol::OpId opId(42, 32);
+    uint32_t tag = Protocol::Message::INITIAL_REQUEST_TAG;
+    Protocol::Message::Header header(opId, tag);
+    Driver::Address address = 99;
+
+    EXPECT_CALL(*mockReceiver, receiveMessage)
+        .WillOnce(Return(&mockInMessage))
+        .WillOnce(Return(nullptr));
+    EXPECT_CALL(mockInMessage, get)
+        .WillOnce(SetArgBuffer<1>(&header, sizeof(header)));
+    EXPECT_CALL(mockInMessage, strip(Eq(sizeof(Protocol::Message::Header))));
+    EXPECT_CALL(mockDriver, getAddress(A<Driver::WireFormatAddress const*>()))
+        .WillOnce(Return(address));
+
+    transport->poll();
+
+    EXPECT_FALSE(transport->members->pendingServerOps.empty());
+    ServerOp* op = &transport->members->pendingServerOps.back();
+    EXPECT_EQ(&mockInMessage, op->request);
+    EXPECT_EQ(opId, op->opId);
+    EXPECT_EQ(tag, op->requestTag);
+    EXPECT_EQ(address, op->replyAddress);
+
+    // cleanup
+    transport->members->pendingServerOps.clear();
+}
+
+TEST_F(HomaTest, Transport_poll_checkDetachedServerOps)
+{
+    ON_CALL(*mockReceiver, receiveMessage).WillByDefault(Return(nullptr));
+
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage1;
+    NiceMock<Homa::Mock::MockInMessage> mockInMessage2;
+
+    transport->members->detachedServerOps.emplace_back();
+    transport->members->detachedServerOps.emplace_back();
+
+    ServerOp* op1 = &transport->members->detachedServerOps.front();
+    ServerOp* op2 = &transport->members->detachedServerOps.back();
+
+    op1->opId.sequence = 1;
+    op1->request = &mockInMessage1;
+    op1->detached = true;
+    op1->state.store(ServerOp::State::IN_PROGRESS);
+    op2->opId.sequence = 2;
+    op2->request = &mockInMessage2;
+    op2->detached = true;
+    op2->state.store(ServerOp::State::IN_PROGRESS);
+
+    EXPECT_EQ(2U, transport->members->detachedServerOps.size());
+
+    EXPECT_CALL(mockInMessage1, dropped).WillOnce(Return(false));
+    EXPECT_CALL(mockInMessage2, dropped).WillOnce(Return(false));
+
+    transport->poll();
+
+    EXPECT_EQ(2U, transport->members->detachedServerOps.size());
+
+    EXPECT_CALL(mockInMessage1, dropped).WillOnce(Return(true));
+    EXPECT_CALL(mockInMessage1, release).Times(1);
+    EXPECT_CALL(mockInMessage2, dropped).WillOnce(Return(false));
+
+    transport->poll();
+
+    EXPECT_EQ(1U, transport->members->detachedServerOps.size());
+
+    EXPECT_CALL(mockInMessage2, dropped).WillOnce(Return(true));
+    EXPECT_CALL(mockInMessage2, release).Times(1);
+
+    transport->poll();
+
+    EXPECT_EQ(0U, transport->members->detachedServerOps.size());
 }
 
 }  // namespace

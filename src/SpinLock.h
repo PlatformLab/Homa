@@ -92,12 +92,12 @@ class SpinLock {
     }
 
     /**
-     * Define a type alias for an RAII SpinLock lock_guard for convience.
+     * Define a type alias for an RAII SpinLock lock_guard for convenience.
      */
     using Lock = std::lock_guard<SpinLock>;
 
     /**
-     * Define a type alias for a movable SpinLock unique_lock for convience.
+     * Define a type alias for a movable SpinLock unique_lock for convenience.
      */
     using UniqueLock = std::unique_lock<SpinLock>;
 

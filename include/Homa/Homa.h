@@ -17,7 +17,9 @@
 #define HOMA_INCLUDE_HOMA_HOMA_H
 
 #include <Homa/Driver.h>
+#include <Homa/Protocol.h>
 
+#include <atomic>
 #include <bitset>
 #include <cstdint>
 
@@ -25,15 +27,15 @@ namespace Homa {
 
 // forward declarations
 class Transport;
+class TransportInternal;
 namespace Core {
 class Transport;
 class OpContext;
 }  // namespace Core
 
 /**
- * A Message refers to an array of bytes that can be sent or is received over
- * the network via Homa::Transport.  RemoteOp and ServerOp instances include
- * a pair of Message objects for inbound and outbound communication.
+ * Represents an array of bytes that can be sent or is received over the network
+ * via Homa::Transport.
  *
  * This class is NOT thread-safe.
  */
@@ -43,8 +45,8 @@ class Message {
      * Copy an array of bytes to the end of the Message.
      *
      * @param source
-     *      Address of the first byte of data (in a byte array) to be
-     *      copied to the end of the Message.
+     *      Address of the first byte of data (in a byte array) to be copied to
+     *      the end of the Message.
      * @param num
      *      Number of bytes to be appended.
      */
@@ -76,6 +78,120 @@ class Message {
      * Return the number of bytes this Message contains.
      */
     virtual uint32_t length() const = 0;
+
+    /**
+     * Copy an array of bytes to the beginning of the Message.
+     *
+     * The number of bytes prepended must have been previously reserved;
+     * otherwise, the behavior is undefined.
+     *
+     * @param source
+     *      Address of the first byte of data (in a byte array) to be copied to
+     *      the beginning of the Message.
+     * @param num
+     *      Number of bytes to be prepended.
+     *
+     * @sa Message::reserve()
+     */
+    virtual void prepend(const void* source, uint32_t num) = 0;
+
+    /**
+     * Reserve a number of bytes at the beginning of the Message.
+     *
+     * The reserved space is used when bytes are prepended to the Message.
+     * Sending a Message with unused reserved space will result in undefined
+     * behavior.
+     *
+     * This method should be called before appending or prepending data to the
+     * Message; otherwise, the behavior is undefined.
+     *
+     * @param num
+     *      The number of bytes to be reserved.
+     *
+     * @sa Message::append(), Message::prepend()
+     */
+    virtual void reserve(uint32_t num) = 0;
+
+    /**
+     * Remove a number of bytes from the beginning of the Message.
+     *
+     * @param num
+     *      Number of bytes to remove.
+     */
+    virtual void strip(uint32_t num) = 0;
+};
+
+/**
+ * Represents a Message has been received over the network via Homa::Transport.
+ *
+ * This class is NOT thread-safe.
+ */
+class InMessage : public virtual Message {
+  public:
+    /**
+     * Inform the sender that this message has been processed successfully.
+     */
+    virtual void acknowledge() const = 0;
+
+    /**
+     * Inform the sender that this message has failed to be processed.
+     */
+    virtual void fail() const = 0;
+
+    /**
+     * Returns true if the sender is no longer waiting for this message to be
+     * processed; false otherwise.
+     */
+    virtual bool dropped() const = 0;
+
+    /**
+     * Signal that this message is no longer needed.  The caller should not
+     * access this message following this call.
+     */
+    virtual void release() = 0;
+};
+
+/**
+ * Represents a Message that can be sent over the network via Homa::Transport.
+ *
+ * This class is NOT thread-safe.
+ */
+class OutMessage : public virtual Message {
+  public:
+    /**
+     * Defines the possible states of an OutMessage.
+     */
+    enum class Status {
+        NOT_STARTED,  //< The sending of this message has not started.
+        IN_PROGRESS,  //< The message is in the process of being sent.
+        SENT,         //< The message has been completely sent.
+        COMPLETED,    //< The Receiver has acknowledged receipt of this message.
+        FAILED,       //< The message failed to be delivered and processed.
+    };
+
+    /**
+     * Send this message to the destination.
+     *
+     * @param destination
+     *      Address of the transport to which this message will be sent.
+     */
+    virtual void send(Driver::Address destination) = 0;
+
+    /**
+     * Stop sending this message.
+     */
+    virtual void cancel() = 0;
+
+    /**
+     * Return the current state of this message.
+     */
+    virtual Status getStatus() const = 0;
+
+    /**
+     * Signal that this message is no longer needed.  The caller should not
+     * access this message following this call.
+     */
+    virtual void release() = 0;
 };
 
 /**
@@ -88,10 +204,22 @@ class Message {
  * delegated by one server to another.  As such, the response may not come from
  * the server that initially received the request.
  *
- * This class is NOT thread-safe.
+ * This class is NOT thread-safe in general.  This class will correctly handle
+ * the Transport running on a different thread, but if an instance of RemoteOp
+ * is accessed from multiple threads for any other purpose, the threads must
+ * synchronize to ensure only one thread accesses a RemoteOp object at a time.
  */
 class RemoteOp {
   public:
+    enum class State {
+        NOT_STARTED,  // Initial state before the request has been sent.
+        IN_PROGRESS,  // The request has been sent but no response has been
+                      // received.
+        COMPLETED,    // The RemoteOp has completed and the server's response is
+                      // available in response.
+        FAILED,       // The RemoteOp has failed to send.
+    };
+
     /**
      * Constructor for an RemoteOp object.
      *
@@ -133,14 +261,20 @@ class RemoteOp {
     void wait();
 
     /// Message to be sent to and processed by the target "remote server".
-    Message* request;
+    OutMessage* request;
 
     /// Message containing the result of processing the RemoteOp request.
-    const Message* response;
+    InMessage* response;
 
   private:
-    /// Contains the metadata and Message objects for this operation.
-    Core::OpContext* op;
+    /// Transport that owns this RemoteOp.
+    Transport* const transport;
+
+    /// Unique identifier for this RemoteOp.
+    Protocol::OpId opId;
+
+    /// The current state of this RemoteOp
+    std::atomic<State> state;
 
     // Disable Copy and Assign
     RemoteOp(const RemoteOp&) = delete;
@@ -164,6 +298,14 @@ class RemoteOp {
  */
 class ServerOp {
   public:
+    enum class State {
+        NOT_STARTED,  // Initial state before the request has been received.
+        IN_PROGRESS,  // Request received but response has not yet been sent.
+        DROPPED,      // The request was dropped.
+        COMPLETED,    // The server's response has been sent/acknowledged.
+        FAILED,       // The response failed to be sent/processed.
+    };
+
     /**
      * Basic constructor to create an empty ServerOp object.
      *
@@ -193,6 +335,11 @@ class ServerOp {
     operator bool() const;
 
     /**
+     * Check and return the current State of the ServerOp.
+     */
+    State checkProgress();
+
+    /**
      * Send the outMessage as a response to the initial requestor.
      */
     void reply();
@@ -206,18 +353,39 @@ class ServerOp {
     void delegate(Driver::Address destination);
 
     /// Message containing a direct or indirect operation request.
-    const Message* request;
+    InMessage* request;
 
     /// Message containing the result of processing the operation.  Message can
     /// be sent as a reply back to the client or delegated to a different server
     /// for further processing.
     ///
     /// @sa reply(), delegate()
-    Message* response;
+    OutMessage* response;
 
   private:
-    /// Contains the metadata and Message objects for this operation.
-    Core::OpContext* op;
+    /// Transport that owns this ServerOp.
+    Transport* transport;
+
+    /// Current state of the ServerOp.
+    std::atomic<State> state;
+
+    /// True if the ServerOp is no longer held by the application and is being
+    /// processed by the Transport.
+    std::atomic<bool> detached;
+
+    /// Identifier the RemoteOp that triggered this ServerOp.
+    Protocol::OpId opId;
+
+    /// Unique identifier for the request message among the set of messages
+    /// associated with a RemoteOp with a given OpId.
+    uint32_t requestTag;
+
+    /// Address from which the RemoteOp originated and to which the reply
+    /// should be sent.
+    Driver::Address replyAddress;
+
+    /// True if delegate() was called on this ServerOp.
+    bool delegated;
 
     // Disable Copy and Assign
     ServerOp(const ServerOp&) = delete;
@@ -277,11 +445,15 @@ class Transport {
     /// of the actual work.  Hides unnecessary details from users of libHoma.
     std::unique_ptr<Core::Transport> internal;
 
+    /// Contains the private members of Homa::Transport.
+    std::unique_ptr<Homa::TransportInternal> members;
+
     // Disable Copy and Assign
     Transport(const Transport&) = delete;
     Transport& operator=(const Transport&) = delete;
 
     friend class RemoteOp;
+    friend class ServerOp;
 };
 
 }  // namespace Homa

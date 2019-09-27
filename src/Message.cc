@@ -42,7 +42,7 @@ Message::Message(Driver* driver, uint16_t packetHeaderLength,
     : driver(driver)
     , PACKET_HEADER_LENGTH(packetHeaderLength)
     , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() - PACKET_HEADER_LENGTH)
-    , MESSAGE_HEADER_LENGTH(0)
+    , start(0)
     , messageLength(messageLength)
     , numPackets(0)
     , occupied()
@@ -99,10 +99,9 @@ Message::append(const void* source, uint32_t num)
 uint32_t
 Message::get(uint32_t offset, void* destination, uint32_t num) const
 {
-    // This operation should be performed as if offset zero starts with the
-    // first byte after the header.  This operation shouldn't be preformed on
-    // a Message with an undefined header.
-    uint32_t realOffset = offset + MESSAGE_HEADER_LENGTH;
+    // This operation should be performed with the offset relative to the
+    // logical beginning of the Message.
+    uint32_t realOffset = offset + start;
     uint32_t packetIndex = realOffset / PACKET_DATA_LENGTH;
     uint32_t packetOffset = realOffset % PACKET_DATA_LENGTH;
     uint32_t bytesCopied = 0;
@@ -143,7 +142,82 @@ Message::get(uint32_t offset, void* destination, uint32_t num) const
 uint32_t
 Message::length() const
 {
-    return messageLength - MESSAGE_HEADER_LENGTH;
+    return messageLength - start;
+}
+
+/**
+ * @copydoc Homa::Message::prepend()
+ */
+void
+Message::prepend(const void* source, uint32_t num)
+{
+    // Make sure there is enough space reserved.
+    assert(num <= start);
+    start -= num;
+
+    uint32_t packetIndex = start / PACKET_DATA_LENGTH;
+    uint32_t packetOffset = start % PACKET_DATA_LENGTH;
+    uint32_t bytesCopied = 0;
+
+    while (bytesCopied < num) {
+        uint32_t bytesToCopy =
+            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+        Driver::Packet* packet = getPacket(packetIndex);
+        assert(packet != nullptr);
+        char* destination = static_cast<char*>(packet->payload);
+        destination += packetOffset + PACKET_HEADER_LENGTH;
+        std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
+                    bytesToCopy);
+        bytesCopied += bytesToCopy;
+        packetIndex++;
+        packetOffset = 0;
+    }
+}
+
+/**
+ * @copydoc Homa::Message::reserve()
+ */
+void
+Message::reserve(uint32_t num)
+{
+    // Make sure there have been no prior calls to append or prepend.
+    assert(start == messageLength);
+
+    uint32_t packetIndex = start / PACKET_DATA_LENGTH;
+    uint32_t packetOffset = start % PACKET_DATA_LENGTH;
+    uint32_t bytesReserved = 0;
+    uint32_t maxMessageLength = PACKET_DATA_LENGTH * MAX_MESSAGE_PACKETS;
+
+    if (start + num > maxMessageLength) {
+        WARNING("Max message size limit (%uB) reached; %u of %u bytes reserved",
+                maxMessageLength, maxMessageLength - start, num);
+        num = maxMessageLength - start;
+    }
+
+    while (bytesReserved < num) {
+        uint32_t bytesToReserve =
+            std::min(num - bytesReserved, PACKET_DATA_LENGTH - packetOffset);
+        Driver::Packet* packet = getOrAllocPacket(packetIndex);
+        // TODO(cstlee): A Message probably shouldn't be in charge of setting
+        //               the packet length.
+        packet->length += bytesToReserve;
+        assert(packet->length <= PACKET_HEADER_LENGTH + PACKET_DATA_LENGTH);
+        bytesReserved += bytesToReserve;
+        packetIndex++;
+        packetOffset = 0;
+    }
+
+    start += num;
+    messageLength += num;
+}
+
+/**
+ * @copydoc Homa::Message::strip()
+ */
+void
+Message::strip(uint32_t num)
+{
+    start = std::min(start + num, messageLength);
 }
 
 /**
@@ -232,18 +306,6 @@ Message::getOrAllocPacket(uint16_t index)
         packets[index]->length = PACKET_HEADER_LENGTH;
     }
     return packets[index];
-}
-
-/**
- * Helper function that returns a pointer to beginning of the message where the
- * header should reside.
- */
-void*
-Message::getHeader()
-{
-    assert(occupied.test(0));
-    Driver::Packet* packet = getPacket(0);
-    return static_cast<char*>(packet->payload) + PACKET_HEADER_LENGTH;
 }
 
 }  // namespace Core
