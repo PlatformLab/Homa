@@ -56,6 +56,7 @@ class Sender {
     virtual void handleUnknownPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleErrorPacket(Driver::Packet* packet, Driver* driver);
     virtual void poll();
+    virtual uint64_t checkTimeouts();
 
   private:
     /**
@@ -144,8 +145,8 @@ class Sender {
     void sendMessage(Sender::Message* message, Driver::Address destination);
     void cancelMessage(Sender::Message* message);
     void dropMessage(Sender::Message* message);
-    void checkMessageTimeouts();
-    void checkPingTimeouts();
+    uint64_t checkMessageTimeouts();
+    uint64_t checkPingTimeouts();
     void trySend();
     void hintMessageReady(Message* message, const SpinLock::UniqueLock& lock,
                           const SpinLock::Lock& lock_message);
@@ -186,6 +187,11 @@ class Sender {
     /// True if the Sender is currently executing trySend(); false, otherwise.
     /// Use to prevent concurrent trySend() calls from blocking on each other.
     std::atomic_flag sending = ATOMIC_FLAG_INIT;
+
+    /// Hint whether there are messages ready to be sent (i.e. the readyQueue is
+    /// not empty). Encoded into a single bool to make checking if there is work
+    /// to do more efficient.
+    std::atomic<bool> sendReady;
 
     /// Used to allocate Message objects.
     struct MessageAllocator {

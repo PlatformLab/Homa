@@ -258,14 +258,38 @@ Receiver::receiveMessage()
 }
 
 /**
- * Allow the Receiver to make incremental progress on background tasks.
+ * Allow the Receiver to make progress toward receiving incoming messages.
+ *
+ * This method must be called eagerly to ensure messages are received.
  */
 void
 Receiver::poll()
 {
     runScheduler();
-    checkResendTimeouts();
-    checkMessageTimeouts();
+}
+
+/**
+ * Process any Receiver timeouts that have expired.
+ *
+ * This method must be called periodically to ensure timely handling of
+ * expired timeouts.
+ *
+ * @return
+ *      The rdtsc cycle time when this method should be called again.
+ */
+uint64_t
+Receiver::checkTimeouts()
+{
+    uint64_t nextTimeout;
+
+    // Ping Timeout
+    nextTimeout = checkResendTimeouts();
+
+    // Message Timeout
+    uint64_t messageTimeout = checkMessageTimeouts();
+    nextTimeout = nextTimeout < messageTimeout ? nextTimeout : messageTimeout;
+
+    return nextTimeout;
 }
 
 /**
@@ -292,21 +316,28 @@ Receiver::dropMessage(Receiver::Message* message)
  * Process any inbound messages that have timed out due to lack of activity from
  * the Sender.
  *
- * Pulled out of poll() for ease of testing.
+ * Pulled out of checkTimeouts() for ease of testing.
+ *
+ * @return
+ *      The rdtsc cycle time when this method should be called again.
  */
-void
+uint64_t
 Receiver::checkMessageTimeouts()
 {
+    uint64_t nextTimeout = 0;
     while (true) {
         SpinLock::Lock lock(mutex);
         // No remaining timeouts.
         if (messageTimeouts.list.empty()) {
+            nextTimeout = PerfUtils::Cycles::rdtsc() +
+                          messageTimeouts.timeoutIntervalCycles;
             break;
         }
         Message* message = &messageTimeouts.list.front();
         SpinLock::UniqueLock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->messageTimeout.hasElapsed()) {
+            nextTimeout = message->messageTimeout.expirationCycleTime;
             break;
         }
         // Found expired timeout.
@@ -335,26 +366,34 @@ Receiver::checkMessageTimeouts()
             message->state.store(Message::State::DROPPED);
         }
     }
+    return nextTimeout;
 }
 
 /**
  * Process any inbound messages that may need to issue resends.
  *
- * Pulled out of poll() fro ease of testing.
+ * Pulled out of checkTimeouts() for ease of testing.
+ *
+ * @return
+ *      The rdtsc cycle time when this method should be called again.
  */
-void
+uint64_t
 Receiver::checkResendTimeouts()
 {
+    uint64_t nextTimeout = 0;
     while (true) {
         SpinLock::UniqueLock lock(mutex);
         // No remaining timeouts.
         if (resendTimeouts.list.empty()) {
+            nextTimeout = PerfUtils::Cycles::rdtsc() +
+                          resendTimeouts.timeoutIntervalCycles;
             break;
         }
         Message* message = &resendTimeouts.list.front();
         SpinLock::Lock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->resendTimeout.hasElapsed()) {
+            nextTimeout = message->resendTimeout.expirationCycleTime;
             break;
         }
         // Found expired timeout.
@@ -411,6 +450,7 @@ Receiver::checkResendTimeouts()
                 message->priority);
         }
     }
+    return nextTimeout;
 }
 
 /**
@@ -421,6 +461,12 @@ Receiver::runScheduler()
 {
     // Skip scheduling if another poller is already working on it.
     if (scheduling.test_and_set()) {
+        return;
+    }
+
+    SpinLock::UniqueLock lock(mutex);
+    if (scheduledPeers.empty()) {
+        scheduling.clear();
         return;
     }
 
@@ -435,7 +481,6 @@ Receiver::runScheduler()
      * fewer than the the available priority, than the messages are assigned to
      * the lowest available priority.
      */
-    SpinLock::UniqueLock lock(mutex);
     Policy::Scheduled policy = policyManager->getScheduledPolicy();
     assert(policy.degreeOvercommitment > policy.maxScheduledPriority);
     int unusedPriorities =

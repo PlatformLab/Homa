@@ -426,6 +426,33 @@ TEST_F(ReceiverTest, receiveMessage)
     EXPECT_TRUE(receiver->receivedMessages.queue.empty());
 }
 
+TEST_F(ReceiverTest, poll)
+{
+    // Nothing to test
+    receiver->poll();
+}
+
+TEST_F(ReceiverTest, checkTimeouts)
+{
+    Receiver::Message message(receiver, &mockDriver, 0, 0);
+    receiver->resendTimeouts.setTimeout(&message.resendTimeout);
+    receiver->messageTimeouts.setTimeout(&message.messageTimeout);
+
+    message.resendTimeout.expirationCycleTime = 10100;
+    message.messageTimeout.expirationCycleTime = 10200;
+
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+    EXPECT_EQ(10100U, receiver->checkTimeouts());
+
+    message.resendTimeout.expirationCycleTime = 10300;
+
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+    EXPECT_EQ(10200U, receiver->checkTimeouts());
+
+    receiver->resendTimeouts.cancelTimeout(&message.resendTimeout);
+    receiver->messageTimeouts.cancelTimeout(&message.messageTimeout);
+}
+
 TEST_F(ReceiverTest, Message_acknowledge)
 {
     Protocol::MessageId id = {42, 32};
@@ -527,8 +554,9 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
 
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
 
-    receiver->checkMessageTimeouts();
+    uint64_t nextTimeout = receiver->checkMessageTimeouts();
 
+    EXPECT_EQ(message[2]->messageTimeout.expirationCycleTime, nextTimeout);
     // Message[0]: Normal timeout: IN_PROGRESS
     EXPECT_EQ(nullptr, message[0]->messageTimeout.node.list);
     EXPECT_EQ(nullptr, message[0]->resendTimeout.node.list);
@@ -552,9 +580,11 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
 
 TEST_F(ReceiverTest, checkMessageTimeouts_empty)
 {
-    // Nothing to test except to ensure the call doesn't loop infinitely.
     EXPECT_TRUE(receiver->messageTimeouts.list.empty());
-    receiver->checkMessageTimeouts();
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+    uint64_t nextTimeout = receiver->checkMessageTimeouts();
+    EXPECT_EQ(10000 + receiver->messageTimeouts.timeoutIntervalCycles,
+              nextTimeout);
 }
 
 TEST_F(ReceiverTest, checkResendTimeouts)
@@ -613,8 +643,9 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockResendPacket2), Eq(1)))
         .Times(1);
 
-    receiver->checkResendTimeouts();
+    uint64_t nextTimeout = receiver->checkResendTimeouts();
 
+    EXPECT_EQ(message[4]->resendTimeout.expirationCycleTime, nextTimeout);
     // Message[0]: Fully received
     EXPECT_EQ(nullptr, message[0]->resendTimeout.node.list);
     EXPECT_EQ(10000 - 20, message[0]->resendTimeout.expirationCycleTime);
@@ -647,9 +678,11 @@ TEST_F(ReceiverTest, checkResendTimeouts)
 
 TEST_F(ReceiverTest, checkResendTimeouts_empty)
 {
-    // Nothing to test except to ensure the call doesn't loop infinitely.
     EXPECT_TRUE(receiver->resendTimeouts.list.empty());
-    receiver->checkResendTimeouts();
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+    uint64_t nextTimeout = receiver->checkResendTimeouts();
+    EXPECT_EQ(10000 + receiver->resendTimeouts.timeoutIntervalCycles,
+              nextTimeout);
 }
 
 TEST_F(ReceiverTest, runScheduler)

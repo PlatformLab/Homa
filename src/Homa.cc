@@ -273,6 +273,7 @@ Transport::~Transport()
 ServerOp
 Transport::receiveServerOp()
 {
+    SpinLock::Lock lock_transport(members->mutex);
     ServerOp op;
     if (!members->pendingServerOps.empty()) {
         op = std::move(members->pendingServerOps.front());

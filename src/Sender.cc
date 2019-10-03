@@ -56,6 +56,7 @@ Sender::Sender(Transport* transport, uint64_t transportId,
     , messageTimeouts(messageTimeoutCycles)
     , pingTimeouts(pingIntervalCycles)
     , sending()
+    , sendReady(false)
     , messageAllocator()
 {}
 
@@ -324,14 +325,38 @@ Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
 }
 
 /**
- * Allow the Sender to make incremental progress on background tasks.
+ * Allow the Sender to make progress toward sending outgoing messages.
+ *
+ * This method must be called eagerly to ensure messages are sent.
  */
 void
 Sender::poll()
 {
     trySend();
-    checkPingTimeouts();
-    checkMessageTimeouts();
+}
+
+/**
+ * Process any Sender timeouts that have expired.
+ *
+ * This method must be called periodically to ensure timely handling of
+ * expired timeouts.
+ *
+ * @return
+ *      The rdtsc cycle time when this method should be called again.
+ */
+uint64_t
+Sender::checkTimeouts()
+{
+    uint64_t nextTimeout;
+
+    // Ping Timeout
+    nextTimeout = checkPingTimeouts();
+
+    // Message Timeout
+    uint64_t messageTimeout = checkMessageTimeouts();
+    nextTimeout = nextTimeout < messageTimeout ? nextTimeout : messageTimeout;
+
+    return nextTimeout;
 }
 
 /**
@@ -447,21 +472,28 @@ Sender::dropMessage(Sender::Message* message)
  * Process any outbound messages that have timed out due to lack of activity
  * from the Receiver.
  *
- * Pulled out of poll() for ease of testing.
+ * Pulled out of checkTimeouts() for ease of testing.
+ *
+ * @return
+ *      The rdtsc cycle time when this method should be called again.
  */
-void
+uint64_t
 Sender::checkMessageTimeouts()
 {
+    uint64_t nextTimeout = 0;
     while (true) {
         SpinLock::Lock lock(mutex);
         // No remaining timeouts.
         if (messageTimeouts.list.empty()) {
+            nextTimeout = PerfUtils::Cycles::rdtsc() +
+                          messageTimeouts.timeoutIntervalCycles;
             break;
         }
         Message* message = &messageTimeouts.list.front();
         SpinLock::Lock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->messageTimeout.hasElapsed()) {
+            nextTimeout = message->messageTimeout.expirationCycleTime;
             break;
         }
         // Found expired timeout.
@@ -472,27 +504,35 @@ Sender::checkMessageTimeouts()
         pingTimeouts.cancelTimeout(&message->pingTimeout);
         readyQueue.remove(&message->readyQueueNode);
     }
+    return nextTimeout;
 }
 
 /**
  * Process any outbound messages that need to be pinged to ensure the message
  * is kept alive by the receiver.
  *
- * Pulled out of poll() for ease of testing.
+ * Pulled out of checkTimeouts() for ease of testing.
+ *
+ * @return
+ *      The rdtsc cycle time when this method should be called again.
  */
-void
+uint64_t
 Sender::checkPingTimeouts()
 {
+    uint64_t nextTimeout = 0;
     while (true) {
         SpinLock::UniqueLock lock(mutex);
         // No remaining timeouts.
         if (pingTimeouts.list.empty()) {
+            nextTimeout =
+                PerfUtils::Cycles::rdtsc() + pingTimeouts.timeoutIntervalCycles;
             break;
         }
         Message* message = &pingTimeouts.list.front();
         SpinLock::Lock lock_message(message->mutex);
         // No remaining expired timeouts.
         if (!message->pingTimeout.hasElapsed()) {
+            nextTimeout = message->pingTimeout.expirationCycleTime;
             break;
         }
         // Found expired timeout.
@@ -510,6 +550,7 @@ Sender::checkPingTimeouts()
         ControlPacket::send<Protocol::Packet::PingHeader>(
             message->driver, message->destination, message->id);
     }
+    return nextTimeout;
 }
 
 /**
@@ -518,6 +559,11 @@ Sender::checkPingTimeouts()
 void
 Sender::trySend()
 {
+    // Skip when there are no messages to send.
+    if (!sendReady) {
+        return;
+    }
+
     // Skip sending if another thread is already working on it.
     if (sending.test_and_set()) {
         return;
@@ -531,6 +577,9 @@ Sender::trySend()
      */
     SpinLock::Lock lock(mutex);
     uint32_t queuedBytesEstimate = transport->driver->getQueuedBytes();
+    // Optimistically assume we will finish sending every granted packet this
+    // round; we will set again sendReady if it turns out we don't finish.
+    sendReady = false;
     auto it = readyQueue.begin();
     while (it != readyQueue.end()) {
         Message& message = *it;
@@ -563,6 +612,8 @@ Sender::trySend()
             it = readyQueue.remove(it);
         } else {
             // We hit the DRIVER_QUEUED_BYTES_LIMIT; stop sending for now.
+            // We didn't finish sending all granted packets.
+            sendReady = true;
             break;
         }
     }
@@ -595,6 +646,7 @@ Sender::hintMessageReady(Message* message, const SpinLock::UniqueLock& lock,
     // resulting in deadlock.
     (void)lock;
     (void)lock_message;
+    sendReady = true;
     if (readyQueue.contains(&message->readyQueueNode)) {
         return;
     }

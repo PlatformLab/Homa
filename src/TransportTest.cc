@@ -47,11 +47,13 @@ class TransportTest : public ::testing::Test {
         transport->receiver.reset(mockReceiver);
         ON_CALL(mockDriver, getBandwidth).WillByDefault(Return(8000));
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1024));
+        PerfUtils::Cycles::mockTscValue = 10000;
     }
 
     ~TransportTest()
     {
         delete transport;
+        PerfUtils::Cycles::mockTscValue = 0;
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
@@ -65,8 +67,32 @@ TEST_F(TransportTest, poll)
     EXPECT_CALL(mockDriver, receivePackets).WillOnce(Return(0));
     EXPECT_CALL(*mockSender, poll).Times(1);
     EXPECT_CALL(*mockReceiver, poll).Times(1);
+    EXPECT_CALL(*mockSender, checkTimeouts).WillOnce(Return(10000));
+    EXPECT_CALL(*mockReceiver, checkTimeouts).WillOnce(Return(10100));
 
     transport->poll();
+
+    EXPECT_EQ(10000U, transport->nextTimeoutCycles);
+
+    EXPECT_CALL(mockDriver, receivePackets).WillOnce(Return(0));
+    EXPECT_CALL(*mockSender, poll).Times(1);
+    EXPECT_CALL(*mockReceiver, poll).Times(1);
+    EXPECT_CALL(*mockSender, checkTimeouts).WillOnce(Return(10200));
+    EXPECT_CALL(*mockReceiver, checkTimeouts).WillOnce(Return(10100));
+
+    transport->poll();
+
+    EXPECT_EQ(10100U, transport->nextTimeoutCycles);
+
+    EXPECT_CALL(mockDriver, receivePackets).WillOnce(Return(0));
+    EXPECT_CALL(*mockSender, poll).Times(1);
+    EXPECT_CALL(*mockReceiver, poll).Times(1);
+    EXPECT_CALL(*mockSender, checkTimeouts).Times(0);
+    EXPECT_CALL(*mockReceiver, checkTimeouts).Times(0);
+
+    transport->poll();
+
+    EXPECT_EQ(10100U, transport->nextTimeoutCycles);
 }
 
 TEST_F(TransportTest, processPackets)

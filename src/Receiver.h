@@ -52,6 +52,7 @@ class Receiver {
     virtual void handlePingPacket(Driver::Packet* packet, Driver* driver);
     virtual Homa::InMessage* receiveMessage();
     virtual void poll();
+    virtual uint64_t checkTimeouts();
 
   private:
     // Forward declaration
@@ -219,8 +220,8 @@ class Receiver {
     };
 
     void dropMessage(Receiver::Message* message);
-    void checkMessageTimeouts();
-    void checkResendTimeouts();
+    uint64_t checkMessageTimeouts();
+    uint64_t checkResendTimeouts();
     void runScheduler();
     static Peer* schedule(Message* message,
                           std::unordered_map<Driver::Address, Peer>* peerTable,

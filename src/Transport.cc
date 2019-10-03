@@ -56,6 +56,7 @@ Transport::Transport(Driver* driver, uint64_t transportId)
           new Receiver(this, &policyManager,
                        PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                        PerfUtils::Cycles::fromMicroseconds(RESEND_INTERVAL_US)))
+    , nextTimeoutCycles(0)
 {}
 
 /**
@@ -73,6 +74,16 @@ Transport::poll()
     // Allow sender and receiver to make incremental progress.
     sender->poll();
     receiver->poll();
+
+    if (PerfUtils::Cycles::rdtsc() >= nextTimeoutCycles.load()) {
+        uint64_t requestedTimeoutCycles;
+        requestedTimeoutCycles = sender->checkTimeouts();
+        nextTimeoutCycles.store(requestedTimeoutCycles);
+        requestedTimeoutCycles = receiver->checkTimeouts();
+        if (nextTimeoutCycles.load() > requestedTimeoutCycles) {
+            nextTimeoutCycles.store(requestedTimeoutCycles);
+        }
+    }
 }
 
 /**

@@ -96,6 +96,8 @@ class Transport {
 
     /// Module which receives packets and forms them into messages.
     std::unique_ptr<Core::Receiver> receiver;
+
+    std::atomic<uint64_t> nextTimeoutCycles;
 };
 
 }  // namespace Core
