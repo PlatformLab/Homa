@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, Stanford University
+/* Copyright (c) 2019-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -479,6 +479,89 @@ class List {
     size_t count;
 };
 
+/**
+ * Given an element in a list, move the element forward in the list until
+ * the preceding element compares less than or equal to the given element.
+ *
+ * @tparam ElementType
+ *      Type of the element held in the Intrusive::List.
+ * @tparam Compare
+ *      A weak strict ordering binary comparator for objects of ElementType.
+ * @param list
+ *      List that contains the element.
+ * @parma node
+ *      Intrusive list node for the element that should be prioritized.
+ * @param comp
+ *      Comparison function object which returns true when the first argument
+ *      should be ordered before the second.  The signature should be equivalent
+ *      to the following:
+ *          bool comp(const ElementType& a, const ElementType& b);
+ */
+template <typename ElementType, typename Compare>
+void
+prioritize(List<ElementType>* list, typename List<ElementType>::Node* node,
+           Compare comp)
+{
+    assert(list->contains(node));
+    auto it_node = list->get(node);
+    auto it_pos = it_node;
+    while (it_pos != list->begin()) {
+        if (!comp(*it_node, *std::prev(it_pos))) {
+            // Found the correct location; just before it_pos.
+            break;
+        }
+        --it_pos;
+    }
+    if (it_pos == it_node) {
+        // Do nothing if the node is already in the right spot.
+    } else {
+        // Move the node to the new position in the list.
+        list->remove(it_node);
+        list->insert(it_pos, node);
+    }
+}
+
+/**
+ * Given an element in a list, move the element back in the list until
+ * the given element compares less than following element.
+ *
+ * @tparam ElementType
+ *      Type of the element held in the Intrusive::List.
+ * @tparam Compare
+ *      A weak strict ordering binary comparator for objects of ElementType.
+ * @param list
+ *      List that contains the element.
+ * @parma node
+ *      Intrusive list node for the element that should be prioritized.
+ * @param comp
+ *      Comparison function object which returns true when the first argument
+ *      should be ordered before the second.  The signature should be equivalent
+ *      to the following:
+ *          bool comp(const ElementType& a, const ElementType& b);
+ */
+template <typename ElementType, typename Compare>
+void
+deprioritize(List<ElementType>* list, typename List<ElementType>::Node* node,
+             Compare comp)
+{
+    assert(list->contains(node));
+    auto it_node = list->get(node);
+    auto it_pos = std::next(it_node);
+    while (it_pos != list->end()) {
+        if (comp(*it_node, *it_pos)) {
+            // Found the correct location; just before it_pos.
+            break;
+        }
+        ++it_pos;
+    }
+    if (it_pos == std::next(it_node)) {
+        // Do nothing if the node is already in the right spot.
+    } else {
+        // Move the node to the new position in the list.
+        list->remove(it_node);
+        list->insert(it_pos, node);
+    }
+}
 }  // namespace Intrusive
 }  // namespace Core
 }  // namespace Homa

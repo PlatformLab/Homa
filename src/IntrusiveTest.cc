@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, Stanford University
+/* Copyright (c) 2019-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -475,6 +475,130 @@ TEST_F(IntrusiveListTest, __insert)
     for (int i = 0; i < 3; ++i) {
         foo[i].listNode.unlink();
     }
+}
+
+TEST(IntrusiveTest, prioritize)
+{
+    struct Foo {
+        Foo()
+            : val(0)
+            , node(this)
+        {}
+        struct Compare {
+            bool operator()(const Foo& a, const Foo& b)
+            {
+                return a.val < b.val;
+            }
+        };
+        int val;
+        Intrusive::List<Foo>::Node node;
+    };
+
+    // [2][4][6][8]
+    Foo foo[4];
+    Intrusive::List<Foo> list;
+    for (int i = 0; i < 4; ++i) {
+        foo[i].val = i * 2 + 2;
+        list.push_back(&foo[i].node);
+    }
+
+    auto it = list.begin();
+    EXPECT_EQ(&foo[0], &(*it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+    EXPECT_EQ(&foo[3], &(*++it));
+
+    // [2][4][6][7]
+    foo[3].val = 7;
+    Intrusive::prioritize<Foo>(&list, &foo[3].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[0], &(*it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+    EXPECT_EQ(&foo[3], &(*++it));
+
+    // [2][2][4][6]
+    foo[3].val = 2;
+    Intrusive::prioritize<Foo>(&list, &foo[3].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[0], &(*it));
+    EXPECT_EQ(&foo[3], &(*++it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+
+    // [0][2][4][6]
+    foo[3].val = 0;
+    Intrusive::prioritize<Foo>(&list, &foo[3].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[3], &(*it));
+    EXPECT_EQ(&foo[0], &(*++it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+}
+
+TEST(IntrusiveTest, deprioritize)
+{
+    struct Foo {
+        Foo()
+            : val(0)
+            , node(this)
+        {}
+        struct Compare {
+            bool operator()(const Foo& a, const Foo& b)
+            {
+                return a.val < b.val;
+            }
+        };
+        int val;
+        Intrusive::List<Foo>::Node node;
+    };
+
+    // [2][4][6][8]
+    Foo foo[4];
+    Intrusive::List<Foo> list;
+    for (int i = 0; i < 4; ++i) {
+        foo[i].val = i * 2 + 2;
+        list.push_back(&foo[i].node);
+    }
+
+    auto it = list.begin();
+    EXPECT_EQ(&foo[0], &(*it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+    EXPECT_EQ(&foo[3], &(*++it));
+
+    // [3][4][6][8]
+    foo[0].val = 3;
+    Intrusive::deprioritize<Foo>(&list, &foo[0].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[0], &(*it));
+    EXPECT_EQ(&foo[1], &(*++it));
+    EXPECT_EQ(&foo[2], &(*++it));
+    EXPECT_EQ(&foo[3], &(*++it));
+
+    // [4][6][6][8]
+    foo[0].val = 6;
+    Intrusive::deprioritize<Foo>(&list, &foo[0].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[1], &(*it));
+    EXPECT_EQ(&foo[2], &(*++it));
+    EXPECT_EQ(&foo[0], &(*++it));
+    EXPECT_EQ(&foo[3], &(*++it));
+
+    // [4][6][8][9]
+    foo[0].val = 9;
+    Intrusive::deprioritize<Foo>(&list, &foo[0].node, Foo::Compare());
+
+    it = list.begin();
+    EXPECT_EQ(&foo[1], &(*it));
+    EXPECT_EQ(&foo[2], &(*++it));
+    EXPECT_EQ(&foo[3], &(*++it));
+    EXPECT_EQ(&foo[0], &(*++it));
 }
 
 }  // namespace
