@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -175,15 +175,15 @@ struct DataHeader {
  */
 struct GrantHeader {
     CommonHeader common;  ///< Common header fields.
-    uint16_t indexLimit;  ///< Packets with an index up to (but not including)
-                          ///< this value can be transmitted by the sender.
+    uint32_t byteLimit;   ///< The cumulative number of bytes of the associated
+                          ///< message that can be transmitted by the sender.
     uint8_t priority;     ///< The network priority the sender should use to
                           ///< transmit the associated message.
 
     /// GrantHeader constructor.
-    GrantHeader(MessageId messageId, uint16_t indexLimit, uint8_t priority)
+    GrantHeader(MessageId messageId, uint32_t byteLimit, uint8_t priority)
         : common(Opcode::GRANT, messageId)
-        , indexLimit(indexLimit)
+        , byteLimit(byteLimit)
         , priority(priority)
     {}
 } __attribute__((packed));

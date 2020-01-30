@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -56,7 +56,63 @@ class Receiver {
 
   private:
     // Forward declaration
+    class Message;
     struct Peer;
+
+    /**
+     * Contains metadata for a Message that requires additional GRANTs.
+     */
+    struct ScheduledMessageInfo {
+        /**
+         * Implements a binary comparison function for the strict weak priority
+         * ordering of two Message objects.
+         */
+        struct ComparePriority {
+            bool operator()(const Message& a, const Message& b)
+            {
+                return a.scheduledMessageInfo.unreceivedBytes <
+                       b.scheduledMessageInfo.unreceivedBytes;
+            }
+        };
+
+        /**
+         * ScheduledMessageInfo constructor.
+         *
+         * @param message
+         *      Message to which this metadata is associated.
+         * @param length
+         *      Number of bytes the associated message is expected to contain.
+         */
+        explicit ScheduledMessageInfo(Message* message, int length)
+            : messageLength(length)
+            , unreceivedBytes(length)
+            , grantedBytes(0)
+            , priority(0)
+            , peer(nullptr)
+            , scheduledMessageNode(message)
+        {}
+
+        /// The number of bytes this Message is expected to contain.
+        const int messageLength;
+
+        /// The number of bytes that still needs to be received for this
+        /// Message.
+        int unreceivedBytes;
+
+        /// The cumulative number of bytes that have granted for this Message.
+        int grantedBytes;
+
+        /// The network priority at which the Receiver requests Message be sent.
+        int priority;
+
+        /// Peer object that holds this message.  If peer is non-null, the
+        /// message is scheduled and more GRANTs may be needed.
+        Peer* peer;
+
+        /// Intrusive structure used by the Receiver to keep track of when this
+        /// message should be issued grants.
+        Intrusive::List<Message>::Node scheduledMessageNode;
+    };
 
     /**
      * Represents an incoming message that is being assembled or being processed
@@ -76,28 +132,30 @@ class Receiver {
         };
 
         explicit Message(Receiver* receiver, Driver* driver,
-                         uint16_t packetHeaderLength, uint32_t messageLength)
+                         uint16_t packetHeaderLength, uint32_t messageLength,
+                         Protocol::MessageId id, Driver::Address source,
+                         int numUnscheduledPackets)
             : Core::Message(driver, packetHeaderLength, messageLength)
-            , mutex()
             , receiver(receiver)
-            , id(0, 0)
-            , source()
-            , numExpectedPackets(0)
-            , grantIndexLimit(0)
-            , priority(0)
-            , unreceivedBytes(messageLength)
+            , id(id)
+            , source(source)
+            , numExpectedPackets((messageLength + PACKET_DATA_LENGTH - 1) /
+                                 PACKET_DATA_LENGTH)
+            , numUnscheduledPackets(numUnscheduledPackets)
+            , scheduled(numExpectedPackets > numUnscheduledPackets)
             , state(Message::State::IN_PROGRESS)
-            , peer(nullptr)
-            , scheduledMessageNode(this)
+            , bucketNode(this)
             , receivedMessageNode(this)
             , messageTimeout(this)
             , resendTimeout(this)
+            , scheduledMessageInfo(this, messageLength)
         {}
 
         /// See Homa::InMessage::acknowledge()
         virtual void acknowledge() const
         {
-            SpinLock::Lock lock_message(mutex);
+            MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
+            SpinLock::Lock lock(bucket->mutex);
             ControlPacket::send<Protocol::Packet::DoneHeader>(driver, source,
                                                               id);
         }
@@ -105,7 +163,8 @@ class Receiver {
         /// See Homa::InMessage::fail()
         virtual void fail() const
         {
-            SpinLock::Lock lock_message(mutex);
+            MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
+            SpinLock::Lock lock(bucket->mutex);
             ControlPacket::send<Protocol::Packet::ErrorHeader>(driver, source,
                                                                id);
         }
@@ -131,51 +190,200 @@ class Receiver {
         }
 
       private:
-        /**
-         * Implements a binary comparison function for the strict weak priority
-         * ordering of two Message objects.
-         */
-        struct ComparePriority {
-            bool operator()(const Message& a, const Message& b)
-            {
-                return a.unreceivedBytes < b.unreceivedBytes;
-            }
-        };
-
-        /// Monitor style lock.
-        mutable SpinLock mutex;
         /// The Receiver responsible for this message.
         Receiver* const receiver;
+
         /// Contains the unique identifier for this message.
-        Protocol::MessageId id;
+        const Protocol::MessageId id;
+
         /// Contains source address this message.
-        Driver::Address source;
+        const Driver::Address source;
+
         /// Number of packets the message is expected to contain.
-        uint16_t numExpectedPackets;
-        /// The packet index up to which the Receiver as granted.
-        uint16_t grantIndexLimit;
-        /// The network priority at which the Receiver requests Message be sent.
-        uint8_t priority;
-        /// The number of bytes that still need to be received for this Message.
-        std::atomic<uint32_t> unreceivedBytes;
+        const int numExpectedPackets;
+
+        /// Number of packets that will be sent without GRANTs.
+        const int numUnscheduledPackets;
+
+        /// True if the Message exceeds the unscheduled byte limit and requires
+        /// GRANTs to be sent.
+        const bool scheduled;
+
         /// This message's current state.
         std::atomic<State> state;
-        /// Peer object if any that holds this message (if any).
-        Peer* peer;
-        /// Intrusive structure used by the Receiver to keep track of when this
-        /// message should be issued grants.
-        Intrusive::List<Message>::Node scheduledMessageNode;
+
+        /// Intrusive structure used by the Receiver to hold on to this Message
+        /// in one of the Receiver's MessageBuckets.  Access to this structure
+        /// is protected by the associated MessageBucket::mutex;
+        Intrusive::List<Message>::Node bucketNode;
+
         /// Intrusive structure used by the Receiver to keep track of this
         /// message when it has been completely received.
         Intrusive::List<Message>::Node receivedMessageNode;
+
         /// Intrusive structure used by the Receiver to keep track when the
         /// receiving of this message should be considered failed.
         Timeout<Message> messageTimeout;
+
         /// Intrusive structure used by the Receiver to keep track when
         /// unreceived parts of this message should be re-requested.
         Timeout<Message> resendTimeout;
 
+        /// Intrusive structure used by the Receiver to keep track of this
+        /// Message if the Message still requires more GRANTs to be sent.
+        /// Access to this structure is protected by Receiver::schedulerMutex.
+        ScheduledMessageInfo scheduledMessageInfo;
+
         friend class Receiver;
+    };
+
+    /**
+     * A collection of incoming Message objects and their associated timeouts.
+     *
+     * Messages are split into multiple buckets to support fine-grain
+     * synchronization when searching for and accessing Message objects.
+     */
+    struct MessageBucket {
+        /**
+         * MessageBucket constructor.
+         *
+         * @param messageTimeoutCycles
+         *      Number of cycles of inactivity to wait before a Message is
+         *      considered failed.
+         * @param resendIntervalCycles
+         *      Number of cycles of inactivity to wait between requesting
+         *      retransmission of un-received parts of a Message.
+         *      liveness of a Message.
+         */
+        explicit MessageBucket(uint64_t messageTimeoutCycles,
+                               uint64_t resendIntervalCycles)
+            : mutex()
+            , messages()
+            , messageTimeouts(messageTimeoutCycles)
+            , resendTimeouts(resendIntervalCycles)
+        {}
+
+        /**
+         * Return the Message with the given MessageId.
+         *
+         * @param msgId
+         *      MessageId of the Message to be found.
+         * @param lock
+         *      Reminder to hold the MessageBucket::mutex during this call. (Not
+         *      used)
+         * @return
+         *      A pointer to the Message if found; nullptr, otherwise.
+         */
+        Message* findMessage(const Protocol::MessageId& msgId,
+                             const SpinLock::Lock& lock)
+        {
+            (void)lock;
+            Message* message = nullptr;
+            for (auto it = messages.begin(); it != messages.end(); ++it) {
+                if (it->id == msgId) {
+                    message = &(*it);
+                    break;
+                }
+            }
+            return message;
+        }
+
+        /// Mutex protecting the contents of this bucket.
+        SpinLock mutex;
+
+        /// Collection of inbound messages
+        Intrusive::List<Message> messages;
+
+        /// Maintains Message objects in increasing order of timeout.
+        TimeoutManager<Message> messageTimeouts;
+
+        /// Maintains Message object in increase order of resend timeout.
+        TimeoutManager<Message> resendTimeouts;
+    };
+
+    /**
+     * Maps from a message's MessageId to the MessageBucket which should hold
+     * the message (if it exists).
+     */
+    struct MessageBucketMap {
+        /**
+         * The number of buckets in a MessageBuckets in this map.  This must be
+         * a power of 2.
+         */
+        static const int NUM_BUCKETS = 256;
+
+        /**
+         * Bit mask used to map from a hashed key to the bucket index.
+         */
+        static const uint HASH_KEY_MASK = 0xFF;
+
+        // Make sure bit mask correctly matches the number of buckets.
+        static_assert(NUM_BUCKETS == HASH_KEY_MASK + 1);
+
+        /**
+         * Helper method to create the set of buckets.
+         *
+         * @param messageTimeoutCycles
+         *      Number of cycles of inactivity to wait before a Message is
+         *      considered failed.
+         * @param resendIntervalCycles
+         *      Number of cycles of inactivity to wait between requesting
+         *      retransmission of un-received parts of a Message.
+         *      liveness of a Message.
+         */
+        static std::array<MessageBucket*, NUM_BUCKETS> makeBuckets(
+            uint64_t messageTimeoutCycles, uint64_t resendIntervalCycles)
+        {
+            std::array<MessageBucket*, NUM_BUCKETS> buckets;
+            for (int i = 0; i < NUM_BUCKETS; ++i) {
+                buckets[i] = new MessageBucket(messageTimeoutCycles,
+                                               resendIntervalCycles);
+            }
+            return buckets;
+        }
+
+        /**
+         * MessageBucketMap constructor.
+         *
+         * @param messageTimeoutCycles
+         *      Number of cycles of inactivity to wait before a Message is
+         *      considered failed.
+         * @param resendIntervalCycles
+         *      Number of cycles of inactivity to wait between requesting
+         *      retransmission of un-received parts of a Message.
+         *      liveness of a Message.
+         */
+        explicit MessageBucketMap(uint64_t messageTimeoutCycles,
+                                  uint64_t resendIntervalCycles)
+            : buckets(makeBuckets(messageTimeoutCycles, resendIntervalCycles))
+            , hasher()
+        {}
+
+        /**
+         * MessageBucketMap destructor.
+         */
+        ~MessageBucketMap()
+        {
+            for (int i = 0; i < NUM_BUCKETS; ++i) {
+                delete buckets[i];
+            }
+        }
+
+        /**
+         * Return the MessageBucket that should hold a Message with the given
+         * MessageId.
+         */
+        MessageBucket* getBucket(const Protocol::MessageId& msgId) const
+        {
+            uint index = hasher(msgId) & HASH_KEY_MASK;
+            return buckets[index];
+        }
+
+        /// Array of buckets.
+        std::array<MessageBucket*, NUM_BUCKETS> const buckets;
+
+        /// MessageId hash function container.
+        Protocol::MessageId::Hasher hasher;
     };
 
     /**
@@ -207,7 +415,7 @@ class Receiver {
             {
                 assert(!a.scheduledMessages.empty());
                 assert(!b.scheduledMessages.empty());
-                Message::ComparePriority comp;
+                ScheduledMessageInfo::ComparePriority comp;
                 return comp(a.scheduledMessages.front(),
                             b.scheduledMessages.front());
             }
@@ -222,101 +430,51 @@ class Receiver {
     void dropMessage(Receiver::Message* message);
     uint64_t checkMessageTimeouts();
     uint64_t checkResendTimeouts();
-    void runScheduler();
-    static Peer* schedule(Message* message,
-                          std::unordered_map<Driver::Address, Peer>* peerTable,
-                          Intrusive::List<Peer>* scheduledPeers);
-    static Intrusive::List<Peer>::Iterator unschedule(
-        Message* message, Receiver::Peer* peer,
-        Intrusive::List<Peer>* scheduledPeers);
-    static void updateSchedule(Message* message, Peer* peer,
-                               Intrusive::List<Peer>* scheduledPeers);
-
-    /**
-     * Given an element in a list, move the element forward in the list until
-     * the preceding element compares less than or equal to the given element.
-     *
-     * This function will call:
-     *      bool ElementType::operator<(const ElementType&) const;
-     *
-     * @tparam ElementType
-     *      Type of the element held in the Intrusive::List.
-     * @tparam Compare
-     *      A weak strict ordering binary comparator for objects of ElementType.
-     * @param list
-     *      List that contains the element.
-     * @parma node
-     *      Intrusive list node for the element that should be prioritized.
-     * @param comp
-     *      Comparison function object which returns true when the first
-     *      argument should be ordered before the second.  The signature should
-     *      be equivalent to the following:
-     *          bool comp(const ElementType& a, const ElementType& b);
-     */
-    template <typename ElementType, typename Compare>
-    static void prioritize(Intrusive::List<ElementType>* list,
-                           typename Intrusive::List<ElementType>::Node* node,
-                           Compare comp)
-    {
-        assert(list->contains(node));
-        auto it_node = list->get(node);
-        auto it_pos = it_node;
-        while (it_pos != list->begin()) {
-            if (!comp(*it_node, *std::prev(it_pos))) {
-                // Found the correct location; just before it_pos.
-                break;
-            }
-            --it_pos;
-        }
-        if (it_pos == it_node) {
-            // Do nothing if the node is already in the right spot.
-        } else {
-            // Move the node to the new position in the list.
-            list->remove(it_node);
-            list->insert(it_pos, node);
-        }
-    }
-
-    /// Mutex for monitor-style locking of Receiver state.
-    SpinLock mutex;
+    void trySendGrants();
+    void schedule(Message* message, const SpinLock::Lock& lock);
+    void unschedule(Message* message, const SpinLock::Lock& lock);
+    void updateSchedule(Message* message, const SpinLock::Lock& lock);
 
     /// Transport of which this Receiver is a part.
-    Transport* transport;
+    Transport* const transport;
 
     /// Provider of network packet priority and grant policy decisions.
-    Policy::Manager* policyManager;
+    Policy::Manager* const policyManager;
 
     /// Tracks the set of inbound messages being received by this Receiver.
-    std::unordered_map<Protocol::MessageId, Message*,
-                       Protocol::MessageId::Hasher>
-        inboundMessages;
+    MessageBucketMap messageBuckets;
 
-    /// Collection of all peers; used for fast access.
+    /// Mutex for monitor-style locking of Receiver state.
+    SpinLock schedulerMutex;
+
+    /// Collection of all peers; used for fast access.  Access is protected by
+    /// the schedulerMutex.
     std::unordered_map<Driver::Address, Peer> peerTable;
 
     /// List of peers with inbound messages that require grants to complete.
+    /// Access is protected by the schedulerMutex.
     Intrusive::List<Peer> scheduledPeers;
 
     /// Message objects to be processed by the transport.
     struct {
-        /// Monitor style lock.
+        /// Protects the receivedMessage.queue
         SpinLock mutex;
         /// List of completely received messages.
         Intrusive::List<Message> queue;
     } receivedMessages;
 
+    /// True if the Receiver is executing trySendGrants(); false, otherwise.
+    /// Used to prevent concurrent calls to trySendGrants() from blocking on
+    /// each other.
+    std::atomic_flag granting = ATOMIC_FLAG_INIT;
+
     /// Used to allocate Message objects.
-    ObjectPool<Message> messagePool;
-
-    /// Maintains Message objects in increasing order of timeout.
-    TimeoutManager<Message> messageTimeouts;
-
-    /// Maintains Message object in increase order of resend timeout.
-    TimeoutManager<Message> resendTimeouts;
-
-    /// True if the Receiver is executing schedule(); false, otherwise. Use to
-    /// prevent concurrent calls to trySend() from blocking on each other.
-    std::atomic_flag scheduling = ATOMIC_FLAG_INIT;
+    struct {
+        /// Protects the messageAllocator.pool
+        SpinLock mutex;
+        /// Pool from which Message objects can be allocated.
+        ObjectPool<Message> pool;
+    } messageAllocator;
 };
 
 }  // namespace Core

@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, Stanford University
+/* Copyright (c) 2019-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -62,7 +62,8 @@ Manager::Manager(Driver* driver)
                Util::downCast<int>(
                    localUnscheduledPolicy.priorityCutoffBytes.size() + 1));
     localScheduledPolicy.degreeOvercommitment = Default::MAX_OVERCOMMIT_COUNT;
-    localScheduledPolicy.scheduledByteLimit = RTT_BYTES;
+    localScheduledPolicy.minScheduledBytes = RTT_BYTES;
+    localScheduledPolicy.maxScheduledBytes = 2 * RTT_BYTES;
 }
 
 /**

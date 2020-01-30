@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -164,6 +164,7 @@ class OutMessage : public virtual Message {
     enum class Status {
         NOT_STARTED,  //< The sending of this message has not started.
         IN_PROGRESS,  //< The message is in the process of being sent.
+        CANCELED,     //< The message was canceled while still IN_PROGRESS.
         SENT,         //< The message has been completely sent.
         COMPLETED,    //< The Receiver has acknowledged receipt of this message.
         FAILED,       //< The message failed to be delivered and processed.

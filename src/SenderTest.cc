@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -52,15 +52,14 @@ class SenderTest : public ::testing::Test {
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
         transport = new Transport(&mockDriver, 22);
-        sender = transport->sender.get();
-        sender->policyManager = &mockPolicyManager;
-        sender->messageTimeouts.timeoutIntervalCycles = 1000;
-        sender->pingTimeouts.timeoutIntervalCycles = 100;
+        sender = new Sender(transport, 22, &mockPolicyManager,
+                            messageTimeoutCycles, pingIntervalCycles);
         PerfUtils::Cycles::mockTscValue = 10000;
     }
 
     ~SenderTest()
     {
+        delete sender;
         delete transport;
         Debug::setLogPolicy(savedLogPolicy);
         PerfUtils::Cycles::mockTscValue = 0;
@@ -74,17 +73,47 @@ class SenderTest : public ::testing::Test {
     Sender* sender;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 
+    static const uint64_t messageTimeoutCycles = 1000;
+    static const uint64_t pingIntervalCycles = 100;
+
     static Sender::Message* addMessage(Sender* sender, Protocol::MessageId id,
                                        Sender::Message* message,
+                                       bool queue = false,
                                        uint16_t grantIndex = 0)
     {
         message->id = id;
-        message->grantIndex = grantIndex;
-        sender->outboundMessages.insert({id, message});
-        sender->messageTimeouts.list.push_back(&message->messageTimeout.node);
-        sender->pingTimeouts.list.push_back(&message->pingTimeout.node);
+        Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+        bucket->messages.push_back(&message->bucketNode);
+        if (queue) {
+            Sender::QueuedMessageInfo::ComparePriority comp;
+            Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+            info->id = id;
+            info->destination = message->destination;
+            info->packets = message;
+            info->unsentBytes = message->rawLength();
+            info->grantIndex = grantIndex;
+            info->sentIndex = 0;
+            // Insert and move message into the correct order in the priority
+            // queue.
+            sender->sendQueue.push_front(&info->sendQueueNode);
+            Intrusive::deprioritize<Sender::Message>(
+                &sender->sendQueue, &info->sendQueueNode,
+                Sender::QueuedMessageInfo::ComparePriority());
+        }
         return message;
     }
+};
+
+// Used to capture log output.
+struct VectorHandler {
+    VectorHandler()
+        : messages()
+    {}
+    void operator()(Debug::DebugMessage message)
+    {
+        messages.push_back(message);
+    }
+    std::vector<Debug::DebugMessage> messages;
 };
 
 TEST_F(SenderTest, allocMessage)
@@ -95,13 +124,11 @@ TEST_F(SenderTest, allocMessage)
     EXPECT_EQ(1U, sender->messageAllocator.pool.outstandingObjects);
 }
 
-TEST_F(SenderTest, handleDonePacket)
+TEST_F(SenderTest, handleDonePacket_basic)
 {
     Protocol::MessageId id = {42, 1};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    sender->messageTimeouts.setTimeout(&message->messageTimeout);
-    sender->pingTimeouts.setTimeout(&message->pingTimeout);
     EXPECT_NE(Homa::OutMessage::Status::COMPLETED, message->state);
 
     Protocol::Packet::DoneHeader* header =
@@ -111,14 +138,15 @@ TEST_F(SenderTest, handleDonePacket)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(2);
 
+    // No message.
     sender->handleDonePacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(&sender->messageTimeouts.list, message->messageTimeout.node.list);
-    EXPECT_EQ(&sender->pingTimeouts.list, message->pingTimeout.node.list);
     EXPECT_NE(Homa::OutMessage::Status::COMPLETED, message->state);
 
-    sender->outboundMessages.insert({id, message});
+    addMessage(sender, id, message);
+    message->state = Homa::OutMessage::Status::SENT;
 
+    // Normal expected behavior.
     sender->handleDonePacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(nullptr, message->messageTimeout.node.list);
@@ -126,20 +154,169 @@ TEST_F(SenderTest, handleDonePacket)
     EXPECT_EQ(Homa::OutMessage::Status::COMPLETED, message->state);
 }
 
+TEST_F(SenderTest, handleDonePacket_CANCELED)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    addMessage(sender, id, message);
+    message->state = Homa::OutMessage::Status::CANCELED;
+
+    Protocol::Packet::DoneHeader* header =
+        static_cast<Protocol::Packet::DoneHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender->handleDonePacket(&mockPacket, &mockDriver);
+}
+
+TEST_F(SenderTest, handleDonePacket_COMPLETED)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    addMessage(sender, id, message);
+    message->state = Homa::OutMessage::Status::COMPLETED;
+
+    Protocol::Packet::DoneHeader* header =
+        static_cast<Protocol::Packet::DoneHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleDonePacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleDonePacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::NOTICE), m.logLevel);
+    EXPECT_EQ("Message (42, 1) received duplicate DONE confirmation",
+              m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+}
+
+TEST_F(SenderTest, handleDonePacket_FAILED)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    addMessage(sender, id, message);
+    message->state = Homa::OutMessage::Status::FAILED;
+
+    Protocol::Packet::DoneHeader* header =
+        static_cast<Protocol::Packet::DoneHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleDonePacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleDonePacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) received DONE confirmation after the message was "
+        "already declared FAILED",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+}
+
+TEST_F(SenderTest, handleDonePacket_IN_PROGRESS)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    addMessage(sender, id, message);
+    message->state = Homa::OutMessage::Status::IN_PROGRESS;
+
+    Protocol::Packet::DoneHeader* header =
+        static_cast<Protocol::Packet::DoneHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleDonePacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleDonePacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) received DONE confirmation while sending is still "
+        "IN_PROGRESS (message not completely sent); DONE is ignored.",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+}
+
+TEST_F(SenderTest, handleDonePacket_NO_STARTED)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    addMessage(sender, id, message);
+    message->state = Homa::OutMessage::Status::NOT_STARTED;
+
+    Protocol::Packet::DoneHeader* header =
+        static_cast<Protocol::Packet::DoneHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleDonePacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleDonePacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) received DONE confirmation but sending has "
+        "NOT_STARTED (message not yet sent); DONE is ignored.",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+}
+
 TEST_F(SenderTest, handleResendPacket_basic)
 {
     Protocol::MessageId id = {42, 1};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 5);
     std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
     for (int i = 0; i < 10; ++i) {
         packets.push_back(new Homa::Mock::MockDriver::MockPacket(payload));
         message->setPacket(i, packets[i]);
     }
-    message->sentIndex = 5;
-    message->grantIndex = 5;
-    message->priority = 6;
+    SenderTest::addMessage(sender, id, message, true, 5);
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    info->sentIndex = 5;
+    info->priority = 6;
+    EXPECT_EQ(5, info->grantIndex);
     EXPECT_EQ(10U, message->getNumPackets());
 
     Protocol::Packet::ResendHeader* resendHdr =
@@ -157,9 +334,9 @@ TEST_F(SenderTest, handleResendPacket_basic)
 
     sender->handleResendPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(5U, message->sentIndex);
-    EXPECT_EQ(8U, message->grantIndex);
-    EXPECT_EQ(4, message->priority);
+    EXPECT_EQ(5U, info->sentIndex);
+    EXPECT_EQ(8U, info->grantIndex);
+    EXPECT_EQ(4, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
     EXPECT_EQ(7, packets[3]->priority);
@@ -185,19 +362,111 @@ TEST_F(SenderTest, handleResendPacket_staleResend)
     sender->handleResendPacket(&mockPacket, &mockDriver);
 }
 
+TEST_F(SenderTest, handleResendPacket_badRequest_singlePacketMessage)
+{
+    Protocol::MessageId id = {42, 1};
+
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    SenderTest::addMessage(sender, id, message);
+    Homa::Mock::MockDriver::MockPacket* packet =
+        new Homa::Mock::MockDriver::MockPacket(payload);
+    message->setPacket(0, packet);
+
+    Protocol::Packet::ResendHeader* resendHdr =
+        static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
+    resendHdr->common.messageId = id;
+    resendHdr->index = 3;
+    resendHdr->num = 5;
+    resendHdr->priority = 4;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleResendPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleResendPacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) with only 1 packet received unexpected RESEND "
+        "request; peer Transport may be confused.",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+
+    delete packet;
+}
+
+TEST_F(SenderTest, handleResendPacket_badRequest_outOfRange)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
+    for (int i = 0; i < 10; ++i) {
+        packets.push_back(new Homa::Mock::MockDriver::MockPacket(payload));
+        message->setPacket(i, packets[i]);
+    }
+    SenderTest::addMessage(sender, id, message, true, 5);
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    info->sentIndex = 5;
+    info->priority = 6;
+    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(10U, message->getNumPackets());
+
+    Protocol::Packet::ResendHeader* resendHdr =
+        static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
+    resendHdr->common.messageId = id;
+    resendHdr->index = 9;
+    resendHdr->num = 5;
+    resendHdr->priority = 4;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleResendPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleResendPacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) RESEND request range out of bounds: requested range "
+        "[9, 14); message only contains 10 packets; peer Transport may be "
+        "confused.",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+
+    for (int i = 0; i < 10; ++i) {
+        delete packets[i];
+    }
+}
+
 TEST_F(SenderTest, handleResendPacket_eagerResend)
 {
     Protocol::MessageId id = {42, 1};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 5);
     char data[1028];
     Homa::Mock::MockDriver::MockPacket dataPacket(data);
     for (int i = 0; i < 10; ++i) {
         message->setPacket(i, &dataPacket);
     }
-    message->sentIndex = 5;
-    message->grantIndex = 5;
+    SenderTest::addMessage(sender, id, message, true, 5);
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    info->sentIndex = 5;
+    EXPECT_EQ(5, info->grantIndex);
     EXPECT_EQ(10U, message->getNumPackets());
 
     Protocol::Packet::ResendHeader* resendHdr =
@@ -221,8 +490,8 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
 
     sender->handleResendPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(5U, message->sentIndex);
-    EXPECT_EQ(8U, message->grantIndex);
+    EXPECT_EQ(5U, info->sentIndex);
+    EXPECT_EQ(8U, info->grantIndex);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
 
@@ -236,23 +505,74 @@ TEST_F(SenderTest, handleGrantPacket_basic)
     Protocol::MessageId id = {42, 1};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 5);
+    SenderTest::addMessage(sender, id, message, true, 5);
     message->numPackets = 10;
-    EXPECT_EQ(5, message->grantIndex);
+    message->state = Homa::OutMessage::Status::IN_PROGRESS;
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    info->priority = 2;
+    EXPECT_EQ(5, info->grantIndex);
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = id;
-    header->indexLimit = 7;
+    header->byteLimit = 7000;
+    header->priority = 6;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
     sender->handleGrantPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(7, message->grantIndex);
+    EXPECT_EQ(7, info->grantIndex);
+    EXPECT_EQ(6, info->priority);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+}
+
+TEST_F(SenderTest, handleGrantPacket_excessiveGrant)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    SenderTest::addMessage(sender, id, message, true, 5);
+    message->numPackets = 10;
+    message->state = Homa::OutMessage::Status::IN_PROGRESS;
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    info->priority = 2;
+    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
+
+    Protocol::Packet::GrantHeader* header =
+        static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+    header->byteLimit = 11000;
+    header->priority = 6;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleGrantPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleGrantPacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) GRANT exceeds message length; granted packets: 11, "
+        "message packets 10; extra grants are ignored.",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+
+    EXPECT_EQ(10, info->grantIndex);
+    EXPECT_EQ(6, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
 }
@@ -262,23 +582,27 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
     Protocol::MessageId id = {42, 1};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 5);
+    SenderTest::addMessage(sender, id, message, true, 5);
     message->numPackets = 10;
-    EXPECT_EQ(5, message->grantIndex);
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    info->priority = 2;
+    EXPECT_EQ(5, info->grantIndex);
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = id;
-    header->indexLimit = 4;
+    header->byteLimit = 4000;
+    header->priority = 6;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
     sender->handleGrantPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(5, message->grantIndex);
+    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(2, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
 }
@@ -289,7 +613,7 @@ TEST_F(SenderTest, handleGrantPacket_dropGrant)
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
     header->common.messageId = id;
-    header->indexLimit = 4;
+    header->byteLimit = 4000;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
@@ -300,31 +624,119 @@ TEST_F(SenderTest, handleGrantPacket_dropGrant)
 TEST_F(SenderTest, handleUnknownPacket_basic)
 {
     Protocol::MessageId id = {42, 1};
+    Driver::Address destination = (Driver::Address)22;
+    Core::Policy::Unscheduled policyOld = {1, 2000, 1};
+    Core::Policy::Unscheduled policyNew = {2, 3000, 2};
+
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 5);
-    message->state.store(Homa::OutMessage::Status::SENT);
-    message->sentIndex = 5;
-    EXPECT_EQ(5, message->grantIndex);
-    char packetBuf[sizeof(Protocol::Packet::DataHeader)];
-    Homa::Mock::MockDriver::MockPacket packet(&packetBuf);
-    packet.length = sizeof(packetBuf);
-    static_cast<Protocol::Packet::DataHeader*>(packet.payload)
-        ->unscheduledIndexLimit = 3;
-    message->setPacket(0, &packet);
+    std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
+    char payload[5][1028];
+    for (int i = 0; i < 5; ++i) {
+        Homa::Mock::MockDriver::MockPacket* packet =
+            new Homa::Mock::MockDriver::MockPacket(payload[i]);
+        Protocol::Packet::DataHeader* header =
+            static_cast<Protocol::Packet::DataHeader*>(packet->payload);
+        header->policyVersion = policyOld.version;
+        header->unscheduledIndexLimit = 2;
+        packets.push_back(packet);
+        message->setPacket(i, packet);
+    }
+    message->destination = destination;
+    message->messageLength = 4500;
+    message->state.store(Homa::OutMessage::Status::IN_PROGRESS);
+    SenderTest::addMessage(sender, id, message, true, 4);
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    info->id = message->id;
+    info->destination = message->destination;
+    info->packets = message;
+    info->unsentBytes = 0;
+    info->grantIndex = 4;
+    info->priority = policyOld.priority;
+    info->sentIndex = 4;
+    EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+    EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
     header->common.messageId = id;
 
+    EXPECT_CALL(
+        mockPolicyManager,
+        getUnscheduledPolicy(Eq(destination), Eq(message->messageLength)))
+        .WillOnce(Return(policyNew));
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
     sender->handleUnknownPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
-    EXPECT_EQ(0U, message->sentIndex);
-    EXPECT_EQ(3U, message->grantIndex);
+    for (int i = 0; i < 3; ++i) {
+        Homa::Mock::MockDriver::MockPacket* packet = packets[i];
+        Protocol::Packet::DataHeader* header =
+            static_cast<Protocol::Packet::DataHeader*>(packet->payload);
+        EXPECT_EQ(policyNew.version, header->policyVersion);
+        EXPECT_EQ(3U, header->unscheduledIndexLimit);
+    }
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+    EXPECT_EQ(4500U, info->unsentBytes);
+    EXPECT_EQ(3U, info->grantIndex);
+    EXPECT_EQ(policyNew.priority, info->priority);
+    EXPECT_EQ(0U, info->sentIndex);
+    EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+
+    for (int i = 0; i < 5; ++i) {
+        delete packets[i];
+    }
+}
+
+TEST_F(SenderTest, handleUnknownPacket_singlePacketMessage)
+{
+    Protocol::MessageId id = {42, 1};
+    Driver::Address destination = (Driver::Address)22;
+    Core::Policy::Unscheduled policyOld = {1, 2000, 1};
+    Core::Policy::Unscheduled policyNew = {2, 3000, 2};
+
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    Homa::Mock::MockDriver::MockPacket dataPacket(payload);
+    Protocol::Packet::DataHeader* dataHeader =
+        static_cast<Protocol::Packet::DataHeader*>(dataPacket.payload);
+    dataHeader->policyVersion = policyOld.version;
+    dataHeader->unscheduledIndexLimit = 2;
+    message->setPacket(0, &dataPacket);
+    message->destination = destination;
+    message->messageLength = 500;
+    message->state.store(Homa::OutMessage::Status::SENT);
+    SenderTest::addMessage(sender, id, message);
+    EXPECT_FALSE(
+        sender->sendQueue.contains(&message->queuedMessageInfo.sendQueueNode));
+    EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
+
+    Protocol::Packet::UnknownHeader* header =
+        static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(
+        mockPolicyManager,
+        getUnscheduledPolicy(Eq(destination), Eq(message->messageLength)))
+        .WillOnce(Return(policyNew));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&dataPacket))).Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender->handleUnknownPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
+    EXPECT_EQ(policyNew.version, dataHeader->policyVersion);
+    EXPECT_EQ(3U, dataHeader->unscheduledIndexLimit);
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+    EXPECT_FALSE(
+        sender->sendQueue.contains(&message->queuedMessageInfo.sendQueueNode));
 }
 
 TEST_F(SenderTest, handleUnknownPacket_no_message)
@@ -346,10 +758,10 @@ TEST_F(SenderTest, handleUnknownPacket_done)
     Protocol::MessageId id = {42, 1};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 5);
+    SenderTest::addMessage(sender, id, message);
     message->state.store(Homa::OutMessage::Status::COMPLETED);
-    message->sentIndex = 5;
-    EXPECT_EQ(5, message->grantIndex);
+    EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
@@ -361,17 +773,99 @@ TEST_F(SenderTest, handleUnknownPacket_done)
     sender->handleUnknownPacket(&mockPacket, &mockDriver);
 
     EXPECT_EQ(Homa::OutMessage::Status::COMPLETED, message->state);
-    EXPECT_EQ(5U, message->sentIndex);
-    EXPECT_EQ(5U, message->grantIndex);
+    EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 }
 
-TEST_F(SenderTest, handleErrorPacket)
+TEST_F(SenderTest, handleErrorPacket_basic)
 {
     Protocol::MessageId id = {42, 1};
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    sender->messageTimeouts.setTimeout(&message->messageTimeout);
-    sender->pingTimeouts.setTimeout(&message->pingTimeout);
+    SenderTest::addMessage(sender, id, message);
+    bucket->messageTimeouts.setTimeout(&message->messageTimeout);
+    bucket->pingTimeouts.setTimeout(&message->pingTimeout);
+    message->state.store(Homa::OutMessage::Status::SENT);
+
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender->handleErrorPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(nullptr, message->messageTimeout.node.list);
+    EXPECT_EQ(nullptr, message->pingTimeout.node.list);
+    EXPECT_EQ(Homa::OutMessage::Status::FAILED, message->state);
+}
+
+TEST_F(SenderTest, handleErrorPacket_CANCELED)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    SenderTest::addMessage(sender, id, message);
+    message->state.store(Homa::OutMessage::Status::CANCELED);
+
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender->handleErrorPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(Homa::OutMessage::Status::CANCELED, message->state);
+}
+
+TEST_F(SenderTest, handleErrorPacket_NOT_STARTED)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    SenderTest::addMessage(sender, id, message);
+    message->state.store(Homa::OutMessage::Status::NOT_STARTED);
+
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleErrorPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleErrorPacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) received ERROR notification but sending has "
+        "NOT_STARTED (message not yet sent); ERROR is ignored.",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+
+    EXPECT_EQ(Homa::OutMessage::Status::NOT_STARTED, message->state);
+}
+
+TEST_F(SenderTest, handleErrorPacket_IN_PROGRESS)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    SenderTest::addMessage(sender, id, message);
     message->state.store(Homa::OutMessage::Status::IN_PROGRESS);
 
     Protocol::Packet::ErrorHeader* header =
@@ -379,21 +873,107 @@ TEST_F(SenderTest, handleErrorPacket)
     header->common.messageId = id;
 
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
-        .Times(2);
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
 
     sender->handleErrorPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(&sender->messageTimeouts.list, message->messageTimeout.node.list);
-    EXPECT_EQ(&sender->pingTimeouts.list, message->pingTimeout.node.list);
-    EXPECT_NE(Homa::OutMessage::Status::FAILED, message->state);
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleErrorPacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) received ERROR notification while sending is still "
+        "IN_PROGRESS (message not completely sent); ERROR is ignored.",
+        m.message);
 
-    sender->outboundMessages.insert({id, message});
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+
+    EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
+}
+
+TEST_F(SenderTest, handleErrorPacket_COMPLETED)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    SenderTest::addMessage(sender, id, message);
+    message->state.store(Homa::OutMessage::Status::COMPLETED);
+
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
 
     sender->handleErrorPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(nullptr, message->messageTimeout.node.list);
-    EXPECT_EQ(nullptr, message->pingTimeout.node.list);
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleErrorPacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Message (42, 1) received ERROR notification after the message was "
+        "already declared COMPLETED; ERROR is ignored.",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+
+    EXPECT_EQ(Homa::OutMessage::Status::COMPLETED, message->state);
+}
+
+TEST_F(SenderTest, handleErrorPacket_FAILED)
+{
+    Protocol::MessageId id = {42, 1};
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    SenderTest::addMessage(sender, id, message);
+    message->state.store(Homa::OutMessage::Status::FAILED);
+
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    sender->handleErrorPacket(&mockPacket, &mockDriver);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("handleErrorPacket", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::NOTICE), m.logLevel);
+    EXPECT_EQ("Message (42, 1) received duplicate ERROR notification.",
+              m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+
     EXPECT_EQ(Homa::OutMessage::Status::FAILED, message->state);
+}
+
+TEST_F(SenderTest, handleErrorPacket_noMessage)
+{
+    Protocol::MessageId id = {42, 1};
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+    sender->handleErrorPacket(&mockPacket, &mockDriver);
 }
 
 TEST_F(SenderTest, poll)
@@ -405,22 +985,55 @@ TEST_F(SenderTest, poll)
 TEST_F(SenderTest, checkTimeouts)
 {
     Sender::Message message(sender, &mockDriver);
-    sender->pingTimeouts.setTimeout(&message.pingTimeout);
-    sender->messageTimeouts.setTimeout(&message.messageTimeout);
+    Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
+    bucket->pingTimeouts.setTimeout(&message.pingTimeout);
+    bucket->messageTimeouts.setTimeout(&message.messageTimeout);
 
-    message.pingTimeout.expirationCycleTime = 10100;
-    message.messageTimeout.expirationCycleTime = 10200;
-
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    EXPECT_EQ(10100U, sender->checkTimeouts());
-
-    message.pingTimeout.expirationCycleTime = 10300;
+    message.pingTimeout.expirationCycleTime = 10010;
+    message.messageTimeout.expirationCycleTime = 10020;
 
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    EXPECT_EQ(10200U, sender->checkTimeouts());
+    EXPECT_EQ(10010U, sender->checkTimeouts());
 
-    sender->pingTimeouts.cancelTimeout(&message.pingTimeout);
-    sender->messageTimeouts.cancelTimeout(&message.messageTimeout);
+    message.pingTimeout.expirationCycleTime = 10030;
+
+    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+    EXPECT_EQ(10020U, sender->checkTimeouts());
+
+    bucket->pingTimeouts.cancelTimeout(&message.pingTimeout);
+    bucket->messageTimeouts.cancelTimeout(&message.messageTimeout);
+}
+
+TEST_F(SenderTest, MessageBucket_findMessage)
+{
+    Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
+
+    Sender::Message* msg0 =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    Sender::Message* msg1 =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    msg0->id = {42, 0};
+    msg1->id = {42, 1};
+    Protocol::MessageId id_none = {42, 42};
+
+    bucket->messages.push_back(&msg0->bucketNode);
+    bucket->messages.push_back(&msg1->bucketNode);
+
+    SpinLock::Lock lock_bucket(bucket->mutex);
+    EXPECT_EQ(msg0, bucket->findMessage(msg0->id, lock_bucket));
+    EXPECT_EQ(msg1, bucket->findMessage(msg1->id, lock_bucket));
+    EXPECT_EQ(nullptr, bucket->findMessage(id_none, lock_bucket));
+}
+
+TEST_F(SenderTest, MessageBucketMap_getBucket)
+{
+    Protocol::MessageId id = {sender->transportId,
+                              sender->nextMessageSequenceNumber};
+
+    Sender::MessageBucket* bucket0 = sender->messageBuckets.getBucket(id);
+    Sender::MessageBucket* bucket1 = sender->messageBuckets.getBucket(id);
+
+    EXPECT_EQ(bucket0, bucket1);
 }
 
 TEST_F(SenderTest, sendMessage_basic)
@@ -429,37 +1042,46 @@ TEST_F(SenderTest, sendMessage_basic)
                               sender->nextMessageSequenceNumber};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
 
     message->setPacket(0, &mockPacket);
     message->messageLength = 420;
     mockPacket.length = message->messageLength + message->PACKET_HEADER_LENGTH;
     Driver::Address destination = (Driver::Address)22;
-    Core::Policy::Unscheduled policy = {1, 0, 2};
+    Core::Policy::Unscheduled policy = {1, 3000, 2};
 
-    EXPECT_FALSE(sender->outboundMessages.find(id) !=
-                 sender->outboundMessages.end());
+    EXPECT_FALSE(bucket->messages.contains(&message->bucketNode));
 
     EXPECT_CALL(mockPolicyManager,
                 getUnscheduledPolicy(Eq(destination), Eq(420)))
         .WillOnce(Return(policy));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
 
     sender->sendMessage(message, destination);
 
-    EXPECT_EQ(22U, (uint64_t)mockPacket.address);
+    // Check Message metadata
+    EXPECT_EQ(id, message->id);
+    EXPECT_EQ(destination, message->destination);
+
+    // Check packet metadata
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
     EXPECT_EQ(id, header->common.messageId);
-    EXPECT_EQ(destination, message->destination);
-    EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
-    EXPECT_EQ(0U, message->grantIndex);
-    EXPECT_EQ(2, message->priority);
-    EXPECT_EQ(420U, message->unsentBytes);
-    EXPECT_EQ(message->messageLength, header->totalLength);
-    EXPECT_TRUE(sender->outboundMessages.find(id) !=
-                sender->outboundMessages.end());
-    EXPECT_EQ(message, sender->outboundMessages.find(id)->second);
+    EXPECT_EQ(420U, header->totalLength);
+    EXPECT_EQ(policy.version, header->policyVersion);
+    EXPECT_EQ(3U, header->unscheduledIndexLimit);
+    EXPECT_EQ(0U, header->index);
+
+    // Check Sender metadata
+    EXPECT_TRUE(bucket->messages.contains(&message->bucketNode));
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+
+    // Check sent packet metadata
+    EXPECT_EQ(22U, (uint64_t)mockPacket.address);
+    EXPECT_EQ(policy.priority, mockPacket.priority);
+
+    EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
 }
 
 TEST_F(SenderTest, sendMessage_multipacket)
@@ -472,6 +1094,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
                               sender->nextMessageSequenceNumber};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
 
     message->setPacket(0, &packet0);
     message->setPacket(1, &packet1);
@@ -489,9 +1112,12 @@ TEST_F(SenderTest, sendMessage_multipacket)
 
     sender->sendMessage(message, destination);
 
+    // Check Message metadata
     EXPECT_EQ(id, message->id);
-    EXPECT_EQ(1U, message->grantIndex);
+    EXPECT_EQ(destination, message->destination);
+    EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
 
+    // Check packet metadata
     Protocol::Packet::DataHeader* header = nullptr;
     // Packet0
     EXPECT_EQ(22U, (uint64_t)packet0.address);
@@ -505,19 +1131,16 @@ TEST_F(SenderTest, sendMessage_multipacket)
     EXPECT_EQ(message->id, header->common.messageId);
     EXPECT_EQ(destination, message->destination);
     EXPECT_EQ(message->messageLength, header->totalLength);
-}
 
-// Used to capture log output.
-struct VectorHandler {
-    VectorHandler()
-        : messages()
-    {}
-    void operator()(Debug::DebugMessage message)
-    {
-        messages.push_back(message);
-    }
-    std::vector<Debug::DebugMessage> messages;
-};
+    // Check Sender metadata
+    EXPECT_TRUE(bucket->messages.contains(&message->bucketNode));
+    EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
+    EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+
+    // Check sendQueue metadata
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+}
 
 TEST_F(SenderTest, sendMessage_missingPacket)
 {
@@ -555,12 +1178,9 @@ TEST_F(SenderTest, sendMessage_unscheduledLimit)
 
     sender->sendMessage(message, destination);
 
-    EXPECT_TRUE(sender->outboundMessages.find(id) !=
-                sender->outboundMessages.end());
-    EXPECT_EQ(message, sender->outboundMessages.find(id)->second);
-    EXPECT_EQ(id, message->id);
-    EXPECT_EQ(destination, message->destination);
-    EXPECT_EQ(5U, message->grantIndex);
+    // Check sendQueue metadata
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    EXPECT_EQ(5U, info->grantIndex);
 }
 
 TEST_F(SenderTest, cancelMessage)
@@ -568,17 +1188,24 @@ TEST_F(SenderTest, cancelMessage)
     Protocol::MessageId id = {42, 1};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 5);
+    SenderTest::addMessage(sender, id, message, true, 5);
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+    bucket->pingTimeouts.setTimeout(&message->pingTimeout);
+    bucket->messageTimeouts.setTimeout(&message->messageTimeout);
     message->messageLength = 9000;
-    EXPECT_FALSE(sender->messageTimeouts.list.empty());
-    EXPECT_FALSE(sender->pingTimeouts.list.empty());
+    message->numPackets = 9;
+    message->state = Homa::OutMessage::Status::IN_PROGRESS;
+    EXPECT_FALSE(bucket->messageTimeouts.list.empty());
+    EXPECT_FALSE(bucket->pingTimeouts.list.empty());
+    EXPECT_FALSE(sender->sendQueue.empty());
 
     sender->cancelMessage(message);
 
-    EXPECT_TRUE(sender->messageTimeouts.list.empty());
-    EXPECT_TRUE(sender->pingTimeouts.list.empty());
-    EXPECT_FALSE(sender->outboundMessages.find(id) !=
-                 sender->outboundMessages.end());
+    EXPECT_TRUE(bucket->messageTimeouts.list.empty());
+    EXPECT_TRUE(bucket->pingTimeouts.list.empty());
+    EXPECT_TRUE(sender->sendQueue.empty());
+    EXPECT_EQ(Homa::OutMessage::Status::CANCELED, message->state.load());
+    EXPECT_FALSE(bucket->messages.contains(&message->bucketNode));
 }
 
 TEST_F(SenderTest, dropMessage)
@@ -599,8 +1226,9 @@ TEST_F(SenderTest, checkMessageTimeouts_basic)
         Protocol::MessageId id = {42, 10 + i};
         message[i] = dynamic_cast<Sender::Message*>(sender->allocMessage());
         SenderTest::addMessage(sender, id, message[i]);
-        sender->messageTimeouts.setTimeout(&message[i]->messageTimeout);
-        sender->pingTimeouts.setTimeout(&message[i]->pingTimeout);
+        Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+        bucket->messageTimeouts.setTimeout(&message[i]->messageTimeout);
+        bucket->pingTimeouts.setTimeout(&message[i]->pingTimeout);
     }
 
     // Message[0]: Normal timeout: IN_PROGRESS
@@ -634,19 +1262,24 @@ TEST_F(SenderTest, checkMessageTimeouts_basic)
     EXPECT_EQ(nullptr, message[2]->pingTimeout.node.list);
     EXPECT_EQ(Homa::OutMessage::Status::COMPLETED, message[2]->getStatus());
     // Message[3]: No timeout
-    EXPECT_EQ(&sender->messageTimeouts.list,
-              message[3]->messageTimeout.node.list);
-    EXPECT_EQ(&sender->pingTimeouts.list, message[3]->pingTimeout.node.list);
+    EXPECT_EQ(
+        &sender->messageBuckets.getBucket(message[3]->id)->messageTimeouts.list,
+        message[3]->messageTimeout.node.list);
+    EXPECT_EQ(
+        &sender->messageBuckets.getBucket(message[3]->id)->pingTimeouts.list,
+        message[3]->pingTimeout.node.list);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message[3]->getStatus());
 }
 
 TEST_F(SenderTest, checkMessageTimeouts_empty)
 {
-    EXPECT_TRUE(sender->messageTimeouts.list.empty());
+    for (int i = 0; i < Sender::MessageBucketMap::NUM_BUCKETS; ++i) {
+        Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(i);
+        EXPECT_TRUE(bucket->messageTimeouts.list.empty());
+    }
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
     uint64_t nextTimeout = sender->checkMessageTimeouts();
-    EXPECT_EQ(10000 + sender->messageTimeouts.timeoutIntervalCycles,
-              nextTimeout);
+    EXPECT_EQ(10000 + messageTimeoutCycles, nextTimeout);
 }
 
 TEST_F(SenderTest, checkPingTimeouts_basic)
@@ -656,7 +1289,8 @@ TEST_F(SenderTest, checkPingTimeouts_basic)
         Protocol::MessageId id = {42, 10 + i};
         message[i] = dynamic_cast<Sender::Message*>(sender->allocMessage());
         SenderTest::addMessage(sender, id, message[i]);
-        sender->pingTimeouts.setTimeout(&message[i]->pingTimeout);
+        Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+        bucket->pingTimeouts.setTimeout(&message[i]->pingTimeout);
     }
 
     // Message[0]: Normal timeout: COMPLETED
@@ -697,11 +1331,14 @@ TEST_F(SenderTest, checkPingTimeouts_basic)
 
 TEST_F(SenderTest, checkPingTimeouts_empty)
 {
-    EXPECT_TRUE(sender->pingTimeouts.list.empty());
+    for (int i = 0; i < Sender::MessageBucketMap::NUM_BUCKETS; ++i) {
+        Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(i);
+        EXPECT_TRUE(bucket->pingTimeouts.list.empty());
+    }
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
     sender->checkPingTimeouts();
     uint64_t nextTimeout = sender->checkPingTimeouts();
-    EXPECT_EQ(10000 + sender->pingTimeouts.timeoutIntervalCycles, nextTimeout);
+    EXPECT_EQ(10000 + pingIntervalCycles, nextTimeout);
 }
 
 TEST_F(SenderTest, trySend_basic)
@@ -709,8 +1346,8 @@ TEST_F(SenderTest, trySend_basic)
     Protocol::MessageId id = {42, 10};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 3);
-    sender->readyQueue.push_back(&message->readyQueueNode);
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    SenderTest::addMessage(sender, id, message, true, 3);
     Homa::Mock::MockDriver::MockPacket* packet[5];
     const uint32_t PACKET_SIZE = sender->transport->driver->getMaxPayloadSize();
     const uint32_t PACKET_DATA_SIZE =
@@ -719,65 +1356,68 @@ TEST_F(SenderTest, trySend_basic)
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
         packet[i]->length = PACKET_SIZE;
         message->setPacket(i, packet[i]);
-        message->unsentBytes += PACKET_DATA_SIZE;
+        info->unsentBytes += PACKET_DATA_SIZE;
     }
+    message->state = Homa::OutMessage::Status::IN_PROGRESS;
     sender->sendReady = true;
     EXPECT_EQ(5U, message->getNumPackets());
-    EXPECT_EQ(3U, message->grantIndex);
-    EXPECT_EQ(0U, message->sentIndex);
-    EXPECT_EQ(5 * PACKET_DATA_SIZE, message->unsentBytes);
+    EXPECT_EQ(3U, info->grantIndex);
+    EXPECT_EQ(0U, info->sentIndex);
+    EXPECT_EQ(5 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
-    EXPECT_TRUE(sender->readyQueue.contains(&message->readyQueueNode));
+    EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
 
     // 3 granted packets; 2 will send; queue limit reached.
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[0])));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[1])));
     sender->trySend();  // < test call
     EXPECT_TRUE(sender->sendReady);
-    EXPECT_EQ(3U, message->grantIndex);
-    EXPECT_EQ(2U, message->sentIndex);
-    EXPECT_EQ(3 * PACKET_DATA_SIZE, message->unsentBytes);
+    EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
+    EXPECT_EQ(3U, info->grantIndex);
+    EXPECT_EQ(2U, info->sentIndex);
+    EXPECT_EQ(3 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
-    EXPECT_TRUE(sender->readyQueue.contains(&message->readyQueueNode));
+    EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // 1 packet to be sent; grant limit reached.
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[2])));
     sender->trySend();  // < test call
     EXPECT_FALSE(sender->sendReady);
-    EXPECT_EQ(3U, message->grantIndex);
-    EXPECT_EQ(3U, message->sentIndex);
-    EXPECT_EQ(2 * PACKET_DATA_SIZE, message->unsentBytes);
+    EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
+    EXPECT_EQ(3U, info->grantIndex);
+    EXPECT_EQ(3U, info->sentIndex);
+    EXPECT_EQ(2 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
-    EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
+    EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // No additional grants; spurious ready hint.
     EXPECT_CALL(mockDriver, sendPacket).Times(0);
-    sender->readyQueue.push_back(&message->readyQueueNode);
     sender->sendReady = true;
     sender->trySend();  // < test call
     EXPECT_FALSE(sender->sendReady);
-    EXPECT_EQ(3U, message->grantIndex);
-    EXPECT_EQ(3U, message->sentIndex);
-    EXPECT_EQ(2 * PACKET_DATA_SIZE, message->unsentBytes);
+    EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
+    EXPECT_EQ(3U, info->grantIndex);
+    EXPECT_EQ(3U, info->sentIndex);
+    EXPECT_EQ(2 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
-    EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
+    EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // 2 more granted packets; will finish.
-    message->grantIndex = 5;
-    sender->readyQueue.push_back(&message->readyQueueNode);
+    info->grantIndex = 5;
     sender->sendReady = true;
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[3])));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[4])));
     sender->trySend();  // < test call
     EXPECT_FALSE(sender->sendReady);
-    EXPECT_EQ(5U, message->grantIndex);
-    EXPECT_EQ(5U, message->sentIndex);
-    EXPECT_EQ(0 * PACKET_DATA_SIZE, message->unsentBytes);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
-    EXPECT_FALSE(sender->readyQueue.contains(&message->readyQueueNode));
+    EXPECT_EQ(5U, info->grantIndex);
+    EXPECT_EQ(5U, info->sentIndex);
+    EXPECT_EQ(0 * PACKET_DATA_SIZE, info->unsentBytes);
+    EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
+    EXPECT_FALSE(sender->sendQueue.contains(&info->sendQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     for (int i = 0; i < 5; ++i) {
@@ -788,33 +1428,35 @@ TEST_F(SenderTest, trySend_basic)
 TEST_F(SenderTest, trySend_multipleMessages)
 {
     Sender::Message* message[3];
+    Sender::QueuedMessageInfo* info[3];
     Homa::Mock::MockDriver::MockPacket* packet[3];
     for (uint64_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {22, 10 + i};
         message[i] = dynamic_cast<Sender::Message*>(sender->allocMessage());
-        SenderTest::addMessage(sender, id, message[i], 1);
+        info[i] = &message[i]->queuedMessageInfo;
+        SenderTest::addMessage(sender, id, message[i], true, 1);
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
         packet[i]->length = sender->transport->driver->getMaxPayloadSize() / 4;
         message[i]->setPacket(0, packet[i]);
-        message[i]->unsentBytes +=
+        info[i]->unsentBytes +=
             (packet[i]->length - message[i]->PACKET_HEADER_LENGTH);
-        sender->readyQueue.push_back(&message[i]->readyQueueNode);
+        message[i]->state = Homa::OutMessage::Status::IN_PROGRESS;
     }
     sender->sendReady = true;
 
     // Message 0: Will finish
-    EXPECT_EQ(1, message[0]->grantIndex);
-    message[0]->sentIndex = 0;
+    EXPECT_EQ(1, info[0]->grantIndex);
+    info[0]->sentIndex = 0;
 
     // Message 1: Will reach grant limit
-    EXPECT_EQ(1, message[1]->grantIndex);
-    message[1]->sentIndex = 0;
+    EXPECT_EQ(1, info[1]->grantIndex);
+    info[1]->sentIndex = 0;
     message[1]->setPacket(1, nullptr);
     EXPECT_EQ(2, message[1]->getNumPackets());
 
     // Message 2: Will finish
-    EXPECT_EQ(1, message[2]->grantIndex);
-    message[2]->sentIndex = 0;
+    EXPECT_EQ(1, info[2]->grantIndex);
+    info[2]->sentIndex = 0;
 
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[0])));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[1])));
@@ -822,15 +1464,15 @@ TEST_F(SenderTest, trySend_multipleMessages)
 
     sender->trySend();
 
-    EXPECT_EQ(1U, message[0]->sentIndex);
+    EXPECT_EQ(1U, info[0]->sentIndex);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message[0]->state);
-    EXPECT_FALSE(sender->readyQueue.contains(&message[0]->readyQueueNode));
-    EXPECT_EQ(1U, message[1]->sentIndex);
+    EXPECT_FALSE(sender->sendQueue.contains(&info[0]->sendQueueNode));
+    EXPECT_EQ(1U, info[1]->sentIndex);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message[1]->state);
-    EXPECT_FALSE(sender->readyQueue.contains(&message[1]->readyQueueNode));
-    EXPECT_EQ(1U, message[2]->sentIndex);
+    EXPECT_TRUE(sender->sendQueue.contains(&info[1]->sendQueueNode));
+    EXPECT_EQ(1U, info[2]->sentIndex);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message[2]->state);
-    EXPECT_FALSE(sender->readyQueue.contains(&message[2]->readyQueueNode));
+    EXPECT_FALSE(sender->sendQueue.contains(&info[2]->sendQueueNode));
 }
 
 TEST_F(SenderTest, trySend_alreadyRunning)
@@ -838,13 +1480,13 @@ TEST_F(SenderTest, trySend_alreadyRunning)
     Protocol::MessageId id = {42, 1};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    SenderTest::addMessage(sender, id, message, 1);
-    sender->readyQueue.push_back(&message->readyQueueNode);
+    Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
+    SenderTest::addMessage(sender, id, message, true, 1);
     message->setPacket(0, &mockPacket);
     message->messageLength = 1000;
     EXPECT_EQ(1U, message->getNumPackets());
-    EXPECT_EQ(1, message->grantIndex);
-    EXPECT_EQ(0, message->sentIndex);
+    EXPECT_EQ(1, info->grantIndex);
+    EXPECT_EQ(0, info->sentIndex);
 
     sender->sending.test_and_set();
 
@@ -852,72 +1494,14 @@ TEST_F(SenderTest, trySend_alreadyRunning)
 
     sender->trySend();
 
-    EXPECT_EQ(0, message->sentIndex);
+    EXPECT_EQ(0, info->sentIndex);
 }
 
 TEST_F(SenderTest, trySend_nothingToSend)
 {
-    EXPECT_TRUE(sender->readyQueue.empty());
+    EXPECT_TRUE(sender->sendQueue.empty());
     EXPECT_CALL(mockDriver, sendPacket).Times(0);
     sender->trySend();
-}
-
-TEST_F(SenderTest, hintMessageReady)
-{
-    Sender::Message* message[3];
-    for (int i = 0; i < 3; ++i) {
-        message[i] = dynamic_cast<Sender::Message*>(sender->allocMessage());
-        message[i]->unsentBytes = (i + 1) * 1000;
-    }
-
-    EXPECT_TRUE(sender->readyQueue.empty());
-
-    // Queue([1]) : EXPECT ->[1]->
-    {
-        SpinLock::UniqueLock lock(sender->mutex);
-        SpinLock::Lock lock_message(message[1]->mutex);
-        sender->hintMessageReady(message[1], lock, lock_message);
-    }
-    EXPECT_TRUE(sender->readyQueue.contains(&message[1]->readyQueueNode));
-    auto it = sender->readyQueue.begin();
-    EXPECT_EQ(message[1], (it++).node->owner);
-    EXPECT_EQ(sender->readyQueue.end(), it);
-
-    // Queue([1]) again : EXPECT ->[1]->
-    {
-        SpinLock::UniqueLock lock(sender->mutex);
-        SpinLock::Lock lock_message(message[1]->mutex);
-        sender->hintMessageReady(message[1], lock, lock_message);
-    }
-    EXPECT_TRUE(sender->readyQueue.contains(&message[1]->readyQueueNode));
-    it = sender->readyQueue.begin();
-    EXPECT_EQ(message[1], (it++).node->owner);
-    EXPECT_EQ(sender->readyQueue.end(), it);
-
-    // Queue([0]) : EXPECT ->[0]->[1]->
-    {
-        SpinLock::UniqueLock lock(sender->mutex);
-        SpinLock::Lock lock_message(message[0]->mutex);
-        sender->hintMessageReady(message[0], lock, lock_message);
-    }
-    EXPECT_TRUE(sender->readyQueue.contains(&message[0]->readyQueueNode));
-    it = sender->readyQueue.begin();
-    EXPECT_EQ(message[0], (it++).node->owner);
-    EXPECT_EQ(message[1], (it++).node->owner);
-    EXPECT_EQ(sender->readyQueue.end(), it);
-
-    // Queue([2]) : EXPECT ->[0]->[1]->[2]->
-    {
-        SpinLock::UniqueLock lock(sender->mutex);
-        SpinLock::Lock lock_message(message[2]->mutex);
-        sender->hintMessageReady(message[2], lock, lock_message);
-    }
-    EXPECT_TRUE(sender->readyQueue.contains(&message[2]->readyQueueNode));
-    it = sender->readyQueue.begin();
-    EXPECT_EQ(message[0], (it++).node->owner);
-    EXPECT_EQ(message[1], (it++).node->owner);
-    EXPECT_EQ(message[2], (it++).node->owner);
-    EXPECT_EQ(sender->readyQueue.end(), it);
 }
 
 }  // namespace

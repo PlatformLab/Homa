@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, Stanford University
+/* Copyright (c) 2019-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -57,8 +57,10 @@ struct Scheduled {
     /// always at least be as large as the number of scheduled priority levels
     /// (> maxScheduledPriority).
     int degreeOvercommitment;
-    /// Number of bytes that should be granted to a scheduled message.
-    uint32_t scheduledByteLimit;
+    /// Minimum number of granted but unreceived bytes.
+    int minScheduledBytes;
+    /// Maximum number of granted but unreceived bytes.
+    int maxScheduledBytes;
 };
 
 /**
