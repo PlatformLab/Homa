@@ -15,9 +15,9 @@
 
 #include "Sender.h"
 
-#include <algorithm>
-
 #include <Cycles.h>
+
+#include <algorithm>
 
 #include "ControlPacket.h"
 #include "Debug.h"
@@ -351,9 +351,9 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
         // Get the current policy for unscheduled bytes.
         Policy::Unscheduled policy = policyManager->getUnscheduledPolicy(
             message->destination, message->rawLength());
-        uint16_t unscheduledIndexLimit = Util::downCast<uint16_t>(
+        int unscheduledIndexLimit =
             ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
-             message->PACKET_DATA_LENGTH));
+             message->PACKET_DATA_LENGTH);
 
         // Update the policy version for each packet
         for (uint16_t i = 0; i < message->getNumPackets(); ++i) {
@@ -362,7 +362,8 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             Protocol::Packet::DataHeader* header =
                 static_cast<Protocol::Packet::DataHeader*>(dataPacket->payload);
             header->policyVersion = policy.version;
-            header->unscheduledIndexLimit = unscheduledIndexLimit;
+            header->unscheduledIndexLimit =
+                Util::downCast<uint16_t>(unscheduledIndexLimit);
         }
 
         // Reset the timeouts
@@ -388,7 +389,8 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             assert(info->packets == message);
             // Some values need to be updated
             info->unsentBytes = message->rawLength();
-            info->grantIndex = unscheduledIndexLimit;
+            info->grantIndex =
+                std::min(unscheduledIndexLimit, message->getNumPackets());
             info->priority = policy.priority;
             info->sentIndex = 0;
             // Insert and move message into the correct order in the priority
@@ -533,9 +535,9 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
 
     Policy::Unscheduled policy =
         policyManager->getUnscheduledPolicy(destination, message->rawLength());
-    int unscheduledPacketLimit = Util::downCast<uint16_t>(
+    int unscheduledPacketLimit =
         ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
-         message->PACKET_DATA_LENGTH));
+         message->PACKET_DATA_LENGTH);
 
     message->id = id;
     message->destination = destination;
@@ -590,7 +592,8 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         info->destination = message->destination;
         info->packets = message;
         info->unsentBytes = message->rawLength();
-        info->grantIndex = unscheduledPacketLimit;
+        info->grantIndex =
+            std::min(unscheduledPacketLimit, message->getNumPackets());
         info->priority = policy.priority;
         info->sentIndex = 0;
         // Insert and move message into the correct order in the priority queue.

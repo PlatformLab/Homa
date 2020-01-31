@@ -15,9 +15,8 @@
 
 #include <gtest/gtest.h>
 
-#include "Policy.h"
-
 #include "Mock/MockDriver.h"
+#include "Policy.h"
 
 namespace Homa {
 namespace Core {
@@ -65,7 +64,7 @@ TEST(PolicyManagerTest, getUnscheduledPolicy)
     {
         Policy::Unscheduled policy = manager.getUnscheduledPolicy(dest, 1);
         EXPECT_EQ(0, policy.version);
-        EXPECT_EQ(1, policy.unscheduledByteLimit);
+        EXPECT_EQ(manager.RTT_BYTES, policy.unscheduledByteLimit);
         EXPECT_EQ(7, policy.priority);
     }
 
@@ -75,7 +74,7 @@ TEST(PolicyManagerTest, getUnscheduledPolicy)
     {
         Policy::Unscheduled policy = manager.getUnscheduledPolicy(dest, 1000);
         EXPECT_EQ(1, policy.version);
-        EXPECT_EQ(1000, policy.unscheduledByteLimit);
+        EXPECT_EQ(manager.RTT_BYTES, policy.unscheduledByteLimit);
         EXPECT_EQ(1, policy.priority);
     }
 

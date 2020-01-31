@@ -18,9 +18,9 @@
 
 #include <Homa/Homa.h>
 
-#include "Protocol.h"
-
 #include <bitset>
+
+#include "Protocol.h"
 
 namespace Homa {
 namespace Core {
@@ -51,7 +51,7 @@ class Message : public virtual Homa::Message {
 
     Driver::Packet* getPacket(uint16_t index) const;
     bool setPacket(uint16_t index, Driver::Packet* packet);
-    uint16_t getNumPackets() const;
+    int getNumPackets() const;
 
     uint32_t rawLength() const;
 

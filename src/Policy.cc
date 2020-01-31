@@ -128,7 +128,6 @@ Manager::getUnscheduledPolicy(const Driver::Address destination,
     int numCutoffs = peer->priorityCutoffBytes.size();
     for (; rank < numCutoffs; ++rank) {
         if (messageLength < peer->priorityCutoffBytes.at(rank)) {
-            policy.unscheduledByteLimit = messageLength;
             break;
         }
     }

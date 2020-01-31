@@ -15,9 +15,9 @@
 
 #include "Message.h"
 
-#include "Debug.h"
-
 #include <mutex>
+
+#include "Debug.h"
 
 namespace Homa {
 namespace Core {
@@ -269,7 +269,7 @@ Message::setPacket(uint16_t index, Driver::Packet* packet)
 /**
  * Return the number of packet this message currently holds.
  */
-uint16_t
+int
 Message::getNumPackets() const
 {
     return numPackets;
