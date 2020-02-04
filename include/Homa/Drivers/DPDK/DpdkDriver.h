@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,6 +17,8 @@
 #define HOMA_INCLUDE_HOMA_DRIVERS_DPDK_DPDKDRIVER_H
 
 #include <Homa/Driver.h>
+
+#include <memory>
 
 namespace Homa {
 namespace Drivers {
@@ -47,9 +49,9 @@ class DpdkDriver : public Driver {
     /**
      * Construct a DpdkDriver.
      *
-     * This constructor should be used in the common case where the DpdkDriver
-     * is the only part the application using DPDK. Note: This call will
-     * initialize the DPDK EAL with default values.
+     * This constructor should be used in the common case where Homa::Transport
+     * has exclusive access to DPDK. Note: This call will initialize the DPDK
+     * EAL with default values.
      *
      * @param port
      *      Selects which physical port to use for communication.
@@ -161,9 +163,12 @@ class DpdkDriver : public Driver {
     virtual uint32_t getQueuedBytes();
 
   private:
-    /// Contains the private members of the driver.  Hides the details of the
+    // Forward declaration of implementation class.
+    class Impl;
+
+    /// The actual implementation of the DpdkDriver.  Hides the details of the
     /// driver from users of libDpdkDriver.
-    char members[168];
+    std::unique_ptr<Impl> pImpl;
 
     // Disable copy and assign
     DpdkDriver(const DpdkDriver&) = delete;

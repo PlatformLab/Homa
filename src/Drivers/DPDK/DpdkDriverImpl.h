@@ -13,13 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HOMA_DRIVERS_DPDK_DPDKDRIVER_H
-#define HOMA_DRIVERS_DPDK_DPDKDRIVER_H
+#ifndef HOMA_DRIVERS_DPDK_DPDKDRIVERIMPL_H
+#define HOMA_DRIVERS_DPDK_DPDKDRIVERIMPL_H
 
 #include <Homa/Drivers/DPDK/DpdkDriver.h>
-
-#include <chrono>
-
+#include <Homa/Drivers/Util/QueueEstimator.h>
 #include <rte_common.h>
 #include <rte_config.h>
 #include <rte_errno.h>
@@ -29,22 +27,16 @@
 #include <rte_ring.h>
 #include <rte_version.h>
 
-#include <Homa/Drivers/Util/QueueEstimator.h>
+#include <chrono>
 
+#include "MacAddress.h"
 #include "ObjectPool.h"
 #include "SpinLock.h"
 #include "Tub.h"
 
-#include "MacAddress.h"
-
 namespace Homa {
 namespace Drivers {
 namespace DPDK {
-
-/// Default number of arguments for EAL init.
-const int default_eal_argc = 1;
-/// Default arguments for EAL init.
-const char* default_eal_argv[] = {"homa", NULL};
 
 // Number of descriptors to allocate for the tx/rx rings
 const int NDESC = 256;
@@ -106,7 +98,8 @@ struct OverflowBuffer {
  * Holds the private members of the DpdkDriver so that they are not exposed in
  * the API header.
  */
-struct Internal {
+class DpdkDriver::Impl {
+  public:
     /**
      * Dpdk specific Packet object used to track a its lifetime and
      * contents.
@@ -141,7 +134,32 @@ struct Internal {
         Packet& operator=(const Packet&) = delete;
     };
 
-    explicit Internal(uint16_t port, const DpdkDriver::Config* const config);
+    Impl(int port, const Config* const config = nullptr);
+    Impl(int port, int argc, char* argv[],
+         const Config* const config = nullptr);
+    Impl(int port, NoEalInit _, const Config* const config = nullptr);
+    virtual ~Impl();
+
+    // Interface Methods
+    Driver::Address getAddress(std::string const* const addressString);
+    Driver::Address getAddress(WireFormatAddress const* const wireAddress);
+    std::string addressToString(const Address address);
+    void addressToWireFormat(const Address address,
+                             WireFormatAddress* wireAddress);
+    Packet* allocPacket();
+    void sendPacket(Driver::Packet* packet);
+    void cork();
+    void uncork();
+    uint32_t receivePackets(uint32_t maxPackets,
+                            Driver::Packet* receivedPackets[]);
+    void releasePackets(Driver::Packet* packets[], uint16_t numPackets);
+    int getHighestPacketPriority();
+    uint32_t getMaxPayloadSize();
+    uint32_t getBandwidth();
+    Driver::Address getLocalAddress();
+    uint32_t getQueuedBytes();
+
+  private:
     void _eal_init(int argc, char* argv[]);
     void _init();
     Packet* _allocMbufPacket();
@@ -162,7 +180,7 @@ struct Internal {
     /// set by override).
     const int HIGHEST_PACKET_PRIORITY;
 
-    /// Provides thread safety for Packet management operations.
+    /// Protects access to the packetPool.
     SpinLock packetLock;
 
     /// Provides memory allocation for the DPDK specific implementation of a
@@ -234,7 +252,7 @@ struct Internal {
 
     /// True if the Driver should buffer sends for batched transmission. False,
     /// if the Driver should
-    std::atomic<bool> corked;
+    std::atomic<int> corked;
 
     /// Effective network bandwidth, in Mbits/second.
     std::atomic<uint32_t> bandwidthMbps;
@@ -244,4 +262,4 @@ struct Internal {
 }  // namespace Drivers
 }  // namespace Homa
 
-#endif  // HOMA_DRIVERS_DPDK_DPDKDRIVER_H
+#endif  // HOMA_DRIVERS_DPDK_DPDKDRIVERIMPL_H

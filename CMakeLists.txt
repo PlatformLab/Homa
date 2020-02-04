@@ -136,6 +136,7 @@ target_compile_options(FakeDriver
 ## lib DpdkDriver ##############################################################
 add_library(DpdkDriver
     src/Drivers/DPDK/DpdkDriver.cc
+    src/Drivers/DPDK/DpdkDriverImpl.cc
     src/Drivers/DPDK/MacAddress.cc
 )
 add_library(Homa::DpdkDriver ALIAS DpdkDriver)
