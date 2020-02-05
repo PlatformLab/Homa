@@ -92,8 +92,8 @@ Manager::getScheduledPolicy()
 }
 
 /**
- * Return the unscheduled policy for messages of a particular size bound for
- * a particular Transport.
+ * Get the unscheduled byte limit and network priority for a message of a
+ * particular size bound for a particular peer.
  *
  * Used by the Sender to decided the initial priority and number of
  * unilaterally "granted" (unscheduled) bytes for a new Message to be sent.
@@ -136,11 +136,10 @@ Manager::getUnscheduledPolicy(const Driver::Address destination,
 }
 
 /**
- * Inform the PolicyManager that a new Message is being delivered.  The
- * information provided in this call will be used to update and maintain
- * policies on behalf of the manager's Transport.
+ * Record statistics about a new incoming Message that are used to recalculate
+ * this Transport's unscheduled and scheduled policies.
  *
- * Used by the Receiver when a new Message has started to arrive.
+ * Called by the Receiver when a new Message has started to arrive.
  *
  * @param source
  *      Address of the Transport from which the new Message was received.
@@ -157,6 +156,7 @@ Manager::signalNewMessage(const Driver::Address source, uint8_t policyVersion,
     (void)source;
     (void)policyVersion;
     (void)messageLength;
+    // TODO(cstlee): Collect statistics
 }
 
 /**
@@ -167,6 +167,7 @@ void
 Manager::poll()
 {
     SpinLock::Lock lock(mutex);
+    // TODO(cstlee): Add policy update logic
 }
 
 }  // namespace Policy

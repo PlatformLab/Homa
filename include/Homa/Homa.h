@@ -13,6 +13,13 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+/**
+ * @file Homa/Homa.h
+ *
+ * Contains the Homa Transport API.  Applications of the Homa Transport library
+ * should include this header.
+ */
+
 #ifndef HOMA_INCLUDE_HOMA_HOMA_H
 #define HOMA_INCLUDE_HOMA_HOMA_H
 
@@ -45,12 +52,12 @@ class Message {
      * Copy an array of bytes to the end of the Message.
      *
      * @param source
-     *      Address of the first byte of data (in a byte array) to be copied to
-     *      the end of the Message.
-     * @param num
+     *      Address of the first byte of data to be copied to the end of the
+     *      Message.
+     * @param count
      *      Number of bytes to be appended.
      */
-    virtual void append(const void* source, uint32_t num) = 0;
+    virtual void append(const void* source, uint32_t count) = 0;
 
     /**
      * Get the contents of a specified range of bytes in the Message by
@@ -63,7 +70,7 @@ class Message {
      *      The pointer to the memory region into which the requested byte
      *      range will be copied. The caller must ensure that the buffer is
      *      big enough to hold the requested number of bytes.
-     * @param num
+     * @param count
      *      The number of bytes being requested.
      *
      * @return
@@ -72,7 +79,7 @@ class Message {
      *      bytes in the Message.
      */
     virtual uint32_t get(uint32_t offset, void* destination,
-                         uint32_t num) const = 0;
+                         uint32_t count) const = 0;
 
     /**
      * Return the number of bytes this Message contains.
@@ -93,7 +100,7 @@ class Message {
      *
      * @sa Message::reserve()
      */
-    virtual void prepend(const void* source, uint32_t num) = 0;
+    virtual void prepend(const void* source, uint32_t count) = 0;
 
     /**
      * Reserve a number of bytes at the beginning of the Message.
@@ -105,24 +112,25 @@ class Message {
      * This method should be called before appending or prepending data to the
      * Message; otherwise, the behavior is undefined.
      *
-     * @param num
+     * @param count
      *      The number of bytes to be reserved.
      *
      * @sa Message::append(), Message::prepend()
      */
-    virtual void reserve(uint32_t num) = 0;
+    virtual void reserve(uint32_t count) = 0;
 
     /**
      * Remove a number of bytes from the beginning of the Message.
      *
-     * @param num
+     * @param count
      *      Number of bytes to remove.
      */
-    virtual void strip(uint32_t num) = 0;
+    virtual void strip(uint32_t count) = 0;
 };
 
 /**
- * Represents a Message has been received over the network via Homa::Transport.
+ * Represents a Message that has been received over the network via
+ * Homa::Transport.
  *
  * This class is NOT thread-safe.
  */
@@ -166,7 +174,7 @@ class OutMessage : public virtual Message {
         IN_PROGRESS,  //< The message is in the process of being sent.
         CANCELED,     //< The message was canceled while still IN_PROGRESS.
         SENT,         //< The message has been completely sent.
-        COMPLETED,    //< The Receiver has acknowledged receipt of this message.
+        COMPLETED,    //< The message has been received and processed.
         FAILED,       //< The message failed to be delivered and processed.
     };
 
@@ -201,14 +209,11 @@ class OutMessage : public virtual Message {
  * result of processing the request.
  *
  * An RPC (Remote Procedure Call) is a simple example of a RemoteOp.  Unlike
- * RPCs, however, the processing of the operation maybe fully or partially
- * delegated by one server to another.  As such, the response may not come from
- * the server that initially received the request.
+ * RPCs, however, the processing of the operation maybe delegated by one server
+ * to another.  As such, the response may not come from the server that
+ * initially received the request.
  *
- * This class is NOT thread-safe in general.  This class will correctly handle
- * the Transport running on a different thread, but if an instance of RemoteOp
- * is accessed from multiple threads for any other purpose, the threads must
- * synchronize to ensure only one thread accesses a RemoteOp object at a time.
+ * This class is NOT thread-safe.
  */
 class RemoteOp {
   public:
@@ -248,7 +253,8 @@ class RemoteOp {
      * Indicates whether this RemoteOp is done being processed.  Used to
      * asynchronously process a RemoteOp.  If this call returns true, the
      * RemoteOp has either completed with the response Message populated or
-     * failed with the response Message left pointing to nullptr.
+     * failed (e.g. request timed out) with the response Message left pointing
+     * to nullptr.
      *
      * @return
      *      True means that the RemoteOp has completed or failed; #wait will not
@@ -308,10 +314,7 @@ class ServerOp {
     };
 
     /**
-     * Basic constructor to create an empty ServerOp object.
-     *
-     * ServerOp objects can be filled with an incoming request by moving the
-     * result of calling Transport::receiveServerOp().
+     * Construct an empty ServerOp object.
      */
     ServerOp();
 
@@ -338,7 +341,7 @@ class ServerOp {
     /**
      * Check and return the current State of the ServerOp.
      */
-    State checkProgress();
+    State makeProgress();
 
     /**
      * Send the outMessage as a response to the initial requestor.
@@ -353,14 +356,15 @@ class ServerOp {
      */
     void delegate(Driver::Address destination);
 
-    /// Message containing a direct or indirect operation request.
+    /// Message containing an operation request; may come directly from a
+    /// client, or from another server that has delegated the request to us.
+    /// This value will be nullptr if the ServerOp is empty.
     InMessage* request;
 
     /// Message containing the result of processing the operation.  Message can
     /// be sent as a reply back to the client or delegated to a different server
-    /// for further processing.
-    ///
-    /// @sa reply(), delegate()
+    /// for further processing. This value will be nullptr if the ServerOp is
+    /// empty.
     OutMessage* response;
 
   private:
@@ -379,10 +383,10 @@ class ServerOp {
 
     /// Unique identifier for the request message among the set of messages
     /// associated with a RemoteOp with a given OpId.
-    uint32_t requestTag;
+    int32_t stageId;
 
-    /// Address from which the RemoteOp originated and to which the reply
-    /// should be sent.
+    /// Address of the client that sent the original request; the reply should
+    /// be sent back to this address.
     Driver::Address replyAddress;
 
     /// True if delegate() was called on this ServerOp.
@@ -426,7 +430,7 @@ class Transport {
     /**
      * Return a ServerOp of an incoming request that has been received by this
      * Homa::Transport. If no request was received, the returned ServerOp will
-     * be uninitialized.
+     * be empty.
      */
     ServerOp receiveServerOp();
 

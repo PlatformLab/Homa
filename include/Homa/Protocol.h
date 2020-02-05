@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -11,6 +11,12 @@
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
+/**
+ * @file Protocol.h
+ *
+ * This file contains wire protocol definitions for RemoteOp messages.
  */
 
 #ifndef HOMA_INCLUDE_HOMA_PROTOCOL_H
@@ -87,10 +93,10 @@ namespace Message {
 
 /// Identifier for the Message that contains a RemoteOp's initiating request
 /// RemoteOp (sent by the client).
-static const uint32_t INITIAL_REQUEST_TAG = 1;
+static const int32_t INITIAL_REQUEST_ID = 0;
 /// Identifier for the Message that contains the final reply to the
 /// initial request (sent to the client).
-static const uint32_t ULTIMATE_RESPONSE_TAG = 0;
+static const int32_t ULTIMATE_RESPONSE_ID = -1;
 
 /**
  * This is the first part of the Homa packet header and is common to all
@@ -116,8 +122,8 @@ struct HeaderPrefix {
 struct Header {
     HeaderPrefix prefix;  ///< Common to all versions of the protocol.
     OpId opId;            ///< Id of the Op to which this message belongs.
-    uint32_t tag;  ///< Uniquely identifies this Message within the set of
-                   ///< messages that belong to the RemoteOp.
+    int32_t stageId;  ///< Uniquely identifies this Message within the set of
+                      ///< messages that belong to the RemoteOp.
     Driver::WireFormatAddress replyAddress;  ///< Replies to this Message should
                                              ///< be sent to this address.
 
@@ -125,15 +131,15 @@ struct Header {
     Header()
         : prefix(1)
         , opId()
-        , tag()
+        , stageId()
         , replyAddress()
     {}
 
     /// CommonHeader constructor.
-    explicit Header(OpId opId, uint32_t tag)
+    explicit Header(OpId opId, int32_t stageId)
         : prefix(1)
         , opId(opId)
-        , tag(tag)
+        , stageId(stageId)
         , replyAddress()
     {}
 } __attribute__((packed));

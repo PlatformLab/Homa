@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2019, Stanford University
+/* Copyright (c) 2010-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,9 +16,9 @@
 #ifndef HOMA_INCLUDE_HOMA_DRIVER_H
 #define HOMA_INCLUDE_HOMA_DRIVER_H
 
-#include "Homa/Exception.h"
-
 #include <string>
+
+#include "Homa/Exception.h"
 
 namespace Homa {
 
@@ -43,9 +43,7 @@ class Driver {
      * Used to hold a driver's serialized byte-format for a network address.
      *
      * Each driver may define its own byte-format so long as fits within the
-     * allowed bytes array.  The type field is used to distinguish between
-     * addresses of different formats.  A format should be interpretable by all
-     * Driver implementations that use the same format type.
+     * bytes array.
      */
     struct WireFormatAddress {
         uint8_t type;  ///< Can be used to distinguish between different wire
@@ -55,12 +53,8 @@ class Driver {
 
     /**
      * Represents a packet of data that can be send or is received over the
-     * network using implementations of Homa::Driver. A Packet logically
-     * contains only the payload and not any Driver specific headers. When
-     * sending a Packet, the address field will contain the destination Address.
-     * When receiving a Packet, address field will contain the source Address.
-     *
-     * This class defines part of the Driver interface.
+     * network. A Packet logically contains only the payload and not any Driver
+     * specific headers.
      *
      * A Packet may be Driver specific and should not used interchangeably
      * between Driver instances or implementations.
@@ -68,33 +62,35 @@ class Driver {
      * This class is NOT thread-safe but the Transport and Driver's use of
      * Packet objects should be allow the Transport and the Driver to execute on
      * different threads.
-     *
-     * @see Related Driver methods include: Driver::allocPacket(),
-     *      Driver::releasePackets(), Driver::sendPackets(),
-     *      Driver::receivePackets().
      */
     class Packet {
       public:
-        /// Packet's source (receive) or destination (send).
+        /// Packet's source or destination.  When sending a Packet, the address
+        /// field will contain the destination Address. When receiving a Packet,
+        /// address field will contain the source Address.
         Address address;
 
-        /// Packet's network priority (send only); 0 is the lowest priority.
+        /// Packet's network priority (send only); the lowest possible priority
+        /// is 0.  The highest priority is positive number defined by the
+        /// Driver; the highest priority can be queried by calling the method
+        /// getHighestPacketPriority().
         int priority;
 
         /// Pointer to an array of bytes containing the payload of this Packet.
+        /// This array is valid until the Packet is released back to the Driver.
         void* const payload;
 
         /// Number of bytes in the payload.
-        uint16_t length;
+        int length;
 
         /// Return the maximum number of bytes the payload can hold.
-        virtual uint16_t getMaxPayloadSize() = 0;
+        virtual int getMaxPayloadSize() = 0;
 
       protected:
         /**
-         * Construct a Packet. Only called by Packet subclasses.
+         * Construct a Packet.
          */
-        explicit Packet(void* payload, uint16_t length = 0)
+        explicit Packet(void* payload, int length = 0)
             : address()
             , priority(0)
             , payload(payload)
@@ -113,33 +109,33 @@ class Driver {
 
     /**
      * Return a Driver specific network address for the given string
-     * representation of the address. The address string format can be Driver
-     * specific.
+     * representation of the address.
      *
      * @param addressString
-     *      See above.
+     *      The string representation of the address to return.  The address
+     *      string format can be Driver specific.
+     *
      * @return
      *      Address that can be the source or destination of a Packet.
+     *
      * @throw BadAddress
      *      _addressString_ is malformed.
-     *
-     * @sa Driver::Packet
      */
     virtual Address getAddress(std::string const* const addressString) = 0;
 
     /**
      * Return a Driver specific network address for the given serialized
-     * byte-format of the address. The address byte-format can be Driver
-     * specific.
+     * byte-format of the address.
      *
      * @param wireAddress
-     *      See above.
+     *      The serialized byte-format of the address to be returned.  The
+     *      format can be Driver specific.
+     *
      * @return
      *      Address that can be the source or destination of a Packet.
+     *
      * @throw BadAddress
      *      _rawAddress_ is malformed.
-     *
-     * @sa Driver::Packet
      */
     virtual Address getAddress(WireFormatAddress const* const wireAddress) = 0;
 
@@ -152,7 +148,7 @@ class Driver {
     virtual std::string addressToString(const Address address) = 0;
 
     /**
-     * Serialized a network address into its Raw byte format.
+     * Serialize a network address into its Raw byte format.
      *
      * @param address
      *      Address to be serialized.
@@ -164,10 +160,8 @@ class Driver {
 
     /**
      * Allocate a new Packet object from the Driver's pool of resources. The
-     * caller must ensure that the Packet returned by this method is
-     * eventually released back to the Driver; see Driver::releasePackets().
-     *
-     * @sa Driver::releasePackets()
+     * caller must eventually release the packet by passing it to a call to
+     * releasePacket().
      */
     virtual Packet* allocPacket() = 0;
 
@@ -181,29 +175,27 @@ class Driver {
      * during this call.
      *
      * In general, Packet objects should be considered immutable once they
-     * are passed to this method. The Packet::address and Packet::priority
-     * fields are two exceptions; they can be modified after this call
-     * returns but not concurrently with this call since Packet objects are not
-     * thread-safe.
+     * are passed to this method.
      *
      * A Packet can be resent by simply calling this method again passing
      * the same Packet. However, the Driver may choose to ignore the resend
      * request if a prior send request for the same Packet is still in
      * progress.
      *
+     * Calling this method does NOT change ownership of the packet; the caller
+     * still owns the packet.
+     *
      * @param packet
      *      Packet to be sent over the network.
-     *
-     * @sa Driver::cork(), Driver::uncork()
      */
     virtual void sendPacket(Packet* packet) = 0;
 
     /**
      * Request that the Driver enter the "corked" mode where outbound packets
-     * are aggressively buffered so that they can be more efficiently sent out
-     * to the network in a batch.
+     * are queued instead of immediately sent so that they can be more
+     * efficiently sent out to the network in a batch.
      *
-     * If the Driver supports this feature, packets may be buffered until either
+     * If the Driver supports this feature, packets may be queued until either
      * uncork() is called or some internal buffering limit is reached.
      *
      * @sa Driver::uncork(), Driver::sendPacket()
@@ -282,8 +274,7 @@ class Driver {
 
     /**
      * Return this Driver's local network Address which it uses as the source
-     * Address for outgoing packets. The pointer returned is valid for the
-     * lifetime of this Driver.
+     * Address for outgoing packets.
      */
     virtual Address getLocalAddress() = 0;
 

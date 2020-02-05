@@ -13,16 +13,13 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <gtest/gtest.h>
-
-#include "Sender.h"
-
 #include <Cycles.h>
-
 #include <Homa/Debug.h>
+#include <gtest/gtest.h>
 
 #include "Mock/MockDriver.h"
 #include "Mock/MockPolicy.h"
+#include "Sender.h"
 #include "Transport.h"
 
 namespace Homa {
@@ -79,7 +76,7 @@ class SenderTest : public ::testing::Test {
     static Sender::Message* addMessage(Sender* sender, Protocol::MessageId id,
                                        Sender::Message* message,
                                        bool queue = false,
-                                       uint16_t grantIndex = 0)
+                                       uint16_t packetsGranted = 0)
     {
         message->id = id;
         Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
@@ -91,8 +88,8 @@ class SenderTest : public ::testing::Test {
             info->destination = message->destination;
             info->packets = message;
             info->unsentBytes = message->rawLength();
-            info->grantIndex = grantIndex;
-            info->sentIndex = 0;
+            info->packetsGranted = packetsGranted;
+            info->packetsSent = 0;
             // Insert and move message into the correct order in the priority
             // queue.
             sender->sendQueue.push_front(&info->sendQueueNode);
@@ -314,9 +311,9 @@ TEST_F(SenderTest, handleResendPacket_basic)
     }
     SenderTest::addMessage(sender, id, message, true, 5);
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
-    info->sentIndex = 5;
+    info->packetsSent = 5;
     info->priority = 6;
-    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(5, info->packetsGranted);
     EXPECT_EQ(10U, message->getNumPackets());
 
     Protocol::Packet::ResendHeader* resendHdr =
@@ -334,8 +331,8 @@ TEST_F(SenderTest, handleResendPacket_basic)
 
     sender->handleResendPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(5U, info->sentIndex);
-    EXPECT_EQ(8U, info->grantIndex);
+    EXPECT_EQ(5U, info->packetsSent);
+    EXPECT_EQ(8U, info->packetsGranted);
     EXPECT_EQ(4, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
@@ -415,9 +412,9 @@ TEST_F(SenderTest, handleResendPacket_badRequest_outOfRange)
     }
     SenderTest::addMessage(sender, id, message, true, 5);
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
-    info->sentIndex = 5;
+    info->packetsSent = 5;
     info->priority = 6;
-    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(5, info->packetsGranted);
     EXPECT_EQ(10U, message->getNumPackets());
 
     Protocol::Packet::ResendHeader* resendHdr =
@@ -465,8 +462,8 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
     }
     SenderTest::addMessage(sender, id, message, true, 5);
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
-    info->sentIndex = 5;
-    EXPECT_EQ(5, info->grantIndex);
+    info->packetsSent = 5;
+    EXPECT_EQ(5, info->packetsGranted);
     EXPECT_EQ(10U, message->getNumPackets());
 
     Protocol::Packet::ResendHeader* resendHdr =
@@ -490,8 +487,8 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
 
     sender->handleResendPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(5U, info->sentIndex);
-    EXPECT_EQ(8U, info->grantIndex);
+    EXPECT_EQ(5U, info->packetsSent);
+    EXPECT_EQ(8U, info->packetsGranted);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
 
@@ -510,7 +507,7 @@ TEST_F(SenderTest, handleGrantPacket_basic)
     message->state = Homa::OutMessage::Status::IN_PROGRESS;
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     info->priority = 2;
-    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(5, info->packetsGranted);
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
@@ -525,7 +522,7 @@ TEST_F(SenderTest, handleGrantPacket_basic)
 
     sender->handleGrantPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(7, info->grantIndex);
+    EXPECT_EQ(7, info->packetsGranted);
     EXPECT_EQ(6, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
@@ -541,7 +538,7 @@ TEST_F(SenderTest, handleGrantPacket_excessiveGrant)
     message->state = Homa::OutMessage::Status::IN_PROGRESS;
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     info->priority = 2;
-    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(5, info->packetsGranted);
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
@@ -571,7 +568,7 @@ TEST_F(SenderTest, handleGrantPacket_excessiveGrant)
 
     Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
 
-    EXPECT_EQ(10, info->grantIndex);
+    EXPECT_EQ(10, info->packetsGranted);
     EXPECT_EQ(6, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
@@ -586,7 +583,7 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
     message->numPackets = 10;
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     info->priority = 2;
-    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(5, info->packetsGranted);
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
 
@@ -601,7 +598,7 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
 
     sender->handleGrantPacket(&mockPacket, &mockDriver);
 
-    EXPECT_EQ(5, info->grantIndex);
+    EXPECT_EQ(5, info->packetsGranted);
     EXPECT_EQ(2, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
@@ -651,9 +648,9 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
     info->destination = message->destination;
     info->packets = message;
     info->unsentBytes = 0;
-    info->grantIndex = 4;
+    info->packetsGranted = 4;
     info->priority = policyOld.priority;
-    info->sentIndex = 4;
+    info->packetsSent = 4;
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
     EXPECT_EQ(0U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->pingTimeout.expirationCycleTime);
@@ -682,9 +679,9 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
     EXPECT_EQ(4500U, info->unsentBytes);
-    EXPECT_EQ(3U, info->grantIndex);
+    EXPECT_EQ(3U, info->packetsGranted);
     EXPECT_EQ(policyNew.priority, info->priority);
-    EXPECT_EQ(0U, info->sentIndex);
+    EXPECT_EQ(0U, info->packetsSent);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
 
     for (int i = 0; i < 5; ++i) {
@@ -1046,7 +1043,8 @@ TEST_F(SenderTest, sendMessage_basic)
 
     message->setPacket(0, &mockPacket);
     message->messageLength = 420;
-    mockPacket.length = message->messageLength + message->PACKET_HEADER_LENGTH;
+    mockPacket.length =
+        message->messageLength + message->TRANSPORT_HEADER_LENGTH;
     Driver::Address destination = (Driver::Address)22;
     Core::Policy::Unscheduled policy = {1, 3000, 2};
 
@@ -1180,7 +1178,7 @@ TEST_F(SenderTest, sendMessage_unscheduledLimit)
 
     // Check sendQueue metadata
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
-    EXPECT_EQ(5U, info->grantIndex);
+    EXPECT_EQ(5U, info->packetsGranted);
 }
 
 TEST_F(SenderTest, cancelMessage)
@@ -1351,7 +1349,7 @@ TEST_F(SenderTest, trySend_basic)
     Homa::Mock::MockDriver::MockPacket* packet[5];
     const uint32_t PACKET_SIZE = sender->transport->driver->getMaxPayloadSize();
     const uint32_t PACKET_DATA_SIZE =
-        PACKET_SIZE - message->PACKET_HEADER_LENGTH;
+        PACKET_SIZE - message->TRANSPORT_HEADER_LENGTH;
     for (int i = 0; i < 5; ++i) {
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
         packet[i]->length = PACKET_SIZE;
@@ -1361,8 +1359,8 @@ TEST_F(SenderTest, trySend_basic)
     message->state = Homa::OutMessage::Status::IN_PROGRESS;
     sender->sendReady = true;
     EXPECT_EQ(5U, message->getNumPackets());
-    EXPECT_EQ(3U, info->grantIndex);
-    EXPECT_EQ(0U, info->sentIndex);
+    EXPECT_EQ(3U, info->packetsGranted);
+    EXPECT_EQ(0U, info->packetsSent);
     EXPECT_EQ(5 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
@@ -1373,8 +1371,8 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_TRUE(sender->sendReady);
     EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
-    EXPECT_EQ(3U, info->grantIndex);
-    EXPECT_EQ(2U, info->sentIndex);
+    EXPECT_EQ(3U, info->packetsGranted);
+    EXPECT_EQ(2U, info->packetsSent);
     EXPECT_EQ(3 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
@@ -1385,8 +1383,8 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_FALSE(sender->sendReady);
     EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
-    EXPECT_EQ(3U, info->grantIndex);
-    EXPECT_EQ(3U, info->sentIndex);
+    EXPECT_EQ(3U, info->packetsGranted);
+    EXPECT_EQ(3U, info->packetsSent);
     EXPECT_EQ(2 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
@@ -1398,23 +1396,23 @@ TEST_F(SenderTest, trySend_basic)
     sender->trySend();  // < test call
     EXPECT_FALSE(sender->sendReady);
     EXPECT_EQ(Homa::OutMessage::Status::IN_PROGRESS, message->state);
-    EXPECT_EQ(3U, info->grantIndex);
-    EXPECT_EQ(3U, info->sentIndex);
+    EXPECT_EQ(3U, info->packetsGranted);
+    EXPECT_EQ(3U, info->packetsSent);
     EXPECT_EQ(2 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // 2 more granted packets; will finish.
-    info->grantIndex = 5;
+    info->packetsGranted = 5;
     sender->sendReady = true;
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[3])));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[4])));
     sender->trySend();  // < test call
     EXPECT_FALSE(sender->sendReady);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
-    EXPECT_EQ(5U, info->grantIndex);
-    EXPECT_EQ(5U, info->sentIndex);
+    EXPECT_EQ(5U, info->packetsGranted);
+    EXPECT_EQ(5U, info->packetsSent);
     EXPECT_EQ(0 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_FALSE(sender->sendQueue.contains(&info->sendQueueNode));
@@ -1439,24 +1437,24 @@ TEST_F(SenderTest, trySend_multipleMessages)
         packet[i]->length = sender->transport->driver->getMaxPayloadSize() / 4;
         message[i]->setPacket(0, packet[i]);
         info[i]->unsentBytes +=
-            (packet[i]->length - message[i]->PACKET_HEADER_LENGTH);
+            (packet[i]->length - message[i]->TRANSPORT_HEADER_LENGTH);
         message[i]->state = Homa::OutMessage::Status::IN_PROGRESS;
     }
     sender->sendReady = true;
 
     // Message 0: Will finish
-    EXPECT_EQ(1, info[0]->grantIndex);
-    info[0]->sentIndex = 0;
+    EXPECT_EQ(1, info[0]->packetsGranted);
+    info[0]->packetsSent = 0;
 
     // Message 1: Will reach grant limit
-    EXPECT_EQ(1, info[1]->grantIndex);
-    info[1]->sentIndex = 0;
+    EXPECT_EQ(1, info[1]->packetsGranted);
+    info[1]->packetsSent = 0;
     message[1]->setPacket(1, nullptr);
     EXPECT_EQ(2, message[1]->getNumPackets());
 
     // Message 2: Will finish
-    EXPECT_EQ(1, info[2]->grantIndex);
-    info[2]->sentIndex = 0;
+    EXPECT_EQ(1, info[2]->packetsGranted);
+    info[2]->packetsSent = 0;
 
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[0])));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[1])));
@@ -1464,13 +1462,13 @@ TEST_F(SenderTest, trySend_multipleMessages)
 
     sender->trySend();
 
-    EXPECT_EQ(1U, info[0]->sentIndex);
+    EXPECT_EQ(1U, info[0]->packetsSent);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message[0]->state);
     EXPECT_FALSE(sender->sendQueue.contains(&info[0]->sendQueueNode));
-    EXPECT_EQ(1U, info[1]->sentIndex);
+    EXPECT_EQ(1U, info[1]->packetsSent);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message[1]->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info[1]->sendQueueNode));
-    EXPECT_EQ(1U, info[2]->sentIndex);
+    EXPECT_EQ(1U, info[2]->packetsSent);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message[2]->state);
     EXPECT_FALSE(sender->sendQueue.contains(&info[2]->sendQueueNode));
 }
@@ -1485,8 +1483,8 @@ TEST_F(SenderTest, trySend_alreadyRunning)
     message->setPacket(0, &mockPacket);
     message->messageLength = 1000;
     EXPECT_EQ(1U, message->getNumPackets());
-    EXPECT_EQ(1, info->grantIndex);
-    EXPECT_EQ(0, info->sentIndex);
+    EXPECT_EQ(1, info->packetsGranted);
+    EXPECT_EQ(0, info->packetsSent);
 
     sender->sending.test_and_set();
 
@@ -1494,7 +1492,7 @@ TEST_F(SenderTest, trySend_alreadyRunning)
 
     sender->trySend();
 
-    EXPECT_EQ(0, info->sentIndex);
+    EXPECT_EQ(0, info->packetsSent);
 }
 
 TEST_F(SenderTest, trySend_nothingToSend)

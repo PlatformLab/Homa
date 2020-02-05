@@ -126,11 +126,11 @@ TEST_F(ReceiverTest, handleDataPacket)
     info = &message->scheduledMessageInfo;
     EXPECT_NE(nullptr, info->peer);
     EXPECT_EQ(totalMessageLength, info->messageLength);
-    EXPECT_EQ(totalMessageLength - 1000, info->unreceivedBytes);
+    EXPECT_EQ(totalMessageLength - 1000, info->bytesRemaining);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
     EXPECT_EQ(1U, message->getNumPackets());
-    EXPECT_EQ(2500U, info->unreceivedBytes);
+    EXPECT_EQ(2500U, info->bytesRemaining);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // -------------------------------------------------------------------------
@@ -157,7 +157,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     // ---------
 
     EXPECT_EQ(2U, message->getNumPackets());
-    EXPECT_EQ(1500U, info->unreceivedBytes);
+    EXPECT_EQ(1500U, info->bytesRemaining);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // -------------------------------------------------------------------------
@@ -172,7 +172,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     // ---------
 
     EXPECT_EQ(3U, message->getNumPackets());
-    EXPECT_EQ(1000U, info->unreceivedBytes);
+    EXPECT_EQ(1000U, info->bytesRemaining);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // -------------------------------------------------------------------------
@@ -187,7 +187,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     // ---------
 
     EXPECT_EQ(4U, message->getNumPackets());
-    EXPECT_EQ(0U, info->unreceivedBytes);
+    EXPECT_EQ(0U, info->bytesRemaining);
     EXPECT_EQ(Receiver::Message::State::COMPLETED, message->state);
     EXPECT_EQ(message, &receiver->receivedMessages.queue.back());
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -247,7 +247,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
         receiver, &mockDriver, 0, 20000, id, mockAddress, 0);
     ASSERT_TRUE(message->scheduled);
     Receiver::ScheduledMessageInfo* info = &message->scheduledMessageInfo;
-    info->grantedBytes = 500;
+    info->bytesGranted = 500;
     info->priority = 3;
 
     Receiver::MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
@@ -561,7 +561,7 @@ TEST_F(ReceiverTest, checkResendTimeouts_basic)
     ASSERT_EQ(5, message[0]->numUnscheduledPackets);
     ASSERT_EQ(Receiver::Message::State::IN_PROGRESS, message[0]->state);
     message[0]->resendTimeout.expirationCycleTime = 9999;
-    message[0]->scheduledMessageInfo.grantedBytes = 10000;
+    message[0]->scheduledMessageInfo.bytesGranted = 10000;
     for (uint16_t i = 0; i < 2; ++i) {
         message[0]->setPacket(i, &mockPacket);
     }
@@ -574,8 +574,8 @@ TEST_F(ReceiverTest, checkResendTimeouts_basic)
     ASSERT_EQ(Receiver::Message::State::IN_PROGRESS, message[0]->state);
     ASSERT_EQ(10000, message[1]->rawLength());
     message[1]->resendTimeout.expirationCycleTime = 10000;
-    message[1]->scheduledMessageInfo.grantedBytes = 6000;
-    message[1]->scheduledMessageInfo.unreceivedBytes = 4000;
+    message[1]->scheduledMessageInfo.bytesGranted = 6000;
+    message[1]->scheduledMessageInfo.bytesRemaining = 4000;
 
     // Message[2]: No timeout
     ASSERT_EQ(Receiver::Message::State::IN_PROGRESS, message[2]->state);
@@ -656,7 +656,7 @@ TEST_F(ReceiverTest, trySendGrants)
         }
         info[i] = &message[i]->scheduledMessageInfo;
         info[i]->priority = 10;  // bogus number that should be reset.
-        info[i]->grantedBytes = 5000;
+        info[i]->bytesGranted = 5000;
     }
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(mockPacket.payload);
@@ -672,7 +672,7 @@ TEST_F(ReceiverTest, trySendGrants)
     policy.degreeOvercommitment = 2;
     policy.minScheduledBytes = 5000;
     policy.maxScheduledBytes = 10000;
-    info[0]->unreceivedBytes -= 1000;
+    info[0]->bytesRemaining -= 1000;
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
@@ -683,11 +683,11 @@ TEST_F(ReceiverTest, trySendGrants)
     receiver->trySendGrants();
 
     EXPECT_EQ(1, info[0]->priority);
-    EXPECT_EQ(info[0]->messageLength, info[0]->grantedBytes);
+    EXPECT_EQ(info[0]->messageLength, info[0]->bytesGranted);
     EXPECT_EQ(nullptr, info[0]->peer);
     EXPECT_EQ(message[0]->id, header->common.messageId);
     EXPECT_EQ(0, info[1]->priority);
-    EXPECT_EQ(5000, info[1]->grantedBytes);
+    EXPECT_EQ(5000, info[1]->bytesGranted);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
 
@@ -698,7 +698,7 @@ TEST_F(ReceiverTest, trySendGrants)
     policy.degreeOvercommitment = 1;
     policy.minScheduledBytes = 5000;
     policy.maxScheduledBytes = 10000;
-    info[1]->unreceivedBytes -= 1000;
+    info[1]->bytesRemaining -= 1000;
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
@@ -709,7 +709,7 @@ TEST_F(ReceiverTest, trySendGrants)
     receiver->trySendGrants();
 
     EXPECT_EQ(0, info[1]->priority);
-    EXPECT_EQ(11000, info[1]->grantedBytes);
+    EXPECT_EQ(11000, info[1]->bytesGranted);
     EXPECT_EQ(message[1]->id, header->common.messageId);
 
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -772,7 +772,7 @@ TEST_F(ReceiverTest, schedule)
     //--------------------------------------------------------------------------
     // NEW PEER
     // <22>: [0](2000)
-    EXPECT_EQ(2000U, info[0]->unreceivedBytes);
+    EXPECT_EQ(2000U, info[0]->bytesRemaining);
 
     receiver->schedule(message[0], lock);
 
@@ -784,7 +784,7 @@ TEST_F(ReceiverTest, schedule)
     // NEW PEER
     // <22>: [0](2000)
     // <33>: [1](3000)
-    EXPECT_EQ(3000U, info[1]->unreceivedBytes);
+    EXPECT_EQ(3000U, info[1]->bytesRemaining);
 
     receiver->schedule(message[1], lock);
 
@@ -796,7 +796,7 @@ TEST_F(ReceiverTest, schedule)
     // PEER PRIORITY BUMP
     // <33>: [2](1000) -> [1](3000)
     // <22>: [0](2000)
-    EXPECT_EQ(1000U, info[2]->unreceivedBytes);
+    EXPECT_EQ(1000U, info[2]->bytesRemaining);
 
     receiver->schedule(message[2], lock);
 
@@ -808,7 +808,7 @@ TEST_F(ReceiverTest, schedule)
     // PEER NO PRIORITY CHANGE
     // <33>: [2](1000) -> [1](3000)
     // <22>: [0](2000) -> [3](4000)
-    EXPECT_EQ(4000U, info[3]->unreceivedBytes);
+    EXPECT_EQ(4000U, info[3]->bytesRemaining);
 
     receiver->schedule(message[3], lock);
 
@@ -843,11 +843,11 @@ TEST_F(ReceiverTest, unschedule)
 
     // <10>: [0](10) -> [1](20) -> [2](30)
     // <11>: [3](10) -> [4](20)
-    EXPECT_EQ(10, info[0]->unreceivedBytes);
-    EXPECT_EQ(20, info[1]->unreceivedBytes);
-    EXPECT_EQ(30, info[2]->unreceivedBytes);
-    EXPECT_EQ(10, info[3]->unreceivedBytes);
-    EXPECT_EQ(20, info[4]->unreceivedBytes);
+    EXPECT_EQ(10, info[0]->bytesRemaining);
+    EXPECT_EQ(20, info[1]->bytesRemaining);
+    EXPECT_EQ(30, info[2]->bytesRemaining);
+    EXPECT_EQ(10, info[3]->bytesRemaining);
+    EXPECT_EQ(20, info[4]->bytesRemaining);
 
     //--------------------------------------------------------------------------
     // Remove message[4]; peer already at end.
@@ -931,7 +931,7 @@ TEST_F(ReceiverTest, updateSchedule)
     // Move message up within peer.
     // 10 : [10]
     // 11 : [20][XX][30]
-    message->scheduledMessageInfo.unreceivedBytes = 25;
+    message->scheduledMessageInfo.bytesRemaining = 25;
 
     receiver->updateSchedule(message, lock);
 
@@ -947,7 +947,7 @@ TEST_F(ReceiverTest, updateSchedule)
     // Move message to front within peer.  No peer reordering.
     // 10 : [10]
     // 11 : [XX][20][30]
-    message->scheduledMessageInfo.unreceivedBytes = 10;
+    message->scheduledMessageInfo.bytesRemaining = 10;
 
     receiver->updateSchedule(message, lock);
 
@@ -960,7 +960,7 @@ TEST_F(ReceiverTest, updateSchedule)
     // Reorder peer.
     // 11 : [XX][20][30]
     // 10 : [10]
-    message->scheduledMessageInfo.unreceivedBytes = 0;
+    message->scheduledMessageInfo.bytesRemaining = 0;
 
     receiver->updateSchedule(message, lock);
 

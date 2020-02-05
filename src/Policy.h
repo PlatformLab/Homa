@@ -16,11 +16,11 @@
 #ifndef HOMA_CORE_POLICY_H
 #define HOMA_CORE_POLICY_H
 
+#include <Homa/Driver.h>
+
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
-
-#include <Homa/Driver.h>
 
 #include "SpinLock.h"
 
@@ -31,15 +31,16 @@ class Transport;
 
 /**
  * Contains the structures and classes related to Homa's policy for setting
- * network packet priority.
+ * network packet priorities.
  */
 namespace Policy {
 
 /**
- * Holds the result of a Policy::Manager::getUnscheduledPolicy() query.
+ * Holds the result of a Policy::Manager::getUnscheduledPolicy() query; used to
+ * return multiple values.
  */
 struct Unscheduled {
-    /// Version of the policy that resulted in this decision.
+    /// Identifies the version of a peer transport's policy that is in use.
     uint8_t version;
     /// Number of bytes that can be sent without grants.
     uint32_t unscheduledByteLimit;
@@ -48,7 +49,8 @@ struct Unscheduled {
 };
 
 /**
- * Holds the results of a Policy::Manger::getScheduledPolicy()
+ * Holds the results of a Policy::Manger::getScheduledPolicy(); used to return
+ * multiple values.
  */
 struct Scheduled {
     /// Highest priority that should be used for scheduled message.

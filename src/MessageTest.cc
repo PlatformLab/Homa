@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -13,13 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <Homa/Debug.h>
 #include <gtest/gtest.h>
 
 #include "Message.h"
-
 #include "Mock/MockDriver.h"
-
-#include <Homa/Debug.h>
 
 namespace Homa {
 namespace Core {
@@ -79,7 +77,7 @@ TEST_F(MessageTest, constructor)
 
     EXPECT_EQ(&mockDriver, msg->driver);
     EXPECT_EQ(9001U, msg->PACKET_DATA_LENGTH);
-    EXPECT_EQ(999, msg->PACKET_HEADER_LENGTH);
+    EXPECT_EQ(999, msg->TRANSPORT_HEADER_LENGTH);
     EXPECT_EQ(0U, msg->start);
     EXPECT_EQ(10U, msg->messageLength);
     EXPECT_EQ(0U, msg->numPackets);
@@ -126,7 +124,7 @@ TEST_F(MessageTest, append_truncated)
 
     char source[] = "Hello, world!";
     msg->setPacket(msg->MAX_MESSAGE_PACKETS - 1, &packet0);
-    packet0.length = msg->PACKET_HEADER_LENGTH + msg->PACKET_DATA_LENGTH - 7;
+    packet0.length = msg->TRANSPORT_HEADER_LENGTH + msg->PACKET_DATA_LENGTH - 7;
     msg->messageLength = msg->PACKET_DATA_LENGTH * msg->MAX_MESSAGE_PACKETS - 7;
     EXPECT_EQ(1U, msg->numPackets);
 
@@ -135,7 +133,7 @@ TEST_F(MessageTest, append_truncated)
     EXPECT_EQ(msg->PACKET_DATA_LENGTH * msg->MAX_MESSAGE_PACKETS,
               msg->messageLength);
     EXPECT_EQ(1U, msg->numPackets);
-    EXPECT_EQ(msg->PACKET_HEADER_LENGTH + msg->PACKET_DATA_LENGTH,
+    EXPECT_EQ(msg->TRANSPORT_HEADER_LENGTH + msg->PACKET_DATA_LENGTH,
               packet0.length);
     EXPECT_TRUE(std::memcmp(buf + 24 + 24 + 2000 - 7, source, 7) == 0);
 
@@ -162,7 +160,7 @@ TEST_F(MessageTest, get_basic)
     packet0.length = 24 + 24 + 2000;
     packet1.length = 24 + 7;
     msg->start = 24;
-    EXPECT_EQ(24U, msg->PACKET_HEADER_LENGTH);
+    EXPECT_EQ(24U, msg->TRANSPORT_HEADER_LENGTH);
 
     char dest[4096];
     uint32_t bytes = msg->get(2000 - 7, dest, 20);
@@ -179,7 +177,7 @@ TEST_F(MessageTest, get_offsetTooLarge)
     packet0.length = 24 + 24 + 2000;
     packet1.length = 24 + 7;
     msg->start = 20;
-    EXPECT_EQ(24U, msg->PACKET_HEADER_LENGTH);
+    EXPECT_EQ(24U, msg->TRANSPORT_HEADER_LENGTH);
 
     char dest[4096];
     uint32_t bytes = msg->get(4000, dest, 20);
@@ -198,7 +196,7 @@ TEST_F(MessageTest, get_missingPacket)
     std::memcpy(buf + 24 + 24 + 2000 - 7, source, 7);
     packet0.length = 24 + 24 + 2000;
     msg->start = 24;
-    EXPECT_EQ(24U, msg->PACKET_HEADER_LENGTH);
+    EXPECT_EQ(24U, msg->TRANSPORT_HEADER_LENGTH);
 
     char dest[4096];
     uint32_t bytes = msg->get(2000 - 7, dest, 20);
@@ -225,7 +223,7 @@ TEST_F(MessageTest, length)
 
 TEST_F(MessageTest, prepend)
 {
-    const uint32_t PACKET_HEADER_LENGTH = msg->PACKET_HEADER_LENGTH;
+    const uint32_t TRANSPORT_HEADER_LENGTH = msg->TRANSPORT_HEADER_LENGTH;
     const uint32_t PACKET_DATA_LENGTH = msg->PACKET_DATA_LENGTH;
     EXPECT_CALL(mockDriver, allocPacket)
         .WillOnce(Return(&packet0))
@@ -240,16 +238,17 @@ TEST_F(MessageTest, prepend)
 
     EXPECT_EQ(PACKET_DATA_LENGTH - 7, msg->start);
     EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg->messageLength);
-    EXPECT_TRUE(std::memcmp(buf + PACKET_HEADER_LENGTH + PACKET_DATA_LENGTH - 7,
-                            source, 7) == 0);
-    EXPECT_TRUE(std::memcmp(buf + PACKET_HEADER_LENGTH + PACKET_DATA_LENGTH +
-                                PACKET_HEADER_LENGTH,
+    EXPECT_TRUE(
+        std::memcmp(buf + TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH - 7,
+                    source, 7) == 0);
+    EXPECT_TRUE(std::memcmp(buf + TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH +
+                                TRANSPORT_HEADER_LENGTH,
                             source + 7, 7) == 0);
 }
 
 TEST_F(MessageTest, reserve)
 {
-    const uint32_t PACKET_HEADER_LENGTH = msg->PACKET_HEADER_LENGTH;
+    const uint32_t TRANSPORT_HEADER_LENGTH = msg->TRANSPORT_HEADER_LENGTH;
     const uint32_t PACKET_DATA_LENGTH = msg->PACKET_DATA_LENGTH;
 
     EXPECT_EQ(0U, msg->start);
@@ -264,7 +263,7 @@ TEST_F(MessageTest, reserve)
     EXPECT_EQ(PACKET_DATA_LENGTH - 7, msg->messageLength);
     EXPECT_EQ(1U, msg->getNumPackets());
     EXPECT_EQ(&packet0, msg->getPacket(0));
-    EXPECT_EQ(PACKET_HEADER_LENGTH + PACKET_DATA_LENGTH - 7, packet0.length);
+    EXPECT_EQ(TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH - 7, packet0.length);
 
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet1));
 
@@ -273,9 +272,9 @@ TEST_F(MessageTest, reserve)
     EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg->start);
     EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg->messageLength);
     EXPECT_EQ(2U, msg->getNumPackets());
-    EXPECT_EQ(PACKET_HEADER_LENGTH + PACKET_DATA_LENGTH, packet0.length);
+    EXPECT_EQ(TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH, packet0.length);
     EXPECT_EQ(&packet1, msg->getPacket(1));
-    EXPECT_EQ(PACKET_HEADER_LENGTH + 7, packet1.length);
+    EXPECT_EQ(TRANSPORT_HEADER_LENGTH + 7, packet1.length);
 }
 
 TEST_F(MessageTest, strip)

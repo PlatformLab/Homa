@@ -14,6 +14,7 @@
  */
 
 #include "Homa.h"
+
 #include "Message.h"
 #include "Transport.h"
 
@@ -43,12 +44,12 @@ void
 RemoteOp::send(Driver::Address destination)
 {
     state.store(State::IN_PROGRESS);
-    uint32_t outboundTag = Protocol::Message::INITIAL_REQUEST_TAG;
     Driver::Address replyAddress = transport->driver->getLocalAddress();
     SpinLock::Lock lock_transport(transport->members->mutex);
     opId = Protocol::OpId(transport->members->transportId,
                           transport->members->nextOpSequenceNumber++);
-    Protocol::Message::Header outboundHeader(opId, outboundTag);
+    Protocol::Message::Header outboundHeader(
+        opId, Protocol::Message::INITIAL_REQUEST_ID);
     transport->driver->addressToWireFormat(replyAddress,
                                            &outboundHeader.replyAddress);
     request->prepend(&outboundHeader, sizeof(outboundHeader));
@@ -97,7 +98,7 @@ ServerOp::ServerOp()
     , state(State::NOT_STARTED)
     , detached(false)
     , opId()
-    , requestTag(0)
+    , stageId(0)
     , replyAddress(0)
     , delegated(false)
 {}
@@ -109,7 +110,7 @@ ServerOp::ServerOp(ServerOp&& other)
     , state(other.state.load())
     , detached(other.detached.load())
     , opId(other.opId)
-    , requestTag(other.requestTag)
+    , stageId(other.stageId)
     , replyAddress(other.replyAddress)
     , delegated(other.delegated)
 {
@@ -119,7 +120,7 @@ ServerOp::ServerOp(ServerOp&& other)
     other.state.store(State::NOT_STARTED);
     other.detached.store(false);
     other.opId = Protocol::OpId();
-    other.requestTag = 0;
+    other.stageId = 0;
     other.replyAddress = 0;
     other.delegated = false;
 }
@@ -150,7 +151,7 @@ ServerOp::operator=(ServerOp&& other)
     state = other.state.load();
     detached = other.detached.load();
     opId = other.opId;
-    requestTag = other.requestTag;
+    stageId = other.stageId;
     replyAddress = other.replyAddress;
     delegated = other.delegated;
 
@@ -160,7 +161,7 @@ ServerOp::operator=(ServerOp&& other)
     other.state.store(State::NOT_STARTED);
     other.detached.store(false);
     other.opId = Protocol::OpId();
-    other.requestTag = 0;
+    other.stageId = 0;
     other.replyAddress = 0;
     other.delegated = false;
     return *this;
@@ -176,7 +177,7 @@ ServerOp::operator bool() const
 }
 
 ServerOp::State
-ServerOp::checkProgress()
+ServerOp::makeProgress()
 {
     State copyOfState = state.load();
     OutMessage::Status outState = OutMessage::Status::NOT_STARTED;
@@ -193,7 +194,7 @@ ServerOp::checkProgress()
         } else if ((outState == Homa::OutMessage::Status::COMPLETED) ||
                    (outState == Homa::OutMessage::Status::SENT && !delegated)) {
             state.store(State::COMPLETED);
-            if (requestTag != Protocol::Message::INITIAL_REQUEST_TAG) {
+            if (stageId != Protocol::Message::INITIAL_REQUEST_ID) {
                 request->acknowledge();
             }
         } else if (outState == Homa::OutMessage::Status::FAILED) {
@@ -224,7 +225,7 @@ ServerOp::reply()
 {
     if (request != nullptr) {
         Protocol::Message::Header header(
-            opId, Protocol::Message::ULTIMATE_RESPONSE_TAG);
+            opId, Protocol::Message::ULTIMATE_RESPONSE_ID);
         transport->driver->addressToWireFormat(replyAddress,
                                                &header.replyAddress);
         response->prepend(&header, sizeof(header));
@@ -239,7 +240,7 @@ ServerOp::delegate(Driver::Address destination)
 {
     if (request != nullptr) {
         delegated = true;
-        Protocol::Message::Header header(opId, requestTag + 1);
+        Protocol::Message::Header header(opId, stageId + 1);
         transport->driver->addressToWireFormat(replyAddress,
                                                &header.replyAddress);
         response->prepend(&header, sizeof(header));
@@ -297,7 +298,7 @@ Transport::poll()
         Protocol::Message::Header header;
         message->get(0, &header, sizeof(header));
         message->strip(sizeof(header));
-        if (header.tag == Protocol::Message::ULTIMATE_RESPONSE_TAG) {
+        if (header.stageId == Protocol::Message::ULTIMATE_RESPONSE_ID) {
             // Incoming message is a response
             SpinLock::Lock lock_transport(members->mutex);
             auto it = members->remoteOps.find(header.opId);
@@ -314,7 +315,7 @@ Transport::poll()
             ServerOp op;
             op.request = message;
             op.opId = header.opId;
-            op.requestTag = header.tag;
+            op.stageId = header.stageId;
             op.replyAddress = driver->getAddress(&header.replyAddress);
             SpinLock::Lock lock_transport(members->mutex);
             members->pendingServerOps.emplace_back(std::move(op));
@@ -325,11 +326,14 @@ Transport::poll()
         SpinLock::Lock lock_transport(members->mutex);
         auto it = members->detachedServerOps.begin();
         while (it != members->detachedServerOps.end()) {
-            ServerOp::State state = it->checkProgress();
+            ServerOp::State state = it->makeProgress();
             assert(state != ServerOp::State::NOT_STARTED);
             if (state == ServerOp::State::IN_PROGRESS) {
                 ++it;
             } else {
+                // ServerOp is no longer IN_PROGRESS, meaning it has either been
+                // COMPLETED, DROPPED, or FAILED.  In all cases, there is no
+                // work left to be done.
                 it = members->detachedServerOps.erase(it);
             }
         }

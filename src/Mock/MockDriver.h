@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,9 +16,8 @@
 #ifndef HOMA_MOCK_MOCKDRIVER_H
 #define HOMA_MOCK_MOCKDRIVER_H
 
-#include <gmock/gmock.h>
-
 #include <Homa/Driver.h>
+#include <gmock/gmock.h>
 
 namespace Homa {
 namespace Mock {
@@ -42,7 +41,7 @@ class MockDriver : public Driver {
             : Packet(payload, length)
         {}
 
-        MOCK_METHOD0(getMaxPayloadSize, uint16_t());
+        MOCK_METHOD0(getMaxPayloadSize, int());
     };
 
     MOCK_METHOD1(getAddress, Address(std::string const* const addressString));

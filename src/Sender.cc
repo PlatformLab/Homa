@@ -206,16 +206,16 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     }
 
     // In case a GRANT may have been lost, consider the RESEND a GRANT.
-    if (info->grantIndex < resendEnd) {
-        info->grantIndex = resendEnd;
+    if (info->packetsGranted < resendEnd) {
+        info->packetsGranted = resendEnd;
         // Note that the priority of messages under the unscheduled byte limit
         // will never be overridden since the resend index will not exceed the
-        // preset grantIndex.
+        // preset packetsGranted.
         info->priority = header->priority;
         sendReady.store(true);
     }
 
-    if (index >= info->sentIndex) {
+    if (index >= info->packetsSent) {
         // If this RESEND is only requesting unsent packets, it must be that
         // this Sender has been busy and the Receiver is trying to ensure there
         // are no lost packets.  Reply BUSY and allow this Sender to send DATA
@@ -225,7 +225,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     } else {
         // There are some packets to resend but only resend packets that have
         // already been sent.
-        resendEnd = std::min(resendEnd, info->sentIndex);
+        resendEnd = std::min(resendEnd, info->packetsSent);
         int resendPriority = policyManager->getResendPriority();
         for (uint16_t i = index; i < resendEnd; ++i) {
             Driver::Packet* packet = info->packets->getPacket(index++);
@@ -281,7 +281,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
             info->packets->PACKET_DATA_LENGTH;
 
         // Make that grants don't exceed the number of packets.  Internally,
-        // the sender always assumes that grantIndex <= numPackets.
+        // the sender always assumes that packetsGranted <= numPackets.
         if (incomingGrantIndex > info->packets->getNumPackets()) {
             WARNING(
                 "Message (%lu, %lu) GRANT exceeds message length; granted "
@@ -291,11 +291,11 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
             incomingGrantIndex = info->packets->getNumPackets();
         }
 
-        if (info->grantIndex < incomingGrantIndex) {
-            info->grantIndex = incomingGrantIndex;
+        if (info->packetsGranted < incomingGrantIndex) {
+            info->packetsGranted = incomingGrantIndex;
             // Note that the priority of messages under the unscheduled byte
             // limit will never be overridden since the incomingGrantIndex will
-            // not exceed the preset grantIndex.
+            // not exceed the preset packetsGranted.
             info->priority = header->priority;
         }
     }
@@ -389,10 +389,10 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             assert(info->packets == message);
             // Some values need to be updated
             info->unsentBytes = message->rawLength();
-            info->grantIndex =
+            info->packetsGranted =
                 std::min(unscheduledIndexLimit, message->getNumPackets());
             info->priority = policy.priority;
-            info->sentIndex = 0;
+            info->packetsSent = 0;
             // Insert and move message into the correct order in the priority
             // queue.
             sendQueue.push_front(&info->sendQueueNode);
@@ -559,13 +559,13 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         new (packet->payload) Protocol::Packet::DataHeader(
             message->id, message->rawLength(), policy.version,
             Util::downCast<uint16_t>(unscheduledPacketLimit), i);
-        actualMessageLen += (packet->length - message->PACKET_HEADER_LENGTH);
+        actualMessageLen += (packet->length - message->TRANSPORT_HEADER_LENGTH);
     }
 
     // perform sanity checks.
     assert(message->driver == transport->driver);
     assert(message->rawLength() == actualMessageLen);
-    assert(message->PACKET_HEADER_LENGTH ==
+    assert(message->TRANSPORT_HEADER_LENGTH ==
            sizeof(Protocol::Packet::DataHeader));
 
     // Track message
@@ -592,10 +592,10 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         info->destination = message->destination;
         info->packets = message;
         info->unsentBytes = message->rawLength();
-        info->grantIndex =
+        info->packetsGranted =
             std::min(unscheduledPacketLimit, message->getNumPackets());
         info->priority = policy.priority;
-        info->sentIndex = 0;
+        info->packetsSent = 0;
         // Insert and move message into the correct order in the priority queue.
         sendQueue.push_front(&info->sendQueueNode);
         Intrusive::deprioritize<Message>(&sendQueue, &info->sendQueueNode,
@@ -773,9 +773,10 @@ Sender::trySend()
         Message& message = *it;
         assert(message.state.load() == OutMessage::Status::IN_PROGRESS);
         QueuedMessageInfo* info = &message.queuedMessageInfo;
-        assert(info->grantIndex <= info->packets->getNumPackets());
-        while (info->sentIndex < info->grantIndex) {
-            Driver::Packet* packet = info->packets->getPacket(info->sentIndex);
+        assert(info->packetsGranted <= info->packets->getNumPackets());
+        while (info->packetsSent < info->packetsGranted) {
+            Driver::Packet* packet =
+                info->packets->getPacket(info->packetsSent);
             assert(packet != nullptr);
             queuedBytesEstimate += packet->length;
             // Check if the send limit would be reached...
@@ -786,7 +787,7 @@ Sender::trySend()
             packet->priority = info->priority;
             transport->driver->sendPacket(packet);
             int packetDataBytes =
-                packet->length - info->packets->PACKET_HEADER_LENGTH;
+                packet->length - info->packets->TRANSPORT_HEADER_LENGTH;
             assert(info->unsentBytes >= packetDataBytes);
             info->unsentBytes -= packetDataBytes;
             // The Message's unsentBytes only ever decreases.  See if the
@@ -794,13 +795,13 @@ Sender::trySend()
             Intrusive::prioritize<Message>(
                 &sendQueue, &info->sendQueueNode,
                 QueuedMessageInfo::ComparePriority());
-            ++info->sentIndex;
+            ++info->packetsSent;
         }
-        if (info->sentIndex >= info->packets->getNumPackets()) {
+        if (info->packetsSent >= info->packets->getNumPackets()) {
             // We have finished sending the message.
             message.state.store(OutMessage::Status::SENT);
             it = sendQueue.remove(it);
-        } else if (info->sentIndex >= info->grantIndex) {
+        } else if (info->packetsSent >= info->packetsGranted) {
             // We have sent every granted packet.
             ++it;
         } else {

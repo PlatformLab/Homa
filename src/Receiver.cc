@@ -139,9 +139,9 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             // (i.e. still linked to a scheduled peer).
             if (info->peer != nullptr) {
                 int packetDataBytes =
-                    packet->length - message->PACKET_HEADER_LENGTH;
-                assert(info->unreceivedBytes >= packetDataBytes);
-                info->unreceivedBytes -= packetDataBytes;
+                    packet->length - message->TRANSPORT_HEADER_LENGTH;
+                assert(info->bytesRemaining >= packetDataBytes);
+                info->bytesRemaining -= packetDataBytes;
                 updateSchedule(message, lock_scheduler);
             }
         }
@@ -215,7 +215,7 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
 
         // Default to an empty GRANT.  Sending an empty GRANT will not reset the
         // priority of a Message that has not yet received a GRANT.
-        int grantedBytes = 0;
+        int bytesGranted = 0;
         int priority = 0;
 
         if (message->scheduled) {
@@ -224,12 +224,12 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
             // if no GRANTs have been issued yet.
             SpinLock::Lock lock_scheduler(schedulerMutex);
             ScheduledMessageInfo* info = &message->scheduledMessageInfo;
-            grantedBytes = info->grantedBytes;
+            bytesGranted = info->bytesGranted;
             priority = info->priority;
         }
 
         ControlPacket::send<Protocol::Packet::GrantHeader>(
-            driver, message->source, message->id, grantedBytes, priority);
+            driver, message->source, message->id, bytesGranted, priority);
     } else {
         // We are here because we have no knowledge of the message the Sender is
         // asking about.  Reply UNKNOWN so the Sender can react accordingly.
@@ -450,15 +450,15 @@ Receiver::checkResendTimeouts()
             if (message->scheduled) {
                 SpinLock::Lock lock_scheduler(schedulerMutex);
                 ScheduledMessageInfo* info = &message->scheduledMessageInfo;
-                int receivedBytes = info->messageLength - info->unreceivedBytes;
-                if (receivedBytes >= info->grantedBytes) {
+                int receivedBytes = info->messageLength - info->bytesRemaining;
+                if (receivedBytes >= info->bytesGranted) {
                     // Sender is blocked on this Receiver; all granted packets
                     // have already been received.  No need to check for resend.
                     continue;
                 } else if (grantIndexLimit * message->PACKET_DATA_LENGTH <
-                           info->grantedBytes) {
+                           info->bytesGranted) {
                     grantIndexLimit =
-                        (info->grantedBytes + message->PACKET_DATA_LENGTH - 1) /
+                        (info->bytesGranted + message->PACKET_DATA_LENGTH - 1) /
                         message->PACKET_DATA_LENGTH;
                 }
             }
@@ -530,11 +530,11 @@ Receiver::trySendGrants()
      * scheduled messages simultaneously.  Each of these messages should always
      * have at least policy.minScheduledBytes number of bytes granted.  Ideally,
      * each message will be assigned a different network priority based on a
-     * message's number of unreceivedBytes.  The message with the fewest
-     * unreceivedBytes (SRPT) will be assigned the highest priority.  If the
+     * message's number of bytesRemaining.  The message with the fewest
+     * bytesRemaining (SRPT) will be assigned the highest priority.  If the
      * number of messages to grant exceeds the number of available priorities,
      * the lowest priority is shared by multiple messages.  If the number of
-     * messages to grant is fewer than the the available priority, than the
+     * messages to grant is fewer than the available priorities, than the
      * messages are assigned to the lowest available priority.
      */
     Policy::Scheduled policy = policyManager->getScheduledPolicy();
@@ -559,23 +559,23 @@ Receiver::trySendGrants()
             std::max(0, policy.maxScheduledPriority - slot - unusedPriorities);
 
         // Send a GRANT if there are too few bytes granted and unreceived.
-        int receivedBytes = info->messageLength - info->unreceivedBytes;
-        if (info->grantedBytes - receivedBytes < policy.minScheduledBytes) {
+        int receivedBytes = info->messageLength - info->bytesRemaining;
+        if (info->bytesGranted - receivedBytes < policy.minScheduledBytes) {
             // Calculate new grant limit
             int newGrantLimit = std::min(
                 receivedBytes + policy.maxScheduledBytes, info->messageLength);
-            assert(newGrantLimit >= info->grantedBytes);
-            info->grantedBytes = newGrantLimit;
+            assert(newGrantLimit >= info->bytesGranted);
+            info->bytesGranted = newGrantLimit;
             ControlPacket::send<Protocol::Packet::GrantHeader>(
                 transport->driver, source, id,
-                Util::downCast<uint32_t>(info->grantedBytes), info->priority);
+                Util::downCast<uint32_t>(info->bytesGranted), info->priority);
         }
 
         // Update the iterator first since calling unschedule() may cause the
         // iterator to become invalid.
         ++it;
 
-        if (info->messageLength <= info->grantedBytes) {
+        if (info->messageLength <= info->bytesGranted) {
             // All packets granted, unschedule the message.
             unschedule(message, lock);
         }
@@ -658,8 +658,9 @@ Receiver::unschedule(Receiver::Message* message, const SpinLock::Lock& lock)
         scheduledPeers.remove(it);
     } else if (std::next(it) == scheduledPeers.end() ||
                !comp(*std::next(it), *it)) {
-        // Peer already in the right place (peer incremented as part
-        // of the check).
+        // Peer already in the right place (peer incremented as part of the
+        // check).  Note that only "next" needs be checked (and not "prev")
+        // since removing a message cannot increase the peer's priority.
     } else {
         // Peer needs to be moved.
         Intrusive::deprioritize<Peer>(&scheduledPeers, &peer->scheduledPeerNode,

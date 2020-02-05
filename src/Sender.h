@@ -16,12 +16,12 @@
 #ifndef HOMA_CORE_SENDER_H
 #define HOMA_CORE_SENDER_H
 
+#include <Homa/Driver.h>
+#include <Homa/Homa.h>
+
 #include <array>
 #include <atomic>
 #include <unordered_map>
-
-#include <Homa/Driver.h>
-#include <Homa/Homa.h>
 
 #include "Intrusive.h"
 #include "Message.h"
@@ -37,9 +37,8 @@ namespace Core {
 class Transport;
 
 /**
- * The Sender takes takes outgoing messages and sends out the message's packets
- * based on Homa's send policy and information (GRANTS) received from  the
- * Scheduler at the message's destination.
+ * The Sender manages the sending of outbound messages based on the policy set
+ * by the destination Transport's Receiver.  There is one Sender per Transport.
  *
  * This class is thread-safe.
  */
@@ -90,9 +89,9 @@ class Sender {
             , destination()
             , packets(nullptr)
             , unsentBytes(0)
-            , grantIndex(0)
+            , packetsGranted(0)
             , priority(0)
-            , sentIndex(0)
+            , packetsSent(0)
             , sendQueueNode(message)
         {}
 
@@ -110,14 +109,14 @@ class Sender {
         /// The number of bytes that still need to be sent for a queued Message.
         int unsentBytes;
 
-        /// Packets up to (but excluding) this index can be sent.
-        int grantIndex;
+        /// The number of packets that can be sent for this Message.
+        int packetsGranted;
 
         /// The network priority at which this Message should be sent.
         int priority;
 
-        /// Packets up to (but excluding) this index have been sent.
-        int sentIndex;
+        /// The number of packets that have been sent for this Message.
+        int packetsSent;
 
         /// Intrusive structure used to enqueue the associated Message into
         /// the sendQueue.
@@ -382,8 +381,8 @@ class Sender {
     /// Protects the readyQueue.
     SpinLock queueMutex;
 
-    /// A list of outbound messages that have unsent packets.
-    /// Messages are kept in order of priority.
+    /// A list of outbound messages that have unsent packets.  Messages are kept
+    /// in order of priority.
     Intrusive::List<Message> sendQueue;
 
     /// True if the Sender is currently executing trySend(); false, otherwise.

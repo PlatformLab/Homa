@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -40,12 +40,14 @@ namespace Core {
 Message::Message(Driver* driver, uint16_t packetHeaderLength,
                  uint32_t messageLength)
     : driver(driver)
-    , PACKET_HEADER_LENGTH(packetHeaderLength)
-    , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() - PACKET_HEADER_LENGTH)
+    , TRANSPORT_HEADER_LENGTH(packetHeaderLength)
+    , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() - TRANSPORT_HEADER_LENGTH)
     , start(0)
     , messageLength(messageLength)
     , numPackets(0)
     , occupied()
+// packets is not initialized to reduce the work done during construction.
+// See Message::occupied.
 {}
 
 /**
@@ -60,44 +62,44 @@ Message::~Message()
  * @copydoc Homa::Message::append()
  */
 void
-Message::append(const void* source, uint32_t num)
+Message::append(const void* source, uint32_t count)
 {
     uint32_t packetIndex = messageLength / PACKET_DATA_LENGTH;
     uint32_t packetOffset = messageLength % PACKET_DATA_LENGTH;
     uint32_t bytesCopied = 0;
     uint32_t maxMessageLength = PACKET_DATA_LENGTH * MAX_MESSAGE_PACKETS;
 
-    if (messageLength + num > maxMessageLength) {
+    if (messageLength + count > maxMessageLength) {
         WARNING("Max message size limit (%uB) reached; %u of %u bytes appended",
-                maxMessageLength, maxMessageLength - messageLength, num);
-        num = maxMessageLength - messageLength;
+                maxMessageLength, maxMessageLength - messageLength, count);
+        count = maxMessageLength - messageLength;
     }
 
-    while (bytesCopied < num) {
+    while (bytesCopied < count) {
         uint32_t bytesToCopy =
-            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+            std::min(count - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
         Driver::Packet* packet = getOrAllocPacket(packetIndex);
         char* destination = static_cast<char*>(packet->payload);
-        destination += packetOffset + PACKET_HEADER_LENGTH;
+        destination += packetOffset + TRANSPORT_HEADER_LENGTH;
         std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
                     bytesToCopy);
         // TODO(cstlee): A Message probably shouldn't be in charge of setting
         //               the packet length.
         packet->length += bytesToCopy;
-        assert(packet->length <= PACKET_HEADER_LENGTH + PACKET_DATA_LENGTH);
+        assert(packet->length <= TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH);
         bytesCopied += bytesToCopy;
         packetIndex++;
         packetOffset = 0;
     }
 
-    messageLength += num;
+    messageLength += count;
 }
 
 /**
  * @copydoc Homa::Message::get()
  */
 uint32_t
-Message::get(uint32_t offset, void* destination, uint32_t num) const
+Message::get(uint32_t offset, void* destination, uint32_t count) const
 {
     // This operation should be performed with the offset relative to the
     // logical beginning of the Message.
@@ -111,17 +113,17 @@ Message::get(uint32_t offset, void* destination, uint32_t num) const
         return 0;
     }
 
-    if (realOffset + num > messageLength) {
-        num = messageLength - realOffset;
+    if (realOffset + count > messageLength) {
+        count = messageLength - realOffset;
     }
 
-    while (bytesCopied < num) {
+    while (bytesCopied < count) {
         uint32_t bytesToCopy =
-            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+            std::min(count - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
         Driver::Packet* packet = getPacket(packetIndex);
         if (packet != nullptr) {
             char* source = static_cast<char*>(packet->payload);
-            source += packetOffset + PACKET_HEADER_LENGTH;
+            source += packetOffset + TRANSPORT_HEADER_LENGTH;
             std::memcpy(static_cast<char*>(destination) + bytesCopied, source,
                         bytesToCopy);
         } else {
@@ -149,23 +151,23 @@ Message::length() const
  * @copydoc Homa::Message::prepend()
  */
 void
-Message::prepend(const void* source, uint32_t num)
+Message::prepend(const void* source, uint32_t count)
 {
     // Make sure there is enough space reserved.
-    assert(num <= start);
-    start -= num;
+    assert(count <= start);
+    start -= count;
 
     uint32_t packetIndex = start / PACKET_DATA_LENGTH;
     uint32_t packetOffset = start % PACKET_DATA_LENGTH;
     uint32_t bytesCopied = 0;
 
-    while (bytesCopied < num) {
+    while (bytesCopied < count) {
         uint32_t bytesToCopy =
-            std::min(num - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+            std::min(count - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
         Driver::Packet* packet = getPacket(packetIndex);
         assert(packet != nullptr);
         char* destination = static_cast<char*>(packet->payload);
-        destination += packetOffset + PACKET_HEADER_LENGTH;
+        destination += packetOffset + TRANSPORT_HEADER_LENGTH;
         std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
                     bytesToCopy);
         bytesCopied += bytesToCopy;
@@ -178,7 +180,7 @@ Message::prepend(const void* source, uint32_t num)
  * @copydoc Homa::Message::reserve()
  */
 void
-Message::reserve(uint32_t num)
+Message::reserve(uint32_t count)
 {
     // Make sure there have been no prior calls to append or prepend.
     assert(start == messageLength);
@@ -188,36 +190,36 @@ Message::reserve(uint32_t num)
     uint32_t bytesReserved = 0;
     uint32_t maxMessageLength = PACKET_DATA_LENGTH * MAX_MESSAGE_PACKETS;
 
-    if (start + num > maxMessageLength) {
+    if (start + count > maxMessageLength) {
         WARNING("Max message size limit (%uB) reached; %u of %u bytes reserved",
-                maxMessageLength, maxMessageLength - start, num);
-        num = maxMessageLength - start;
+                maxMessageLength, maxMessageLength - start, count);
+        count = maxMessageLength - start;
     }
 
-    while (bytesReserved < num) {
+    while (bytesReserved < count) {
         uint32_t bytesToReserve =
-            std::min(num - bytesReserved, PACKET_DATA_LENGTH - packetOffset);
+            std::min(count - bytesReserved, PACKET_DATA_LENGTH - packetOffset);
         Driver::Packet* packet = getOrAllocPacket(packetIndex);
         // TODO(cstlee): A Message probably shouldn't be in charge of setting
         //               the packet length.
         packet->length += bytesToReserve;
-        assert(packet->length <= PACKET_HEADER_LENGTH + PACKET_DATA_LENGTH);
+        assert(packet->length <= TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH);
         bytesReserved += bytesToReserve;
         packetIndex++;
         packetOffset = 0;
     }
 
-    start += num;
-    messageLength += num;
+    start += count;
+    messageLength += count;
 }
 
 /**
  * @copydoc Homa::Message::strip()
  */
 void
-Message::strip(uint32_t num)
+Message::strip(uint32_t count)
 {
-    start = std::min(start + num, messageLength);
+    start = std::min(start + count, messageLength);
 }
 
 /**
@@ -303,7 +305,7 @@ Message::getOrAllocPacket(uint16_t index)
         numPackets++;
         // TODO(cstlee): A Message probably shouldn't be in charge of setting
         //               the packet length.
-        packets[index]->length = PACKET_HEADER_LENGTH;
+        packets[index]->length = TRANSPORT_HEADER_LENGTH;
     }
     return packets[index];
 }

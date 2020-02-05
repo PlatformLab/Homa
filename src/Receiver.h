@@ -16,12 +16,12 @@
 #ifndef HOMA_CORE_RECEIVER_H
 #define HOMA_CORE_RECEIVER_H
 
+#include <Homa/Driver.h>
+#include <Homa/Homa.h>
+
 #include <atomic>
 #include <deque>
 #include <unordered_map>
-
-#include <Homa/Driver.h>
-#include <Homa/Homa.h>
 
 #include "ControlPacket.h"
 #include "Intrusive.h"
@@ -70,8 +70,8 @@ class Receiver {
         struct ComparePriority {
             bool operator()(const Message& a, const Message& b)
             {
-                return a.scheduledMessageInfo.unreceivedBytes <
-                       b.scheduledMessageInfo.unreceivedBytes;
+                return a.scheduledMessageInfo.bytesRemaining <
+                       b.scheduledMessageInfo.bytesRemaining;
             }
         };
 
@@ -85,8 +85,8 @@ class Receiver {
          */
         explicit ScheduledMessageInfo(Message* message, int length)
             : messageLength(length)
-            , unreceivedBytes(length)
-            , grantedBytes(0)
+            , bytesRemaining(length)
+            , bytesGranted(0)
             , priority(0)
             , peer(nullptr)
             , scheduledMessageNode(message)
@@ -97,10 +97,10 @@ class Receiver {
 
         /// The number of bytes that still needs to be received for this
         /// Message.
-        int unreceivedBytes;
+        int bytesRemaining;
 
         /// The cumulative number of bytes that have granted for this Message.
-        int grantedBytes;
+        int bytesGranted;
 
         /// The network priority at which the Receiver requests Message be sent.
         int priority;
@@ -444,7 +444,8 @@ class Receiver {
     /// Tracks the set of inbound messages being received by this Receiver.
     MessageBucketMap messageBuckets;
 
-    /// Mutex for monitor-style locking of Receiver state.
+    /// Protects access to the Receiver's scheduler state (i.e. peerTable,
+    /// scheduledPeers, and ScheduledMessageInfo).
     SpinLock schedulerMutex;
 
     /// Collection of all peers; used for fast access.  Access is protected by

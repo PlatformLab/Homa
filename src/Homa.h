@@ -66,8 +66,8 @@ struct TransportInternal {
     /// requested by the application.
     std::deque<ServerOp> pendingServerOps;
 
-    /// ServerOp that have been remanded to the care of the Transport to
-    /// complete its progress.
+    /// ServerOp objects that have been processed by the application and
+    /// remanded to the care of the Transport to complete transmission.
     std::deque<ServerOp> detachedServerOps;
 };
 

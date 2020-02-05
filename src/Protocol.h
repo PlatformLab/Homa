@@ -189,8 +189,10 @@ struct GrantHeader {
 } __attribute__((packed));
 
 /**
- * Describes the wire format for a DONE packet.  The DONE packet signals that a
- * particular Message has been processed by the receiving server.
+ * Describes the wire format for a DONE packet.  The DONE packet is sent by a
+ * Receiver on behalf of its application to signal that a particular Message
+ * has been delivered to and processed by the application.  The transport will
+ * try to ensure reliable delivery of a Message until DONE is received.
  */
 struct DoneHeader {
     CommonHeader common;  ///< Common header fields.
@@ -212,9 +214,8 @@ struct ResendHeader {
                      ///< the array of packets that form the message.
     uint16_t num;  ///< Number of packet in the range of packets that should be
                    ///< resent starting with the packet at _index_.
-    uint8_t priority;  ///< The network priority the sender should use to
-                       ///< transmit the previously unsent bytes of the
-                       ///< associated message.
+    uint8_t priority;  ///< The granted priority if this RESEND is interpreted
+                       ///< as a GRANT.  (See GrantHeader.priority)
 
     /// DoneHeader constructor.
     ResendHeader(MessageId messageId, uint16_t index, uint16_t num,
@@ -242,8 +243,8 @@ struct BusyHeader {
 
 /**
  * Describes the wire format for a PING packet.  The PING packet used to ensure
- * that the Op associated with a particular Message is still actively being
- * processed and will not be timedout.
+ * that a particular Message is still actively being processed and will not be
+ * timed out.
  */
 struct PingHeader {
     CommonHeader common;  ///< Common header fields.
@@ -256,7 +257,9 @@ struct PingHeader {
 
 /**
  * Describes the wire format for a UNKNOWN packet.  The UNKNOWN packet is used
- * to indicate that the receiver has no knowledge a particular Message.
+ * to indicate that the receiver has no knowledge a particular Message.  For
+ * example, a receiver might reply UNKNOWN if it received a PING for a message
+ * that timed out or was never received.
  */
 struct UnknownHeader {
     CommonHeader common;  ///< Common header fields.

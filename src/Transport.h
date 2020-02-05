@@ -60,7 +60,7 @@ class Transport {
     }
 
     /**
-     * Receive a Message delivered to this Transport.
+     * Check for and return a Message sent to this Transport if available.
      *
      * The release() method should be called on the returned message when the
      * caller no longer needs access to it.
@@ -97,6 +97,7 @@ class Transport {
     /// Module which receives packets and forms them into messages.
     std::unique_ptr<Core::Receiver> receiver;
 
+    /// Caches the next cycle time that timeouts will need to rechecked.
     std::atomic<uint64_t> nextTimeoutCycles;
 };
 

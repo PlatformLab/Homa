@@ -20,7 +20,6 @@
 #include <utility>
 
 #include "Cycles.h"
-
 #include "Protocol.h"
 
 namespace Homa {
@@ -99,7 +98,8 @@ Transport::processPackets()
     int numPackets = driver->receivePackets(MAX_BURST, packets);
     for (int i = 0; i < numPackets; ++i) {
         Driver::Packet* packet = packets[i];
-        assert(packet->length >= sizeof(Protocol::Packet::CommonHeader));
+        assert(packet->length >=
+               Util::downCast<int>(sizeof(Protocol::Packet::CommonHeader)));
         Protocol::Packet::CommonHeader* header =
             static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
         switch (header->opcode) {
