@@ -270,8 +270,6 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
         SpinLock::Lock lock_queue(queueMutex);
         QueuedMessageInfo* info = &message->queuedMessageInfo;
 
-        sendReady.store(true);
-
         // Convert the byteLimit to a packet index limit such that the packet
         // that holds the last granted byte is also considered granted.  This
         // can cause at most 1 packet worth of data to be sent without a grant
@@ -297,6 +295,7 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
             // limit will never be overridden since the incomingGrantIndex will
             // not exceed the preset packetsGranted.
             info->priority = header->priority;
+            sendReady.store(true);
         }
     }
 
@@ -399,6 +398,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             Intrusive::deprioritize<Message>(
                 &sendQueue, &info->sendQueueNode,
                 QueuedMessageInfo::ComparePriority());
+            sendReady.store(true);
         }
     } else {
         // The message is already considered "done" so the UNKNOWN packet
@@ -600,6 +600,7 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         sendQueue.push_front(&info->sendQueueNode);
         Intrusive::deprioritize<Message>(&sendQueue, &info->sendQueueNode,
                                          QueuedMessageInfo::ComparePriority());
+        sendReady.store(true);
     }
 }
 

@@ -338,6 +338,7 @@ TEST_F(SenderTest, handleResendPacket_basic)
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
     EXPECT_EQ(7, packets[3]->priority);
     EXPECT_EQ(7, packets[4]->priority);
+    EXPECT_TRUE(sender->sendReady.load());
 
     for (int i = 0; i < 10; ++i) {
         delete packets[i];
@@ -526,6 +527,7 @@ TEST_F(SenderTest, handleGrantPacket_basic)
     EXPECT_EQ(6, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+    EXPECT_TRUE(sender->sendReady.load());
 }
 
 TEST_F(SenderTest, handleGrantPacket_excessiveGrant)
@@ -572,6 +574,7 @@ TEST_F(SenderTest, handleGrantPacket_excessiveGrant)
     EXPECT_EQ(6, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+    EXPECT_TRUE(sender->sendReady.load());
 }
 
 TEST_F(SenderTest, handleGrantPacket_staleGrant)
@@ -602,6 +605,7 @@ TEST_F(SenderTest, handleGrantPacket_staleGrant)
     EXPECT_EQ(2, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+    EXPECT_FALSE(sender->sendReady.load());
 }
 
 TEST_F(SenderTest, handleGrantPacket_dropGrant)
@@ -683,6 +687,7 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
     EXPECT_EQ(policyNew.priority, info->priority);
     EXPECT_EQ(0U, info->packetsSent);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+    EXPECT_TRUE(sender->sendReady.load());
 
     for (int i = 0; i < 5; ++i) {
         delete packets[i];
@@ -734,6 +739,7 @@ TEST_F(SenderTest, handleUnknownPacket_singlePacketMessage)
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
     EXPECT_FALSE(
         sender->sendQueue.contains(&message->queuedMessageInfo.sendQueueNode));
+    EXPECT_FALSE(sender->sendReady.load());
 }
 
 TEST_F(SenderTest, handleUnknownPacket_no_message)
@@ -1080,6 +1086,7 @@ TEST_F(SenderTest, sendMessage_basic)
     EXPECT_EQ(policy.priority, mockPacket.priority);
 
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
+    EXPECT_FALSE(sender->sendReady.load());
 }
 
 TEST_F(SenderTest, sendMessage_multipacket)
@@ -1138,6 +1145,7 @@ TEST_F(SenderTest, sendMessage_multipacket)
     // Check sendQueue metadata
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+    EXPECT_TRUE(sender->sendReady.load());
 }
 
 TEST_F(SenderTest, sendMessage_missingPacket)
