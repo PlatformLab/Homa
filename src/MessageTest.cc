@@ -84,7 +84,7 @@ TEST_F(MessageTest, constructor)
     EXPECT_FALSE(msg->occupied.any());
 }
 
-TEST_F(MessageTest, destructor)
+TEST_F(MessageTest, destructor_basic)
 {
     const uint16_t NUM_PKTS = 5;
 
@@ -94,6 +94,22 @@ TEST_F(MessageTest, destructor)
     }
 
     EXPECT_CALL(mockDriver, releasePackets(Eq(msg->packets), Eq(NUM_PKTS)))
+        .Times(1);
+}
+
+TEST_F(MessageTest, destructor_holes)
+{
+    const uint16_t NUM_PKTS = 4;
+
+    msg->numPackets = NUM_PKTS;
+    msg->occupied.set(0);
+    msg->occupied.set(1);
+    msg->occupied.set(3);
+    msg->occupied.set(4);
+
+    EXPECT_CALL(mockDriver, releasePackets(Eq(&msg->packets[0]), Eq(2)))
+        .Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Eq(&msg->packets[3]), Eq(2)))
         .Times(1);
 }
 

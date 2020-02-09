@@ -55,7 +55,30 @@ Message::Message(Driver* driver, uint16_t packetHeaderLength,
  */
 Message::~Message()
 {
-    driver->releasePackets(packets, numPackets);
+    // Find contiguous ranges of packets and release them back to the driver.
+    int num = 0;
+    int index = 0;
+    int packetsFound = 0;
+    for (int i = 0; i < MAX_MESSAGE_PACKETS && packetsFound < numPackets; ++i) {
+        if (occupied.test(i)) {
+            if (num == 0) {
+                // First packet in new region.
+                index = i;
+            }
+            ++num;
+            ++packetsFound;
+        } else {
+            if (num != 0) {
+                // End of region; release the last region.
+                driver->releasePackets(&packets[index], num);
+                num = 0;
+            }
+        }
+    }
+    if (num != 0) {
+        // Release the last region (if any).
+        driver->releasePackets(&packets[index], num);
+    }
 }
 
 /**
