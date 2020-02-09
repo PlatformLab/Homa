@@ -124,10 +124,6 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     assert(message->source == packet->address);
     assert(message->rawLength() == header->totalLength);
 
-    // (Re)Set timers
-    bucket->messageTimeouts.setTimeout(&message->messageTimeout);
-    bucket->resendTimeouts.setTimeout(&message->resendTimeout);
-
     // Add the packet
     bool packetAdded = message->setPacket(header->index, packet);
     if (packetAdded) {
@@ -146,8 +142,16 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
             }
         }
 
-        if (message->getNumPackets() >= message->numExpectedPackets) {
-            // Message received
+        // Receiving a new packet means the message is still active so it
+        // shouldn't time out until a while later.
+        bucket->messageTimeouts.setTimeout(&message->messageTimeout);
+        if (message->getNumPackets() < message->numExpectedPackets) {
+            // Still waiting for more packets to arrive but the arrival of a
+            // new packet means we should wait a while longer before requesting
+            // RESENDs of the missing packets.
+            bucket->resendTimeouts.setTimeout(&message->resendTimeout);
+        } else {
+            // All message packets have been received.
             message->state.store(Message::State::COMPLETED);
             bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
             SpinLock::Lock lock_received_messages(receivedMessages.mutex);
@@ -182,7 +186,9 @@ Receiver::handleBusyPacket(Driver::Packet* packet, Driver* driver)
         // Sender has replied BUSY to our RESEND request; consider this message
         // still active.
         bucket->messageTimeouts.setTimeout(&message->messageTimeout);
-        bucket->resendTimeouts.setTimeout(&message->resendTimeout);
+        if (message->state == Message::State::IN_PROGRESS) {
+            bucket->resendTimeouts.setTimeout(&message->resendTimeout);
+        }
     }
     driver->releasePackets(&packet, 1);
 }
