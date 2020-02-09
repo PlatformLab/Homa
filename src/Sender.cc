@@ -228,7 +228,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         resendEnd = std::min(resendEnd, info->packetsSent);
         int resendPriority = policyManager->getResendPriority();
         for (uint16_t i = index; i < resendEnd; ++i) {
-            Driver::Packet* packet = info->packets->getPacket(index++);
+            Driver::Packet* packet = info->packets->getPacket(i);
             packet->priority = resendPriority;
             // Packets will be sent at the priority their original priority.
             transport->driver->sendPacket(packet);

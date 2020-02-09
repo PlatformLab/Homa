@@ -336,8 +336,10 @@ TEST_F(SenderTest, handleResendPacket_basic)
     EXPECT_EQ(4, info->priority);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->pingTimeout.expirationCycleTime);
+    EXPECT_EQ(0, packets[2]->priority);
     EXPECT_EQ(7, packets[3]->priority);
     EXPECT_EQ(7, packets[4]->priority);
+    EXPECT_EQ(0, packets[5]->priority);
     EXPECT_TRUE(sender->sendReady.load());
 
     for (int i = 0; i < 10; ++i) {
