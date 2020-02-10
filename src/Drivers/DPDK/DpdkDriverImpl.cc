@@ -92,7 +92,7 @@ DpdkDriver::Impl::Impl(int port, int argc, char* argv[],
     , rx()
     , tx()
     , hasHardwareFilter(true)  // Cleared later if not applicable
-    , corked(false)
+    , corked(0)
     , bandwidthMbps(10000)  // Default bandwidth = 10 gbs
 {
     // DPDK during initialization (rte_eal_init()) the running thread is pinned
@@ -140,7 +140,7 @@ DpdkDriver::Impl::Impl(int port, __attribute__((__unused__)) NoEalInit _,
     , rx()
     , tx()
     , hasHardwareFilter(true)  // Cleared later if not applicable
-    , corked(false)
+    , corked(0)
     , bandwidthMbps(10000)  // Default bandwidth = 10 gbs
 {
     _init();
@@ -302,7 +302,7 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet)
     rte_eth_tx_buffer(port, 0, tx.buffer, mbuf);
 
     // Flush packets now if the driver is not corked.
-    if (!corked) {
+    if (corked.load() < 1) {
         rte_eth_tx_buffer_flush(port, 0, tx.buffer);
     }
 }
