@@ -305,6 +305,7 @@ Transport::poll()
             if (it != members->remoteOps.end()) {
                 RemoteOp* op = it->second;
                 op->response = message;
+                op->request->cancel();
                 op->state.store(RemoteOp::State::COMPLETED);
             } else {
                 // There is no RemoteOp waiting for this message; Drop it.
