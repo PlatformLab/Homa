@@ -17,7 +17,6 @@
 #define HOMA_CORE_RECEIVER_H
 
 #include <Homa/Driver.h>
-#include <Homa/Homa.h>
 
 #include <atomic>
 #include <deque>
@@ -34,6 +33,8 @@
 
 namespace Homa {
 namespace Core {
+// forward declaration
+class TransportImpl;
 
 /**
  * The Receiver processes incoming Data packets, assembling them into messages
@@ -43,7 +44,7 @@ namespace Core {
  */
 class Receiver {
   public:
-    explicit Receiver(Transport* transport, Policy::Manager* policyManager,
+    explicit Receiver(TransportImpl* transport, Policy::Manager* policyManager,
                       uint64_t messageTimeoutCycles,
                       uint64_t resendIntervalCycles);
     virtual ~Receiver();
@@ -436,7 +437,7 @@ class Receiver {
     void updateSchedule(Message* message, const SpinLock::Lock& lock);
 
     /// Transport of which this Receiver is a part.
-    Transport* const transport;
+    TransportImpl* const transport;
 
     /// Provider of network packet priority and grant policy decisions.
     Policy::Manager* const policyManager;

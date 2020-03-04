@@ -22,7 +22,7 @@
 #include "Mock/MockDriver.h"
 #include "Mock/MockPolicy.h"
 #include "Receiver.h"
-#include "Transport.h"
+#include "TransportImpl.h"
 
 namespace Homa {
 namespace Core {
@@ -51,7 +51,7 @@ class ReceiverTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1027));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        transport = new Transport(&mockDriver, 1);
+        transport = new TransportImpl(&mockDriver, 1);
         receiver = new Receiver(transport, &mockPolicyManager,
                                 messageTimeoutCycles, resendIntervalCycles);
         PerfUtils::Cycles::mockTscValue = 10000;
@@ -73,7 +73,7 @@ class ReceiverTest : public ::testing::Test {
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;
     char payload[1028];
-    Transport* transport;
+    TransportImpl* transport;
     Receiver* receiver;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };

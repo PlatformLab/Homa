@@ -17,7 +17,7 @@
 
 #include <Cycles.h>
 
-#include "Transport.h"
+#include "TransportImpl.h"
 #include "Util.h"
 
 namespace Homa {
@@ -37,7 +37,7 @@ namespace Core {
  *      Number of cycles of inactivity to wait between requesting retransmission
  *      of un-received parts of a message.
  */
-Receiver::Receiver(Transport* transport, Policy::Manager* policyManager,
+Receiver::Receiver(TransportImpl* transport, Policy::Manager* policyManager,
                    uint64_t messageTimeoutCycles, uint64_t resendIntervalCycles)
     : transport(transport)
     , policyManager(policyManager)
@@ -573,7 +573,7 @@ Receiver::trySendGrants()
             assert(newGrantLimit >= info->bytesGranted);
             info->bytesGranted = newGrantLimit;
             ControlPacket::send<Protocol::Packet::GrantHeader>(
-                transport->driver, source, id,
+                transport->getDriver(), source, id,
                 Util::downCast<uint32_t>(info->bytesGranted), info->priority);
         }
 

@@ -76,12 +76,13 @@ add_library(Homa
     src/Debug.cc
     src/Homa.cc
     src/Message.cc
+    src/Op/Op.cc
     src/Policy.cc
     src/Receiver.cc
     src/Sender.cc
     src/StringUtil.cc
     src/ThreadId.cc
-    src/Transport.cc
+    src/TransportImpl.cc
     src/Util.cc
 )
 add_library(Homa::Homa ALIAS Homa)
@@ -261,7 +262,7 @@ add_executable(unit_test
     src/StringUtilTest.cc
     src/ThreadIdTest.cc
     src/TimeoutTest.cc
-    src/TransportTest.cc
+    src/TransportImplTest.cc
     src/TubTest.cc
     src/UtilTest.cc
 )

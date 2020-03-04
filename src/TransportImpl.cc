@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -13,7 +13,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "Transport.h"
+#include "TransportImpl.h"
 
 #include <algorithm>
 #include <memory>
@@ -43,29 +43,28 @@ const uint64_t RESEND_INTERVAL_US = BASE_TIMEOUT_US;
  *      This transport's unique identifier in the group of transports among
  *      which this transport will communicate.
  */
-Transport::Transport(Driver* driver, uint64_t transportId)
-    : driver(driver)
-    , transportId(transportId)
-    , nextOpSequenceNumber(1)
-    , policyManager(driver)
-    , sender(new Sender(this, transportId, &policyManager,
+TransportImpl::TransportImpl(Driver* driver, uint64_t transportId)
+    : transportId(transportId)
+    , driver(driver)
+    , policyManager(new Policy::Manager(driver))
+    , sender(new Sender(this, transportId, policyManager.get(),
                         PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                         PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
     , receiver(
-          new Receiver(this, &policyManager,
+          new Receiver(this, policyManager.get(),
                        PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                        PerfUtils::Cycles::fromMicroseconds(RESEND_INTERVAL_US)))
     , nextTimeoutCycles(0)
 {}
 
 /**
- * Transport Destructor.
+ * TransportImpl Destructor.
  */
-Transport::~Transport(){};
+TransportImpl::~TransportImpl() = default;
 
 /// See Homa::Transport::poll()
 void
-Transport::poll()
+TransportImpl::poll()
 {
     // Receive and dispatch incoming packets.
     processPackets();
@@ -87,11 +86,11 @@ Transport::poll()
 
 /**
  * Helper method which receives a burst of incoming packets and process them
- * through the transport protocol.  Pulled out of Transport::poll() to simplify
- * unit testing.
+ * through the transport protocol.  Pulled out of TransportImpl::poll() to
+ * simplify unit testing.
  */
 void
-Transport::processPackets()
+TransportImpl::processPackets()
 {
     const int MAX_BURST = 32;
     Driver::Packet* packets[MAX_BURST];

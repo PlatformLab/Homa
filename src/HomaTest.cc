@@ -14,14 +14,13 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+/*
 #include <gtest/gtest.h>
 
-#include "Homa.h"
 #include "Mock/MockDriver.h"
 #include "Mock/MockMessage.h"
 #include "Mock/MockReceiver.h"
 #include "Mock/MockSender.h"
-#include "Transport.h"
 
 namespace Homa {
 namespace {
@@ -37,7 +36,7 @@ class HomaTest : public ::testing::Test {
   public:
     HomaTest()
         : mockDriver()
-        , transport(new Transport(&mockDriver, 22))
+        , transport(new OpManager(&mockDriver, 22))
         , mockSender(new NiceMock<Homa::Mock::MockSender>(
               transport->internal.get(), 22, 0, 0))
         , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>(
@@ -62,7 +61,7 @@ class HomaTest : public ::testing::Test {
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
-    Transport* transport;
+    OpManager* transport;
     NiceMock<Homa::Mock::MockSender>* mockSender;
     NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
     char buf[4096];
@@ -773,3 +772,4 @@ TEST_F(HomaTest, Transport_poll_checkDetachedServerOps)
 
 }  // namespace
 }  // namespace Homa
+*/

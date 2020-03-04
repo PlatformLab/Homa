@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -13,17 +13,15 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <Homa/Debug.h>
 #include <gtest/gtest.h>
-
-#include "Transport.h"
 
 #include "Mock/MockDriver.h"
 #include "Mock/MockReceiver.h"
 #include "Mock/MockSender.h"
 #include "Protocol.h"
+#include "TransportImpl.h"
 #include "Tub.h"
-
-#include <Homa/Debug.h>
 
 namespace Homa {
 namespace Core {
@@ -35,11 +33,11 @@ using ::testing::NiceMock;
 using ::testing::Return;
 using ::testing::SetArrayArgument;
 
-class TransportTest : public ::testing::Test {
+class TransportImplTest : public ::testing::Test {
   public:
-    TransportTest()
+    TransportImplTest()
         : mockDriver()
-        , transport(new Transport(&mockDriver, 22))
+        , transport(new TransportImpl(&mockDriver, 22))
         , mockSender(new NiceMock<Homa::Mock::MockSender>(transport, 22, 0, 0))
         , mockReceiver(new NiceMock<Homa::Mock::MockReceiver>(transport, 0, 0))
     {
@@ -50,19 +48,19 @@ class TransportTest : public ::testing::Test {
         PerfUtils::Cycles::mockTscValue = 10000;
     }
 
-    ~TransportTest()
+    ~TransportImplTest()
     {
         delete transport;
         PerfUtils::Cycles::mockTscValue = 0;
     }
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
-    Transport* transport;
+    TransportImpl* transport;
     NiceMock<Homa::Mock::MockSender>* mockSender;
     NiceMock<Homa::Mock::MockReceiver>* mockReceiver;
 };
 
-TEST_F(TransportTest, poll)
+TEST_F(TransportImplTest, poll)
 {
     EXPECT_CALL(mockDriver, receivePackets).WillOnce(Return(0));
     EXPECT_CALL(*mockSender, poll).Times(1);
@@ -95,7 +93,7 @@ TEST_F(TransportTest, poll)
     EXPECT_EQ(10100U, transport->nextTimeoutCycles);
 }
 
-TEST_F(TransportTest, processPackets)
+TEST_F(TransportImplTest, processPackets)
 {
     char payload[8][1024];
     Homa::Driver::Packet* packets[8];

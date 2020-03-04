@@ -20,7 +20,7 @@
 #include "Mock/MockDriver.h"
 #include "Mock/MockPolicy.h"
 #include "Sender.h"
-#include "Transport.h"
+#include "TransportImpl.h"
 
 namespace Homa {
 namespace Core {
@@ -48,7 +48,7 @@ class SenderTest : public ::testing::Test {
         ON_CALL(mockDriver, getQueuedBytes).WillByDefault(Return(0));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        transport = new Transport(&mockDriver, 22);
+        transport = new TransportImpl(&mockDriver, 22);
         sender = new Sender(transport, 22, &mockPolicyManager,
                             messageTimeoutCycles, pingIntervalCycles);
         PerfUtils::Cycles::mockTscValue = 10000;
@@ -66,7 +66,7 @@ class SenderTest : public ::testing::Test {
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;
     char payload[1028];
-    Transport* transport;
+    TransportImpl* transport;
     Sender* sender;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 

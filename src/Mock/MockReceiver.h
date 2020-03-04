@@ -31,7 +31,7 @@ namespace Mock {
  */
 class MockReceiver : public Core::Receiver {
   public:
-    MockReceiver(Core::Transport* transport, uint64_t messageTimeoutCycles,
+    MockReceiver(Core::TransportImpl* transport, uint64_t messageTimeoutCycles,
                  uint64_t resendIntervalCycles)
         : Receiver(transport, nullptr, messageTimeoutCycles,
                    resendIntervalCycles)

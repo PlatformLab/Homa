@@ -17,8 +17,6 @@
 
 #include <iterator>
 
-#include "Transport.h"
-
 namespace Homa {
 namespace Core {
 namespace Policy {

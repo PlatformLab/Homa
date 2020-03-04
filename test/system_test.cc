@@ -13,6 +13,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <Homa/Debug.h>
+#include <Homa/Homa.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <iostream>
 #include <memory>
@@ -21,15 +25,10 @@
 #include <thread>
 #include <vector>
 
-#include <unistd.h>
-
-#include "docopt.h"
-
-#include <Homa/Debug.h>
-#include <Homa/Homa.h>
 #include "Drivers/Fake/FakeDriver.h"
-
+#include "Op/Op.h"
 #include "StringUtil.h"
+#include "docopt.h"
 
 static const char USAGE[] = R"(Homa System Test.
 
@@ -68,7 +67,7 @@ struct Node {
 
     const uint64_t id;
     Homa::Drivers::Fake::FakeDriver driver;
-    Homa::Transport transport;
+    Homa::OpManager transport;
     std::thread thread;
     std::atomic<bool> run;
 };

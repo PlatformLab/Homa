@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,26 +16,23 @@
 #ifndef HOMA_HOMA_H
 #define HOMA_HOMA_H
 
-#include <Homa/Homa.h>
-
-#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
 
-#include "Protocol.h"
-#include "SpinLock.h"
+#include "../SpinLock.h"
+#include "Op.h"
 
 namespace Homa {
 /**
- * Contains the private members of Homa::Transport so they are not exposed to
+ * Contains the private members of Homa::OpManager so they are not exposed to
  * users of the library.
  */
-struct TransportInternal {
+struct OpManagerInternal {
     /**
      * Constructor.
      */
-    explicit TransportInternal(uint64_t transportId)
+    explicit OpManagerInternal(uint64_t transportId)
         : mutex()
         , transportId(transportId)
         , nextOpSequenceNumber(1)
@@ -47,7 +44,7 @@ struct TransportInternal {
     /**
      * Destructor.
      */
-    ~TransportInternal() {}
+    ~OpManagerInternal() {}
 
     // Monitor style mutex.
     SpinLock mutex;
@@ -58,7 +55,7 @@ struct TransportInternal {
     /// Unique identifier for the next RemoteOp this transport sends.
     uint64_t nextOpSequenceNumber;
 
-    /// Tracks the set of RemoteOp objects that were initiated by this Transport
+    /// Tracks the set of RemoteOp objects that were initiated by this OpManager
     std::unordered_map<Protocol::OpId, RemoteOp*, Protocol::OpId::Hasher>
         remoteOps;
 
@@ -67,7 +64,7 @@ struct TransportInternal {
     std::deque<ServerOp> pendingServerOps;
 
     /// ServerOp objects that have been processed by the application and
-    /// remanded to the care of the Transport to complete transmission.
+    /// remanded to the care of the OpManager to complete transmission.
     std::deque<ServerOp> detachedServerOps;
 };
 

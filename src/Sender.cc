@@ -21,7 +21,7 @@
 
 #include "ControlPacket.h"
 #include "Debug.h"
-#include "Transport.h"
+#include "TransportImpl.h"
 
 namespace Homa {
 namespace Core {
@@ -42,14 +42,14 @@ namespace Core {
  *      Number of cycles of inactivity to wait between checking on the liveness
  *      of an Sender::Message.
  */
-Sender::Sender(Transport* transport, uint64_t transportId,
+Sender::Sender(TransportImpl* transport, uint64_t transportId,
                Policy::Manager* policyManager, uint64_t messageTimeoutCycles,
                uint64_t pingIntervalCycles)
     : transport(transport)
     , transportId(transportId)
     , policyManager(policyManager)
     , nextMessageSequenceNumber(1)
-    , DRIVER_QUEUED_BYTE_LIMIT(2 * transport->driver->getMaxPayloadSize())
+    , DRIVER_QUEUED_BYTE_LIMIT(2 * transport->getDriver()->getMaxPayloadSize())
     , messageBuckets(messageTimeoutCycles, pingIntervalCycles)
     , queueMutex()
     , sendQueue()
@@ -70,7 +70,7 @@ Homa::OutMessage*
 Sender::allocMessage()
 {
     SpinLock::Lock lock_allocator(messageAllocator.mutex);
-    return messageAllocator.pool.construct(this, transport->driver);
+    return messageAllocator.pool.construct(this, transport->getDriver());
 }
 
 /**
@@ -231,7 +231,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
             Driver::Packet* packet = info->packets->getPacket(i);
             packet->priority = resendPriority;
             // Packets will be sent at the priority their original priority.
-            transport->driver->sendPacket(packet);
+            transport->getDriver()->sendPacket(packet);
         }
     }
 
@@ -375,7 +375,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             Driver::Packet* dataPacket = message->getPacket(0);
             assert(dataPacket != nullptr);
             dataPacket->priority = policy.priority;
-            transport->driver->sendPacket(dataPacket);
+            transport->getDriver()->sendPacket(dataPacket);
             message->state.store(OutMessage::Status::SENT);
         } else {
             // Otherwise, queue the message to be sent in SRPT order.
@@ -529,7 +529,7 @@ void
 Sender::sendMessage(Sender::Message* message, Driver::Address destination)
 {
     // Prepare the message
-    assert(message->driver == transport->driver);
+    assert(message->driver == transport->getDriver());
     // Allocate a new message id
     Protocol::MessageId id(transportId, nextMessageSequenceNumber++);
 
@@ -563,7 +563,7 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
     }
 
     // perform sanity checks.
-    assert(message->driver == transport->driver);
+    assert(message->driver == transport->getDriver());
     assert(message->rawLength() == actualMessageLen);
     assert(message->TRANSPORT_HEADER_LENGTH ==
            sizeof(Protocol::Packet::DataHeader));
@@ -582,7 +582,7 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         Driver::Packet* packet = message->getPacket(0);
         assert(packet != nullptr);
         packet->priority = policy.priority;
-        transport->driver->sendPacket(packet);
+        transport->getDriver()->sendPacket(packet);
         message->state.store(OutMessage::Status::SENT);
     } else {
         // Otherwise, queue the message to be sent in SRPT order.
@@ -765,7 +765,7 @@ Sender::trySend()
      * the NIC busy but not too many as to cause excessive queue in the NIC.
      */
     SpinLock::UniqueLock lock_queue(queueMutex);
-    uint32_t queuedBytesEstimate = transport->driver->getQueuedBytes();
+    uint32_t queuedBytesEstimate = transport->getDriver()->getQueuedBytes();
     // Optimistically assume we will finish sending every granted packet this
     // round; we will set again sendReady if it turns out we don't finish.
     sendReady = false;
@@ -786,7 +786,7 @@ Sender::trySend()
             }
             // ... if not, send away!
             packet->priority = info->priority;
-            transport->driver->sendPacket(packet);
+            transport->getDriver()->sendPacket(packet);
             int packetDataBytes =
                 packet->length - info->packets->TRANSPORT_HEADER_LENGTH;
             assert(info->unsentBytes >= packetDataBytes);

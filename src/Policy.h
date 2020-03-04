@@ -26,8 +26,6 @@
 
 namespace Homa {
 namespace Core {
-// Forward declaration.
-class Transport;
 
 /**
  * Contains the structures and classes related to Homa's policy for setting
