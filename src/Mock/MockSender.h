@@ -31,9 +31,9 @@ namespace Mock {
  */
 class MockSender : public Core::Sender {
   public:
-    MockSender(Core::TransportImpl* transport, uint64_t transportId,
+    MockSender(uint64_t transportId, Driver* driver,
                uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles)
-        : Sender(transport, transportId, nullptr, messageTimeoutCycles,
+        : Sender(transportId, driver, nullptr, messageTimeoutCycles,
                  pingIntervalCycles)
     {}
 

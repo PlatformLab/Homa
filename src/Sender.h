@@ -32,8 +32,6 @@
 
 namespace Homa {
 namespace Core {
-// Forward Declaration
-class TransportImpl;
 
 /**
  * The Sender manages the sending of outbound messages based on the policy set
@@ -43,7 +41,7 @@ class TransportImpl;
  */
 class Sender {
   public:
-    explicit Sender(TransportImpl* transport, uint64_t transportId,
+    explicit Sender(uint64_t transportId, Driver* driver,
                     Policy::Manager* policyManager,
                     uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
     virtual ~Sender();
@@ -359,11 +357,12 @@ class Sender {
     uint64_t checkPingTimeouts();
     void trySend();
 
-    /// Transport of which this Sender is a part.
-    TransportImpl* const transport;
-
     /// Transport identifier.
     const uint64_t transportId;
+
+    /// Driver with which all packets will be sent and received.  This driver
+    /// is chosen by the Transport that owns this Sender.
+    Driver* const driver;
 
     /// Provider of network packet priority decisions.
     Policy::Manager* const policyManager;

@@ -20,7 +20,6 @@
 #include "Mock/MockDriver.h"
 #include "Mock/MockPolicy.h"
 #include "Sender.h"
-#include "TransportImpl.h"
 
 namespace Homa {
 namespace Core {
@@ -39,7 +38,6 @@ class SenderTest : public ::testing::Test {
         : mockDriver()
         , mockPacket(&payload)
         , mockPolicyManager(&mockDriver)
-        , transport()
         , sender()
         , savedLogPolicy(Debug::getLogPolicy())
     {
@@ -48,8 +46,7 @@ class SenderTest : public ::testing::Test {
         ON_CALL(mockDriver, getQueuedBytes).WillByDefault(Return(0));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        transport = new TransportImpl(&mockDriver, 22);
-        sender = new Sender(transport, 22, &mockPolicyManager,
+        sender = new Sender(22, &mockDriver, &mockPolicyManager,
                             messageTimeoutCycles, pingIntervalCycles);
         PerfUtils::Cycles::mockTscValue = 10000;
     }
@@ -57,7 +54,6 @@ class SenderTest : public ::testing::Test {
     ~SenderTest()
     {
         delete sender;
-        delete transport;
         Debug::setLogPolicy(savedLogPolicy);
         PerfUtils::Cycles::mockTscValue = 0;
     }
@@ -66,7 +62,6 @@ class SenderTest : public ::testing::Test {
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;
     char payload[1028];
-    TransportImpl* transport;
     Sender* sender;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 
@@ -1357,7 +1352,7 @@ TEST_F(SenderTest, trySend_basic)
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     SenderTest::addMessage(sender, id, message, true, 3);
     Homa::Mock::MockDriver::MockPacket* packet[5];
-    const uint32_t PACKET_SIZE = sender->transport->driver->getMaxPayloadSize();
+    const uint32_t PACKET_SIZE = sender->driver->getMaxPayloadSize();
     const uint32_t PACKET_DATA_SIZE =
         PACKET_SIZE - message->TRANSPORT_HEADER_LENGTH;
     for (int i = 0; i < 5; ++i) {
@@ -1444,7 +1439,7 @@ TEST_F(SenderTest, trySend_multipleMessages)
         info[i] = &message[i]->queuedMessageInfo;
         SenderTest::addMessage(sender, id, message[i], true, 1);
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
-        packet[i]->length = sender->transport->driver->getMaxPayloadSize() / 4;
+        packet[i]->length = sender->driver->getMaxPayloadSize() / 4;
         message[i]->setPacket(0, packet[i]);
         info[i]->unsentBytes +=
             (packet[i]->length - message[i]->TRANSPORT_HEADER_LENGTH);

@@ -47,7 +47,7 @@ TransportImpl::TransportImpl(Driver* driver, uint64_t transportId)
     : transportId(transportId)
     , driver(driver)
     , policyManager(new Policy::Manager(driver))
-    , sender(new Sender(this, transportId, policyManager.get(),
+    , sender(new Sender(transportId, driver, policyManager.get(),
                         PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                         PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
     , receiver(
