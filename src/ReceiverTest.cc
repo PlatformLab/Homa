@@ -51,8 +51,7 @@ class ReceiverTest : public ::testing::Test {
         ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(1027));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        transport = new TransportImpl(&mockDriver, 1);
-        receiver = new Receiver(transport, &mockPolicyManager,
+        receiver = new Receiver(&mockDriver, &mockPolicyManager,
                                 messageTimeoutCycles, resendIntervalCycles);
         PerfUtils::Cycles::mockTscValue = 10000;
     }
@@ -61,7 +60,6 @@ class ReceiverTest : public ::testing::Test {
     {
         Mock::VerifyAndClearExpectations(&mockDriver);
         delete receiver;
-        delete transport;
         Debug::setLogPolicy(savedLogPolicy);
         PerfUtils::Cycles::mockTscValue = 0;
     }
@@ -73,7 +71,6 @@ class ReceiverTest : public ::testing::Test {
     NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
     NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;
     char payload[1028];
-    TransportImpl* transport;
     Receiver* receiver;
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };

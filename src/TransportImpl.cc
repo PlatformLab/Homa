@@ -51,7 +51,7 @@ TransportImpl::TransportImpl(Driver* driver, uint64_t transportId)
                         PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                         PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
     , receiver(
-          new Receiver(this, policyManager.get(),
+          new Receiver(driver, policyManager.get(),
                        PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                        PerfUtils::Cycles::fromMicroseconds(RESEND_INTERVAL_US)))
     , nextTimeoutCycles(0)

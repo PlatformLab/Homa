@@ -17,7 +17,6 @@
 
 #include <Cycles.h>
 
-#include "TransportImpl.h"
 #include "Util.h"
 
 namespace Homa {
@@ -26,8 +25,8 @@ namespace Core {
 /**
  * Receiver constructor.
  *
- * @param transport
- *      The Transport object that owns this Receiver.
+ * @param driver
+ *      The driver used to send and receive packets.
  * @param policyManager
  *      Provides information about the grant and network priority policies.
  * @param messageTimeoutCycles
@@ -37,9 +36,9 @@ namespace Core {
  *      Number of cycles of inactivity to wait between requesting retransmission
  *      of un-received parts of a message.
  */
-Receiver::Receiver(TransportImpl* transport, Policy::Manager* policyManager,
+Receiver::Receiver(Driver* driver, Policy::Manager* policyManager,
                    uint64_t messageTimeoutCycles, uint64_t resendIntervalCycles)
-    : transport(transport)
+    : driver(driver)
     , policyManager(policyManager)
     , messageBuckets(messageTimeoutCycles, resendIntervalCycles)
     , schedulerMutex()
@@ -573,7 +572,7 @@ Receiver::trySendGrants()
             assert(newGrantLimit >= info->bytesGranted);
             info->bytesGranted = newGrantLimit;
             ControlPacket::send<Protocol::Packet::GrantHeader>(
-                transport->getDriver(), source, id,
+                driver, source, id,
                 Util::downCast<uint32_t>(info->bytesGranted), info->priority);
         }
 

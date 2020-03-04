@@ -31,10 +31,9 @@ namespace Mock {
  */
 class MockReceiver : public Core::Receiver {
   public:
-    MockReceiver(Core::TransportImpl* transport, uint64_t messageTimeoutCycles,
+    MockReceiver(Driver* driver, uint64_t messageTimeoutCycles,
                  uint64_t resendIntervalCycles)
-        : Receiver(transport, nullptr, messageTimeoutCycles,
-                   resendIntervalCycles)
+        : Receiver(driver, nullptr, messageTimeoutCycles, resendIntervalCycles)
     {}
 
     MOCK_METHOD2(handleDataPacket,
