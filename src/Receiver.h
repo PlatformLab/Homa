@@ -17,6 +17,7 @@
 #define HOMA_CORE_RECEIVER_H
 
 #include <Homa/Driver.h>
+#include <Homa/Homa.h>
 
 #include <atomic>
 #include <deque>
@@ -24,7 +25,6 @@
 
 #include "ControlPacket.h"
 #include "Intrusive.h"
-#include "Message.h"
 #include "ObjectPool.h"
 #include "Policy.h"
 #include "Protocol.h"
@@ -117,7 +117,7 @@ class Receiver {
      * Represents an incoming message that is being assembled or being processed
      * by the application.
      */
-    class Message : public Homa::InMessage, public Core::Message {
+    class Message : public Homa::InMessage {
       public:
         /**
          * Defines the possible states of this Message.
@@ -131,17 +131,26 @@ class Receiver {
         };
 
         explicit Message(Receiver* receiver, Driver* driver,
-                         uint16_t packetHeaderLength, uint32_t messageLength,
+                         size_t packetHeaderLength, size_t messageLength,
                          Protocol::MessageId id, Driver::Address source,
                          int numUnscheduledPackets)
-            : Core::Message(driver, packetHeaderLength, messageLength)
-            , receiver(receiver)
+            : receiver(receiver)
+            , driver(driver)
             , id(id)
             , source(source)
+            , TRANSPORT_HEADER_LENGTH(packetHeaderLength)
+            , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() -
+                                 TRANSPORT_HEADER_LENGTH)
             , numExpectedPackets((messageLength + PACKET_DATA_LENGTH - 1) /
                                  PACKET_DATA_LENGTH)
             , numUnscheduledPackets(numUnscheduledPackets)
             , scheduled(numExpectedPackets > numUnscheduledPackets)
+            , start(0)
+            , messageLength(messageLength)
+            , numPackets(0)
+            , occupied()
+            // packets is not initialized to reduce the work done during
+            // construction. See Message::occupied.
             , state(Message::State::IN_PROGRESS)
             , bucketNode(this)
             , receivedMessageNode(this)
@@ -150,35 +159,14 @@ class Receiver {
             , scheduledMessageInfo(this, messageLength)
         {}
 
-        /// See Homa::InMessage::acknowledge()
-        virtual void acknowledge() const
-        {
-            MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
-            SpinLock::Lock lock(bucket->mutex);
-            ControlPacket::send<Protocol::Packet::DoneHeader>(driver, source,
-                                                              id);
-        }
-
-        /// See Homa::InMessage::fail()
-        virtual void fail() const
-        {
-            MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
-            SpinLock::Lock lock(bucket->mutex);
-            ControlPacket::send<Protocol::Packet::ErrorHeader>(driver, source,
-                                                               id);
-        }
-
-        /// See Homa::InMessage::dropped()
-        virtual bool dropped() const
-        {
-            return state.load() == State::DROPPED;
-        }
-
-        /// See Homa::InMessage::release()
-        virtual void release()
-        {
-            receiver->dropMessage(this);
-        }
+        virtual void acknowledge() const;
+        virtual bool dropped() const;
+        virtual void fail() const;
+        virtual size_t get(size_t offset, void* destination,
+                           size_t count) const;
+        virtual size_t length() const;
+        virtual void strip(size_t count);
+        virtual void release();
 
         /**
          * Return the current state of this message.
@@ -189,14 +177,31 @@ class Receiver {
         }
 
       private:
+        /// Define the maximum number of packets that a message can hold.
+        static const size_t MAX_MESSAGE_PACKETS = 1024;
+
+        Driver::Packet* getPacket(size_t index) const;
+        bool setPacket(size_t index, Driver::Packet* packet);
+
         /// The Receiver responsible for this message.
         Receiver* const receiver;
+
+        /// Driver from which packets were received and to which they should be
+        /// returned when this message is no longer needed.
+        Driver* const driver;
 
         /// Contains the unique identifier for this message.
         const Protocol::MessageId id;
 
         /// Contains source address this message.
         const Driver::Address source;
+
+        /// Number of bytes at the beginning of each Packet that should be
+        /// reserved for the Homa transport header.
+        const int TRANSPORT_HEADER_LENGTH;
+
+        /// Number of bytes of data in each full packet.
+        const int PACKET_DATA_LENGTH;
 
         /// Number of packets the message is expected to contain.
         const int numExpectedPackets;
@@ -207,6 +212,23 @@ class Receiver {
         /// True if the Message exceeds the unscheduled byte limit and requires
         /// GRANTs to be sent.
         const bool scheduled;
+
+        /// First byte where data is or will go if empty.
+        int start;
+
+        /// Number of bytes in this Message including any stripped bytes.
+        int messageLength;
+
+        /// Number of packets currently contained in this message.
+        int numPackets;
+
+        /// Bit array representing which entires in the _packets_ array are set.
+        /// Used to avoid having to zero out the entire _packets_ array.
+        std::bitset<MAX_MESSAGE_PACKETS> occupied;
+
+        /// Collection of Packet objects that make up this context's Message.
+        /// These Packets will be released when this context is destroyed.
+        Driver::Packet* packets[MAX_MESSAGE_PACKETS];
 
         /// This message's current state.
         std::atomic<State> state;

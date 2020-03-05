@@ -121,7 +121,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     assert(id == message->id);
     assert(message->driver == driver);
     assert(message->source == packet->address);
-    assert(message->rawLength() == header->totalLength);
+    assert(message->messageLength == Util::downCast<int>(header->totalLength));
 
     // Add the packet
     bool packetAdded = message->setPacket(header->index, packet);
@@ -144,7 +144,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         // Receiving a new packet means the message is still active so it
         // shouldn't time out until a while later.
         bucket->messageTimeouts.setTimeout(&message->messageTimeout);
-        if (message->getNumPackets() < message->numExpectedPackets) {
+        if (message->numPackets < message->numExpectedPackets) {
             // Still waiting for more packets to arrive but the arrival of a
             // new packet means we should wait a while longer before requesting
             // RESENDs of the missing packets.
@@ -300,6 +300,155 @@ Receiver::checkTimeouts()
     nextTimeout = nextTimeout < messageTimeout ? nextTimeout : messageTimeout;
 
     return nextTimeout;
+}
+
+/**
+ * @copydoc Homa::InMessage::acknowledge()
+ */
+void
+Receiver::Message::acknowledge() const
+{
+    MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
+    SpinLock::Lock lock(bucket->mutex);
+    ControlPacket::send<Protocol::Packet::DoneHeader>(driver, source, id);
+}
+
+/**
+ * @copydoc Homa::InMessage::dropped()
+ */
+bool
+Receiver::Message::dropped() const
+{
+    return state.load() == State::DROPPED;
+}
+
+/**
+ * @copydoc See Homa::InMessage::fail()
+ */
+void
+Receiver::Message::fail() const
+{
+    MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
+    SpinLock::Lock lock(bucket->mutex);
+    ControlPacket::send<Protocol::Packet::ErrorHeader>(driver, source, id);
+}
+
+/**
+ * @copydoc Homa::InMessage::get()
+ */
+size_t
+Receiver::Message::get(size_t offset, void* destination, size_t count) const
+{
+    // This operation should be performed with the offset relative to the
+    // logical beginning of the Message.
+    int _offset = Util::downCast<int>(offset);
+    int _count = Util::downCast<int>(count);
+    int realOffset = _offset + start;
+    int packetIndex = realOffset / PACKET_DATA_LENGTH;
+    int packetOffset = realOffset % PACKET_DATA_LENGTH;
+    int bytesCopied = 0;
+
+    // Offset is passed the end of the message.
+    if (realOffset >= messageLength) {
+        return 0;
+    }
+
+    if (realOffset + _count > messageLength) {
+        _count = messageLength - realOffset;
+    }
+
+    while (bytesCopied < _count) {
+        uint32_t bytesToCopy =
+            std::min(_count - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+        Driver::Packet* packet = getPacket(packetIndex);
+        if (packet != nullptr) {
+            char* source = static_cast<char*>(packet->payload);
+            source += packetOffset + TRANSPORT_HEADER_LENGTH;
+            std::memcpy(static_cast<char*>(destination) + bytesCopied, source,
+                        bytesToCopy);
+        } else {
+            ERROR("Message is missing data starting at packet index %u",
+                  packetIndex);
+            break;
+        }
+        bytesCopied += bytesToCopy;
+        packetIndex++;
+        packetOffset = 0;
+    }
+    return bytesCopied;
+}
+
+/**
+ * @copydoc Homa::InMessage::length()
+ */
+size_t
+Receiver::Message::length() const
+{
+    return Util::downCast<size_t>(messageLength - start);
+}
+
+/**
+ * @copydoc Homa::InMessage::strip()
+ */
+void
+Receiver::Message::strip(size_t count)
+{
+    start = std::min(start + Util::downCast<int>(count), messageLength);
+}
+
+/**
+ * @copydoc Homa::InMessage::release()
+ */
+void
+Receiver::Message::release()
+{
+    receiver->dropMessage(this);
+}
+
+/**
+ * Return the Packet with the given index.
+ *
+ * @param index
+ *      A Packet's index in the array of packets that form the message.
+ *      "packet index = "packet message offset" / PACKET_DATA_LENGTH
+ * @return
+ *      Pointer to a Packet at the given index if it exists; nullptr otherwise.
+ */
+Driver::Packet*
+Receiver::Message::getPacket(size_t index) const
+{
+    if (occupied.test(index)) {
+        return packets[index];
+    }
+    return nullptr;
+}
+
+/**
+ * Store the given packet as the Packet of the given index if one does not
+ * already exist.
+ *
+ * Responsibly for releasing the given Packet is passed to this context if the
+ * Packet is stored (returns true).
+ *
+ * @param index
+ *      The Packet's index in the array of packets that form the message.
+ *      "packet index = "packet message offset" / PACKET_DATA_LENGTH
+ * @param packet
+ *      The packet pointer that should be stored.
+ * @return
+ *      True if the packet was stored; false if a packet already exists (the new
+ *      packet is not stored).
+ */
+bool
+Receiver::Message::setPacket(size_t index, Driver::Packet* packet)
+{
+    if (occupied.test(index)) {
+        return false;
+    }
+    packets[index] = packet;
+    occupied.set(index);
+    numPackets++;
+    return true;
 }
 
 /**

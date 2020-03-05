@@ -75,6 +75,18 @@ class ReceiverTest : public ::testing::Test {
     std::vector<std::pair<std::string, std::string>> savedLogPolicy;
 };
 
+// Used to capture log output.
+struct VectorHandler {
+    VectorHandler()
+        : messages()
+    {}
+    void operator()(Debug::DebugMessage message)
+    {
+        messages.push_back(message);
+    }
+    std::vector<Debug::DebugMessage> messages;
+};
+
 TEST_F(ReceiverTest, handleDataPacket)
 {
     const Protocol::MessageId id(42, 33);
@@ -126,7 +138,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(totalMessageLength - 1000, info->bytesRemaining);
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
-    EXPECT_EQ(1U, message->getNumPackets());
+    EXPECT_EQ(1U, message->numPackets);
     EXPECT_EQ(2500U, info->bytesRemaining);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
@@ -139,7 +151,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     // ---------
 
-    EXPECT_EQ(1U, message->getNumPackets());
+    EXPECT_EQ(1U, message->numPackets);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // -------------------------------------------------------------------------
@@ -153,7 +165,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     // ---------
 
-    EXPECT_EQ(2U, message->getNumPackets());
+    EXPECT_EQ(2U, message->numPackets);
     EXPECT_EQ(1500U, info->bytesRemaining);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
@@ -168,7 +180,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     // ---------
 
-    EXPECT_EQ(3U, message->getNumPackets());
+    EXPECT_EQ(3U, message->numPackets);
     EXPECT_EQ(1000U, info->bytesRemaining);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
@@ -183,7 +195,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     receiver->handleDataPacket(&mockPacket, &mockDriver);
     // ---------
 
-    EXPECT_EQ(4U, message->getNumPackets());
+    EXPECT_EQ(4U, message->numPackets);
     EXPECT_EQ(0U, info->bytesRemaining);
     EXPECT_EQ(Receiver::Message::State::COMPLETED, message->state);
     EXPECT_EQ(message, &receiver->receivedMessages.queue.back());
@@ -378,6 +390,21 @@ TEST_F(ReceiverTest, Message_acknowledge)
     EXPECT_EQ(message->source, mockPacket.address);
 }
 
+TEST_F(ReceiverTest, Message_dropped)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+
+    message->state = Receiver::Message::State::IN_PROGRESS;
+
+    EXPECT_FALSE(message->dropped());
+
+    message->state = Receiver::Message::State::DROPPED;
+
+    EXPECT_TRUE(message->dropped());
+}
+
 TEST_F(ReceiverTest, Message_fail)
 {
     Protocol::MessageId id = {42, 32};
@@ -397,6 +424,159 @@ TEST_F(ReceiverTest, Message_fail)
     EXPECT_EQ(id, header->messageId);
     EXPECT_EQ(sizeof(Protocol::Packet::ErrorHeader), mockPacket.length);
     EXPECT_EQ(message->source, mockPacket.address);
+}
+
+TEST_F(ReceiverTest, Message_get_basic)
+{
+    ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 24, 24 + 2007, id, Driver::Address(22), 0);
+    char buf[4096];
+    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
+    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+
+    char source[] = "Hello, world!";
+    message->setPacket(0, &packet0);
+    message->setPacket(1, &packet1);
+    std::memcpy(buf + 24 + 24 + 2000 - 7, source, 7);
+    std::memcpy(buf + 24 + 24 + 2000 + 24, source + 7, 7);
+    packet0.length = 24 + 24 + 2000;
+    packet1.length = 24 + 7;
+    message->start = 24;
+    EXPECT_EQ(24U, message->TRANSPORT_HEADER_LENGTH);
+
+    char dest[4096];
+    size_t bytes = message->get(2000 - 7, dest, 20);
+
+    EXPECT_EQ(14U, bytes);
+    EXPECT_STREQ(source, dest);
+}
+
+TEST_F(ReceiverTest, Message_get_offsetTooLarge)
+{
+    ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 24, 24 + 2007, id, Driver::Address(22), 0);
+    char buf[4096];
+    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
+    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+
+    message->setPacket(0, &packet0);
+    message->setPacket(1, &packet1);
+    packet0.length = 24 + 24 + 2000;
+    packet1.length = 24 + 7;
+    message->start = 20;
+    EXPECT_EQ(24U, message->TRANSPORT_HEADER_LENGTH);
+
+    char dest[4096];
+    uint32_t bytes = message->get(4000, dest, 20);
+
+    EXPECT_EQ(0U, bytes);
+}
+
+TEST_F(ReceiverTest, Message_get_missingPacket)
+{
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 24, 24 + 2007, id, Driver::Address(22), 0);
+    char buf[4096];
+    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
+    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+
+    char source[] = "Hello,";
+    message->setPacket(0, &packet0);
+    std::memcpy(buf + 24 + 24 + 2000 - 7, source, 7);
+    packet0.length = 24 + 24 + 2000;
+    message->start = 24;
+    EXPECT_EQ(24U, message->TRANSPORT_HEADER_LENGTH);
+
+    char dest[4096];
+    uint32_t bytes = message->get(2000 - 7, dest, 20);
+
+    EXPECT_EQ(7U, bytes);
+    EXPECT_STREQ(source, dest);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Receiver.cc", m.filename);
+    EXPECT_STREQ("get", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::ERROR), m.logLevel);
+    EXPECT_EQ("Message is missing data starting at packet index 1", m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+}
+
+TEST_F(ReceiverTest, Message_length)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+    message->messageLength = 200;
+    message->start = 20;
+    EXPECT_EQ(180U, message->length());
+}
+
+TEST_F(ReceiverTest, Message_strip)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+    message->messageLength = 30;
+    message->start = 0;
+
+    message->strip(20);
+
+    EXPECT_EQ(20U, message->start);
+
+    message->strip(20);
+
+    EXPECT_EQ(30U, message->start);
+}
+
+TEST_F(ReceiverTest, Message_release)
+{
+    // Nothing to test
+}
+
+TEST_F(ReceiverTest, Message_getPacket)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+
+    Driver::Packet* packet = (Driver::Packet*)42;
+    message->packets[0] = packet;
+
+    EXPECT_EQ(nullptr, message->getPacket(0));
+
+    message->occupied.set(0);
+
+    EXPECT_EQ(packet, message->getPacket(0));
+}
+
+TEST_F(ReceiverTest, Message_setPacket)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+    Driver::Packet* packet = (Driver::Packet*)42;
+
+    EXPECT_FALSE(message->occupied.test(0));
+    EXPECT_EQ(0U, message->numPackets);
+
+    EXPECT_TRUE(message->setPacket(0, packet));
+
+    EXPECT_EQ(packet, message->packets[0]);
+    EXPECT_TRUE(message->occupied.test(0));
+    EXPECT_EQ(1U, message->numPackets);
+
+    EXPECT_FALSE(message->setPacket(0, packet));
 }
 
 TEST_F(ReceiverTest, MessageBucket_findMessage)
@@ -569,7 +749,7 @@ TEST_F(ReceiverTest, checkResendTimeouts_basic)
     // Message[1]: Blocked on grants
     ASSERT_TRUE(message[1]->scheduled);
     ASSERT_EQ(Receiver::Message::State::IN_PROGRESS, message[0]->state);
-    ASSERT_EQ(10000, message[1]->rawLength());
+    ASSERT_EQ(10000, message[1]->messageLength);
     message[1]->resendTimeout.expirationCycleTime = 10000;
     message[1]->scheduledMessageInfo.bytesGranted = 6000;
     message[1]->scheduledMessageInfo.bytesRemaining = 4000;

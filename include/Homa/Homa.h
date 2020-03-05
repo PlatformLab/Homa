@@ -126,7 +126,7 @@ class Message {
  *
  * This class is NOT thread-safe.
  */
-class InMessage : public virtual Message {
+class InMessage {
   public:
     /**
      * Inform the sender that this message has been processed successfully.
@@ -134,15 +134,50 @@ class InMessage : public virtual Message {
     virtual void acknowledge() const = 0;
 
     /**
+     * Returns true if the sender is no longer waiting for this message to be
+     * processed; false otherwise.
+     */
+    virtual bool dropped() const = 0;
+
+    /**
      * Inform the sender that this message has failed to be processed.
      */
     virtual void fail() const = 0;
 
     /**
-     * Returns true if the sender is no longer waiting for this message to be
-     * processed; false otherwise.
+     * Get the contents of a specified range of bytes in the Message by
+     * copying them into the provided destination memory region.
+     *
+     * @param offset
+     *      The number of bytes in the Message preceding the range of bytes
+     *      being requested.
+     * @param destination
+     *      The pointer to the memory region into which the requested byte
+     *      range will be copied. The caller must ensure that the buffer is
+     *      big enough to hold the requested number of bytes.
+     * @param count
+     *      The number of bytes being requested.
+     *
+     * @return
+     *      The number of bytes actually copied out. This number may be less
+     *      than "num" if the requested byte range exceeds the range of
+     *      bytes in the Message.
      */
-    virtual bool dropped() const = 0;
+    virtual size_t get(size_t offset, void* destination,
+                       size_t count) const = 0;
+
+    /**
+     * Return the number of bytes this Message contains.
+     */
+    virtual size_t length() const = 0;
+
+    /**
+     * Remove a number of bytes from the beginning of the Message.
+     *
+     * @param count
+     *      Number of bytes to remove.
+     */
+    virtual void strip(size_t count) = 0;
 
     /**
      * Signal that this message is no longer needed.  The caller should not
