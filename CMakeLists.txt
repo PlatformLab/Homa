@@ -250,7 +250,6 @@ add_executable(unit_test
     src/Drivers/Util/QueueEstimatorTest.cc
     src/CodeLocationTest.cc
     src/DebugTest.cc
-    src/HomaTest.cc
     src/IntrusiveTest.cc
     src/MessageTest.cc
     src/ObjectPoolTest.cc
