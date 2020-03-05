@@ -75,7 +75,6 @@ add_library(Homa
     src/CodeLocation.cc
     src/Debug.cc
     src/Homa.cc
-    src/Message.cc
     src/Op/Op.cc
     src/Policy.cc
     src/Receiver.cc
@@ -251,7 +250,6 @@ add_executable(unit_test
     src/CodeLocationTest.cc
     src/DebugTest.cc
     src/IntrusiveTest.cc
-    src/MessageTest.cc
     src/ObjectPoolTest.cc
     src/PolicyTest.cc
     src/ReceiverTest.cc

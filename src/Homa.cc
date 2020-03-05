@@ -15,7 +15,6 @@
 
 #include <Homa/Homa.h>
 
-#include "Message.h"
 #include "TransportImpl.h"
 
 namespace Homa {
