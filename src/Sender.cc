@@ -174,7 +174,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         // case should be pretty rare and the Receiver will timeout eventually.
         driver->releasePackets(&packet, 1);
         return;
-    } else if (message->getNumPackets() < 2) {
+    } else if (message->numPackets < 2) {
         // We should never get a RESEND for a single packet message.  Just
         // ignore this RESEND from a buggy Receiver.
         WARNING(
@@ -192,14 +192,14 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
     QueuedMessageInfo* info = &message->queuedMessageInfo;
 
     // Check if RESEND request is out of range.
-    if (index >= info->packets->getNumPackets() ||
-        resendEnd > info->packets->getNumPackets()) {
+    if (index >= info->packets->numPackets ||
+        resendEnd > info->packets->numPackets) {
         WARNING(
             "Message (%lu, %lu) RESEND request range out of bounds: requested "
             "range [%d, %d); message only contains %d packets; peer Transport "
             "may be confused.",
             msgId.transportId, msgId.sequence, index, resendEnd,
-            info->packets->getNumPackets());
+            info->packets->numPackets);
         driver->releasePackets(&packet, 1);
         return;
     }
@@ -279,13 +279,13 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
 
         // Make that grants don't exceed the number of packets.  Internally,
         // the sender always assumes that packetsGranted <= numPackets.
-        if (incomingGrantIndex > info->packets->getNumPackets()) {
+        if (incomingGrantIndex > info->packets->numPackets) {
             WARNING(
                 "Message (%lu, %lu) GRANT exceeds message length; granted "
                 "packets: %d, message packets %d; extra grants are ignored.",
                 msgId.transportId, msgId.sequence, incomingGrantIndex,
-                info->packets->getNumPackets());
-            incomingGrantIndex = info->packets->getNumPackets();
+                info->packets->numPackets);
+            incomingGrantIndex = info->packets->numPackets;
         }
 
         if (info->packetsGranted < incomingGrantIndex) {
@@ -334,7 +334,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
 
         // Make sure the message is not in the sendQueue before making any
         // changes to the message.
-        if (message->getNumPackets() > 1) {
+        if (message->numPackets > 1) {
             SpinLock::Lock lock_queue(queueMutex);
             QueuedMessageInfo* info = &message->queuedMessageInfo;
             if (message->state == OutMessage::Status::IN_PROGRESS) {
@@ -348,13 +348,13 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
 
         // Get the current policy for unscheduled bytes.
         Policy::Unscheduled policy = policyManager->getUnscheduledPolicy(
-            message->destination, message->rawLength());
+            message->destination, message->messageLength);
         int unscheduledIndexLimit =
             ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
              message->PACKET_DATA_LENGTH);
 
         // Update the policy version for each packet
-        for (uint16_t i = 0; i < message->getNumPackets(); ++i) {
+        for (uint16_t i = 0; i < message->numPackets; ++i) {
             Driver::Packet* dataPacket = message->getPacket(i);
             assert(dataPacket != nullptr);
             Protocol::Packet::DataHeader* header =
@@ -368,8 +368,8 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
         bucket->messageTimeouts.setTimeout(&message->messageTimeout);
         bucket->pingTimeouts.setTimeout(&message->pingTimeout);
 
-        assert(message->getNumPackets() > 0);
-        if (message->getNumPackets() == 1) {
+        assert(message->numPackets > 0);
+        if (message->numPackets == 1) {
             // If there is only one packet in the message, send it right away.
             Driver::Packet* dataPacket = message->getPacket(0);
             assert(dataPacket != nullptr);
@@ -386,9 +386,9 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             assert(info->destination == message->destination);
             assert(info->packets == message);
             // Some values need to be updated
-            info->unsentBytes = message->rawLength();
+            info->unsentBytes = message->messageLength;
             info->packetsGranted =
-                std::min(unscheduledIndexLimit, message->getNumPackets());
+                std::min(unscheduledIndexLimit, message->numPackets);
             info->priority = policy.priority;
             info->packetsSent = 0;
             // Insert and move message into the correct order in the priority
@@ -515,6 +515,191 @@ Sender::checkTimeouts()
 }
 
 /**
+ * @copydoc Homa::OutMessage::append()
+ */
+void
+Sender::Message::append(const void* source, size_t count)
+{
+    int _count = Util::downCast<int>(count);
+    int packetIndex = messageLength / PACKET_DATA_LENGTH;
+    int packetOffset = messageLength % PACKET_DATA_LENGTH;
+    int bytesCopied = 0;
+    int maxMessageLength = PACKET_DATA_LENGTH * MAX_MESSAGE_PACKETS;
+
+    if (messageLength + _count > maxMessageLength) {
+        WARNING("Max message size limit (%dB) reached; %d of %d bytes appended",
+                maxMessageLength, maxMessageLength - messageLength, _count);
+        _count = maxMessageLength - messageLength;
+    }
+
+    while (bytesCopied < _count) {
+        int bytesToCopy =
+            std::min(_count - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+        Driver::Packet* packet = getOrAllocPacket(packetIndex);
+        char* destination = static_cast<char*>(packet->payload);
+        destination += packetOffset + TRANSPORT_HEADER_LENGTH;
+        std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
+                    bytesToCopy);
+        // TODO(cstlee): A Message probably shouldn't be in charge of setting
+        //               the packet length.
+        packet->length += bytesToCopy;
+        assert(packet->length <= TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH);
+        bytesCopied += bytesToCopy;
+        packetIndex++;
+        packetOffset = 0;
+    }
+
+    messageLength += _count;
+}
+
+/**
+ * @copydoc Homa::OutMessage::cancel()
+ */
+void
+Sender::Message::cancel()
+{
+    sender->cancelMessage(this);
+}
+
+/**
+ * @copydoc Homa::OutMessage::getStatus()
+ */
+OutMessage::Status
+Sender::Message::getStatus() const
+{
+    return state.load();
+}
+
+/**
+ * @copydoc Homa::OutMessage::prepend()
+ */
+void
+Sender::Message::prepend(const void* source, size_t count)
+{
+    int _count = Util::downCast<int>(count);
+    // Make sure there is enough space reserved.
+    assert(_count <= start);
+    start -= _count;
+
+    int packetIndex = start / PACKET_DATA_LENGTH;
+    int packetOffset = start % PACKET_DATA_LENGTH;
+    int bytesCopied = 0;
+
+    while (bytesCopied < _count) {
+        int bytesToCopy =
+            std::min(_count - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
+        Driver::Packet* packet = getPacket(packetIndex);
+        assert(packet != nullptr);
+        char* destination = static_cast<char*>(packet->payload);
+        destination += packetOffset + TRANSPORT_HEADER_LENGTH;
+        std::memcpy(destination, static_cast<const char*>(source) + bytesCopied,
+                    bytesToCopy);
+        bytesCopied += bytesToCopy;
+        packetIndex++;
+        packetOffset = 0;
+    }
+}
+
+/**
+ * @copydoc Homa::OutMessage::release()
+ */
+void
+Sender::Message::release()
+{
+    sender->dropMessage(this);
+}
+
+/**
+ * @copydoc Homa::OutMessage::reserve()
+ */
+void
+Sender::Message::reserve(size_t count)
+{
+    int _count = Util::downCast<int>(count);
+
+    // Make sure there have been no prior calls to append or prepend.
+    assert(start == messageLength);
+
+    int packetIndex = start / PACKET_DATA_LENGTH;
+    int packetOffset = start % PACKET_DATA_LENGTH;
+    int bytesReserved = 0;
+    int maxMessageLength = PACKET_DATA_LENGTH * MAX_MESSAGE_PACKETS;
+
+    if (start + _count > maxMessageLength) {
+        WARNING("Max message size limit (%uB) reached; %u of %u bytes reserved",
+                maxMessageLength, maxMessageLength - start, _count);
+        _count = maxMessageLength - start;
+    }
+
+    while (bytesReserved < _count) {
+        int bytesToReserve =
+            std::min(_count - bytesReserved, PACKET_DATA_LENGTH - packetOffset);
+        Driver::Packet* packet = getOrAllocPacket(packetIndex);
+        // TODO(cstlee): A Message probably shouldn't be in charge of setting
+        //               the packet length.
+        packet->length += bytesToReserve;
+        assert(packet->length <= TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH);
+        bytesReserved += bytesToReserve;
+        packetIndex++;
+        packetOffset = 0;
+    }
+
+    start += _count;
+    messageLength += _count;
+}
+
+/**
+ * @copydoc Homa::OutMessage::send()
+ */
+void
+Sender::Message::send(Driver::Address destination)
+{
+    sender->sendMessage(this, destination);
+}
+
+/**
+ * Return the Packet with the given index.
+ *
+ * @param index
+ *      A Packet's index in the array of packets that form the message.
+ *      "packet index = "packet message offset" / PACKET_DATA_LENGTH
+ * @return
+ *      Pointer to a Packet at the given index if it exists; nullptr otherwise.
+ */
+Driver::Packet*
+Sender::Message::getPacket(size_t index) const
+{
+    if (occupied.test(index)) {
+        return packets[index];
+    }
+    return nullptr;
+}
+
+/**
+ * Return the Packet with the given index.  If the Packet does yet exist,
+ * allocate a new Packet.
+ *
+ * @param index
+ *      A Packet's index in the array of packets that form the message.
+ *      "packet index = "packet message offset" / PACKET_DATA_LENGTH
+ * @return
+ *      Pointer to a Packet at the given index.
+ */
+Driver::Packet*
+Sender::Message::getOrAllocPacket(size_t index)
+{
+    if (!occupied.test(index)) {
+        packets[index] = driver->allocPacket();
+        occupied.set(index);
+        numPackets++;
+        // TODO(cstlee): A Message probably shouldn't be in charge of setting
+        //               the packet length.
+        packets[index]->length = TRANSPORT_HEADER_LENGTH;
+    }
+    return packets[index];
+}
+
+/**
  * Queue a message to be sent.
  *
  * @param message
@@ -532,8 +717,8 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
     // Allocate a new message id
     Protocol::MessageId id(transportId, nextMessageSequenceNumber++);
 
-    Policy::Unscheduled policy =
-        policyManager->getUnscheduledPolicy(destination, message->rawLength());
+    Policy::Unscheduled policy = policyManager->getUnscheduledPolicy(
+        destination, message->messageLength);
     int unscheduledPacketLimit =
         ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
          message->PACKET_DATA_LENGTH);
@@ -542,9 +727,9 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
     message->destination = destination;
     message->state.store(OutMessage::Status::IN_PROGRESS);
 
-    uint32_t actualMessageLen = 0;
+    int actualMessageLen = 0;
     // fill out metadata.
-    for (uint16_t i = 0; i < message->getNumPackets(); ++i) {
+    for (int i = 0; i < message->numPackets; ++i) {
         Driver::Packet* packet = message->getPacket(i);
         if (packet == nullptr) {
             PANIC(
@@ -556,14 +741,15 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
 
         packet->address = message->destination;
         new (packet->payload) Protocol::Packet::DataHeader(
-            message->id, message->rawLength(), policy.version,
-            Util::downCast<uint16_t>(unscheduledPacketLimit), i);
+            message->id, Util::downCast<uint32_t>(message->messageLength),
+            policy.version, Util::downCast<uint16_t>(unscheduledPacketLimit),
+            Util::downCast<uint16_t>(i));
         actualMessageLen += (packet->length - message->TRANSPORT_HEADER_LENGTH);
     }
 
     // perform sanity checks.
     assert(message->driver == driver);
-    assert(message->rawLength() == actualMessageLen);
+    assert(message->messageLength == actualMessageLen);
     assert(message->TRANSPORT_HEADER_LENGTH ==
            sizeof(Protocol::Packet::DataHeader));
 
@@ -575,8 +761,8 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
     bucket->messageTimeouts.setTimeout(&message->messageTimeout);
     bucket->pingTimeouts.setTimeout(&message->pingTimeout);
 
-    assert(message->getNumPackets() > 0);
-    if (message->getNumPackets() == 1) {
+    assert(message->numPackets > 0);
+    if (message->numPackets == 1) {
         // If there is only one packet in the message, send it right away.
         Driver::Packet* packet = message->getPacket(0);
         assert(packet != nullptr);
@@ -590,9 +776,9 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         info->id = id;
         info->destination = message->destination;
         info->packets = message;
-        info->unsentBytes = message->rawLength();
+        info->unsentBytes = message->messageLength;
         info->packetsGranted =
-            std::min(unscheduledPacketLimit, message->getNumPackets());
+            std::min(unscheduledPacketLimit, message->numPackets);
         info->priority = policy.priority;
         info->packetsSent = 0;
         // Insert and move message into the correct order in the priority queue.
@@ -618,7 +804,7 @@ Sender::cancelMessage(Sender::Message* message)
     if (bucket->messages.contains(&message->bucketNode)) {
         bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
         bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
-        if (message->getNumPackets() > 1 &&
+        if (message->numPackets > 1 &&
             message->state == OutMessage::Status::IN_PROGRESS) {
             // Check to see if the message needs to be dequeued.
             SpinLock::Lock lock_queue(queueMutex);
@@ -773,7 +959,7 @@ Sender::trySend()
         Message& message = *it;
         assert(message.state.load() == OutMessage::Status::IN_PROGRESS);
         QueuedMessageInfo* info = &message.queuedMessageInfo;
-        assert(info->packetsGranted <= info->packets->getNumPackets());
+        assert(info->packetsGranted <= info->packets->numPackets);
         while (info->packetsSent < info->packetsGranted) {
             Driver::Packet* packet =
                 info->packets->getPacket(info->packetsSent);
@@ -797,7 +983,7 @@ Sender::trySend()
                 QueuedMessageInfo::ComparePriority());
             ++info->packetsSent;
         }
-        if (info->packetsSent >= info->packets->getNumPackets()) {
+        if (info->packetsSent >= info->packets->numPackets) {
             // We have finished sending the message.
             message.state.store(OutMessage::Status::SENT);
             it = sendQueue.remove(it);

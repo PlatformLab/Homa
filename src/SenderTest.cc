@@ -82,7 +82,7 @@ class SenderTest : public ::testing::Test {
             info->id = id;
             info->destination = message->destination;
             info->packets = message;
-            info->unsentBytes = message->rawLength();
+            info->unsentBytes = message->messageLength;
             info->packetsGranted = packetsGranted;
             info->packetsSent = 0;
             // Insert and move message into the correct order in the priority
@@ -93,6 +93,18 @@ class SenderTest : public ::testing::Test {
                 Sender::QueuedMessageInfo::ComparePriority());
         }
         return message;
+    }
+
+    static bool setMessagePacket(Sender::Message* message, int index,
+                                 Driver::Packet* packet)
+    {
+        if (message->occupied.test(index)) {
+            return false;
+        }
+        message->packets[index] = packet;
+        message->occupied.set(index);
+        message->numPackets++;
+        return true;
     }
 };
 
@@ -302,14 +314,14 @@ TEST_F(SenderTest, handleResendPacket_basic)
     std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
     for (int i = 0; i < 10; ++i) {
         packets.push_back(new Homa::Mock::MockDriver::MockPacket(payload));
-        message->setPacket(i, packets[i]);
+        setMessagePacket(message, i, packets[i]);
     }
     SenderTest::addMessage(sender, id, message, true, 5);
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     info->packetsSent = 5;
     info->priority = 6;
     EXPECT_EQ(5, info->packetsGranted);
-    EXPECT_EQ(10U, message->getNumPackets());
+    EXPECT_EQ(10U, message->numPackets);
 
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
@@ -366,7 +378,7 @@ TEST_F(SenderTest, handleResendPacket_badRequest_singlePacketMessage)
     SenderTest::addMessage(sender, id, message);
     Homa::Mock::MockDriver::MockPacket* packet =
         new Homa::Mock::MockDriver::MockPacket(payload);
-    message->setPacket(0, packet);
+    setMessagePacket(message, 0, packet);
 
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
@@ -406,14 +418,14 @@ TEST_F(SenderTest, handleResendPacket_badRequest_outOfRange)
     std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
     for (int i = 0; i < 10; ++i) {
         packets.push_back(new Homa::Mock::MockDriver::MockPacket(payload));
-        message->setPacket(i, packets[i]);
+        setMessagePacket(message, i, packets[i]);
     }
     SenderTest::addMessage(sender, id, message, true, 5);
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     info->packetsSent = 5;
     info->priority = 6;
     EXPECT_EQ(5, info->packetsGranted);
-    EXPECT_EQ(10U, message->getNumPackets());
+    EXPECT_EQ(10U, message->numPackets);
 
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
@@ -456,13 +468,13 @@ TEST_F(SenderTest, handleResendPacket_eagerResend)
     char data[1028];
     Homa::Mock::MockDriver::MockPacket dataPacket(data);
     for (int i = 0; i < 10; ++i) {
-        message->setPacket(i, &dataPacket);
+        setMessagePacket(message, i, &dataPacket);
     }
     SenderTest::addMessage(sender, id, message, true, 5);
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     info->packetsSent = 5;
     EXPECT_EQ(5, info->packetsGranted);
-    EXPECT_EQ(10U, message->getNumPackets());
+    EXPECT_EQ(10U, message->numPackets);
 
     Protocol::Packet::ResendHeader* resendHdr =
         static_cast<Protocol::Packet::ResendHeader*>(mockPacket.payload);
@@ -638,7 +650,7 @@ TEST_F(SenderTest, handleUnknownPacket_basic)
         header->policyVersion = policyOld.version;
         header->unscheduledIndexLimit = 2;
         packets.push_back(packet);
-        message->setPacket(i, packet);
+        setMessagePacket(message, i, packet);
     }
     message->destination = destination;
     message->messageLength = 4500;
@@ -705,7 +717,7 @@ TEST_F(SenderTest, handleUnknownPacket_singlePacketMessage)
         static_cast<Protocol::Packet::DataHeader*>(dataPacket.payload);
     dataHeader->policyVersion = policyOld.version;
     dataHeader->unscheduledIndexLimit = 2;
-    message->setPacket(0, &dataPacket);
+    setMessagePacket(message, 0, &dataPacket);
     message->destination = destination;
     message->messageLength = 500;
     message->state.store(Homa::OutMessage::Status::SENT);
@@ -1004,6 +1016,210 @@ TEST_F(SenderTest, checkTimeouts)
     bucket->messageTimeouts.cancelTimeout(&message.messageTimeout);
 }
 
+TEST_F(SenderTest, Message_append_basic)
+{
+    const int MAX_RAW_PACKET_LENGTH = 2000;
+
+    ON_CALL(mockDriver, getMaxPayloadSize)
+        .WillByDefault(Return(MAX_RAW_PACKET_LENGTH));
+    Sender::Message msg(sender, &mockDriver);
+    char buf[2 * MAX_RAW_PACKET_LENGTH];
+    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
+    Homa::Mock::MockDriver::MockPacket packet1(buf + MAX_RAW_PACKET_LENGTH);
+
+    const int TRANSPORT_HEADER_LENGTH = msg.TRANSPORT_HEADER_LENGTH;
+    const int PACKET_DATA_LENGTH = msg.PACKET_DATA_LENGTH;
+
+    ASSERT_EQ(MAX_RAW_PACKET_LENGTH,
+              TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH);
+
+    char source[] = "Hello, world!";
+    setMessagePacket(&msg, 0, &packet0);
+    packet0.length = MAX_RAW_PACKET_LENGTH - 7;
+    msg.messageLength = PACKET_DATA_LENGTH - 7;
+
+    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet1));
+
+    msg.append(source, 14);
+
+    EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg.messageLength);
+    EXPECT_EQ(2U, msg.numPackets);
+    EXPECT_TRUE(msg.packets[1] == &packet1);
+    EXPECT_EQ(MAX_RAW_PACKET_LENGTH, packet0.length);
+    EXPECT_EQ(TRANSPORT_HEADER_LENGTH + 7, packet1.length);
+    EXPECT_TRUE(std::memcmp(buf + MAX_RAW_PACKET_LENGTH - 7, source, 7) == 0);
+    EXPECT_TRUE(
+        std::memcmp(buf + MAX_RAW_PACKET_LENGTH + TRANSPORT_HEADER_LENGTH,
+                    source + 7, 7) == 0);
+}
+
+TEST_F(SenderTest, Message_append_truncated)
+{
+    VectorHandler handler;
+    Debug::setLogHandler(std::ref(handler));
+
+    const int MAX_RAW_PACKET_LENGTH = 2000;
+
+    ON_CALL(mockDriver, getMaxPayloadSize)
+        .WillByDefault(Return(MAX_RAW_PACKET_LENGTH));
+    Sender::Message msg(sender, &mockDriver);
+    char buf[2 * MAX_RAW_PACKET_LENGTH];
+    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
+    Homa::Mock::MockDriver::MockPacket packet1(buf + MAX_RAW_PACKET_LENGTH);
+
+    const int TRANSPORT_HEADER_LENGTH = msg.TRANSPORT_HEADER_LENGTH;
+    const int PACKET_DATA_LENGTH = msg.PACKET_DATA_LENGTH;
+
+    char source[] = "Hello, world!";
+    setMessagePacket(&msg, msg.MAX_MESSAGE_PACKETS - 1, &packet0);
+    packet0.length = msg.TRANSPORT_HEADER_LENGTH + msg.PACKET_DATA_LENGTH - 7;
+    msg.messageLength = msg.PACKET_DATA_LENGTH * msg.MAX_MESSAGE_PACKETS - 7;
+    EXPECT_EQ(1U, msg.numPackets);
+
+    msg.append(source, 14);
+
+    EXPECT_EQ(msg.PACKET_DATA_LENGTH * msg.MAX_MESSAGE_PACKETS,
+              msg.messageLength);
+    EXPECT_EQ(1U, msg.numPackets);
+    EXPECT_EQ(msg.TRANSPORT_HEADER_LENGTH + msg.PACKET_DATA_LENGTH,
+              packet0.length);
+    EXPECT_TRUE(std::memcmp(buf + MAX_RAW_PACKET_LENGTH - 7, source, 7) == 0);
+
+    EXPECT_EQ(1U, handler.messages.size());
+    const Debug::DebugMessage& m = handler.messages.at(0);
+    EXPECT_STREQ("src/Sender.cc", m.filename);
+    EXPECT_STREQ("append", m.function);
+    EXPECT_EQ(int(Debug::LogLevel::WARNING), m.logLevel);
+    EXPECT_EQ(
+        "Max message size limit (2020352B) reached; 7 of 14 bytes appended",
+        m.message);
+
+    Debug::setLogHandler(std::function<void(Debug::DebugMessage)>());
+}
+
+TEST_F(SenderTest, Message_cancel)
+{
+    // Nothing to test
+}
+
+TEST_F(SenderTest, Message_getStatus)
+{
+    // Nothing to test
+}
+
+TEST_F(SenderTest, Message_prepend)
+{
+    ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
+    Sender::Message msg(sender, &mockDriver);
+    char buf[4096];
+    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
+    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+
+    const int TRANSPORT_HEADER_LENGTH = msg.TRANSPORT_HEADER_LENGTH;
+    const int PACKET_DATA_LENGTH = msg.PACKET_DATA_LENGTH;
+    EXPECT_CALL(mockDriver, allocPacket)
+        .WillOnce(Return(&packet0))
+        .WillOnce(Return(&packet1));
+    msg.reserve(PACKET_DATA_LENGTH + 7);
+    EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg.start);
+    EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg.messageLength);
+
+    char source[] = "Hello, world!";
+
+    msg.prepend(source, 14);
+
+    EXPECT_EQ(PACKET_DATA_LENGTH - 7, msg.start);
+    EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg.messageLength);
+    EXPECT_TRUE(
+        std::memcmp(buf + TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH - 7,
+                    source, 7) == 0);
+    EXPECT_TRUE(std::memcmp(buf + TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH +
+                                TRANSPORT_HEADER_LENGTH,
+                            source + 7, 7) == 0);
+}
+
+TEST_F(SenderTest, Message_release)
+{
+    // Nothing to test
+}
+
+TEST_F(SenderTest, Message_reserve)
+{
+    Sender::Message msg(sender, &mockDriver);
+    char buf[4096];
+    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
+    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+
+    const int TRANSPORT_HEADER_LENGTH = msg.TRANSPORT_HEADER_LENGTH;
+    const int PACKET_DATA_LENGTH = msg.PACKET_DATA_LENGTH;
+
+    EXPECT_EQ(0U, msg.start);
+    EXPECT_EQ(0U, msg.messageLength);
+    EXPECT_EQ(0U, msg.numPackets);
+
+    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+
+    msg.reserve(PACKET_DATA_LENGTH - 7);
+
+    EXPECT_EQ(PACKET_DATA_LENGTH - 7, msg.start);
+    EXPECT_EQ(PACKET_DATA_LENGTH - 7, msg.messageLength);
+    EXPECT_EQ(1U, msg.numPackets);
+    EXPECT_EQ(&packet0, msg.getPacket(0));
+    EXPECT_EQ(TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH - 7, packet0.length);
+
+    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet1));
+
+    msg.reserve(14);
+
+    EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg.start);
+    EXPECT_EQ(PACKET_DATA_LENGTH + 7, msg.messageLength);
+    EXPECT_EQ(2U, msg.numPackets);
+    EXPECT_EQ(TRANSPORT_HEADER_LENGTH + PACKET_DATA_LENGTH, packet0.length);
+    EXPECT_EQ(&packet1, msg.getPacket(1));
+    EXPECT_EQ(TRANSPORT_HEADER_LENGTH + 7, packet1.length);
+}
+
+TEST_F(SenderTest, Message_send)
+{
+    // Nothing to test
+}
+
+TEST_F(SenderTest, Message_getPacket)
+{
+    Sender::Message msg(sender, &mockDriver);
+    Driver::Packet* packet = (Driver::Packet*)42;
+    msg.packets[0] = packet;
+
+    EXPECT_EQ(nullptr, msg.getPacket(0));
+
+    msg.occupied.set(0);
+
+    EXPECT_EQ(packet, msg.getPacket(0));
+}
+
+TEST_F(SenderTest, Message_getOrAllocPacket)
+{
+    // TODO(cstlee): cleanup
+    Sender::Message msg(sender, &mockDriver);
+    char buf[4096];
+    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
+    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+
+    EXPECT_FALSE(msg.occupied.test(0));
+    EXPECT_EQ(0U, msg.numPackets);
+    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&packet0));
+
+    EXPECT_TRUE(&packet0 == msg.getOrAllocPacket(0));
+
+    EXPECT_TRUE(msg.occupied.test(0));
+    EXPECT_EQ(1U, msg.numPackets);
+
+    EXPECT_TRUE(&packet0 == msg.getOrAllocPacket(0));
+
+    EXPECT_TRUE(msg.occupied.test(0));
+    EXPECT_EQ(1U, msg.numPackets);
+}
+
 TEST_F(SenderTest, MessageBucket_findMessage)
 {
     Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
@@ -1044,7 +1260,7 @@ TEST_F(SenderTest, sendMessage_basic)
         dynamic_cast<Sender::Message*>(sender->allocMessage());
     Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
 
-    message->setPacket(0, &mockPacket);
+    setMessagePacket(message, 0, &mockPacket);
     message->messageLength = 420;
     mockPacket.length =
         message->messageLength + message->TRANSPORT_HEADER_LENGTH;
@@ -1098,8 +1314,8 @@ TEST_F(SenderTest, sendMessage_multipacket)
         dynamic_cast<Sender::Message*>(sender->allocMessage());
     Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
 
-    message->setPacket(0, &packet0);
-    message->setPacket(1, &packet1);
+    setMessagePacket(message, 0, &packet0);
+    setMessagePacket(message, 1, &packet1);
     message->messageLength = 1420;
     packet0.length = 1000 + 27;
     packet1.length = 420 + 27;
@@ -1151,7 +1367,7 @@ TEST_F(SenderTest, sendMessage_missingPacket)
                               sender->nextMessageSequenceNumber};
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
-    message->setPacket(1, &mockPacket);
+    setMessagePacket(message, 1, &mockPacket);
     Core::Policy::Unscheduled policy = {1, 1000, 2};
     ON_CALL(mockPolicyManager, getUnscheduledPolicy(_, _))
         .WillByDefault(Return(policy));
@@ -1168,13 +1384,13 @@ TEST_F(SenderTest, sendMessage_unscheduledLimit)
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage());
     for (int i = 0; i < 9; ++i) {
-        message->setPacket(i, &mockPacket);
+        setMessagePacket(message, i, &mockPacket);
     }
     message->messageLength = 9000;
     mockPacket.length = 1000 + sizeof(Protocol::Packet::DataHeader);
     Driver::Address destination = (Driver::Address)22;
     Core::Policy::Unscheduled policy = {1, 4500, 2};
-    EXPECT_EQ(9U, message->getNumPackets());
+    EXPECT_EQ(9U, message->numPackets);
     EXPECT_EQ(1000U, message->PACKET_DATA_LENGTH);
     EXPECT_CALL(mockPolicyManager, getUnscheduledPolicy(destination, 9000))
         .WillOnce(Return(policy));
@@ -1358,12 +1574,12 @@ TEST_F(SenderTest, trySend_basic)
     for (int i = 0; i < 5; ++i) {
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
         packet[i]->length = PACKET_SIZE;
-        message->setPacket(i, packet[i]);
+        setMessagePacket(message, i, packet[i]);
         info->unsentBytes += PACKET_DATA_SIZE;
     }
     message->state = Homa::OutMessage::Status::IN_PROGRESS;
     sender->sendReady = true;
-    EXPECT_EQ(5U, message->getNumPackets());
+    EXPECT_EQ(5U, message->numPackets);
     EXPECT_EQ(3U, info->packetsGranted);
     EXPECT_EQ(0U, info->packetsSent);
     EXPECT_EQ(5 * PACKET_DATA_SIZE, info->unsentBytes);
@@ -1440,7 +1656,7 @@ TEST_F(SenderTest, trySend_multipleMessages)
         SenderTest::addMessage(sender, id, message[i], true, 1);
         packet[i] = new Homa::Mock::MockDriver::MockPacket(payload);
         packet[i]->length = sender->driver->getMaxPayloadSize() / 4;
-        message[i]->setPacket(0, packet[i]);
+        setMessagePacket(message[i], 0, packet[i]);
         info[i]->unsentBytes +=
             (packet[i]->length - message[i]->TRANSPORT_HEADER_LENGTH);
         message[i]->state = Homa::OutMessage::Status::IN_PROGRESS;
@@ -1454,8 +1670,8 @@ TEST_F(SenderTest, trySend_multipleMessages)
     // Message 1: Will reach grant limit
     EXPECT_EQ(1, info[1]->packetsGranted);
     info[1]->packetsSent = 0;
-    message[1]->setPacket(1, nullptr);
-    EXPECT_EQ(2, message[1]->getNumPackets());
+    setMessagePacket(message[1], 1, nullptr);
+    EXPECT_EQ(2, message[1]->numPackets);
 
     // Message 2: Will finish
     EXPECT_EQ(1, info[2]->packetsGranted);
@@ -1485,9 +1701,9 @@ TEST_F(SenderTest, trySend_alreadyRunning)
         dynamic_cast<Sender::Message*>(sender->allocMessage());
     Sender::QueuedMessageInfo* info = &message->queuedMessageInfo;
     SenderTest::addMessage(sender, id, message, true, 1);
-    message->setPacket(0, &mockPacket);
+    setMessagePacket(message, 0, &mockPacket);
     message->messageLength = 1000;
-    EXPECT_EQ(1U, message->getNumPackets());
+    EXPECT_EQ(1U, message->numPackets);
     EXPECT_EQ(1, info->packetsGranted);
     EXPECT_EQ(0, info->packetsSent);
 

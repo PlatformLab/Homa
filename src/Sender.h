@@ -17,13 +17,13 @@
 #define HOMA_CORE_SENDER_H
 
 #include <Homa/Driver.h>
+#include <Homa/Homa.h>
 
 #include <array>
 #include <atomic>
 #include <unordered_map>
 
 #include "Intrusive.h"
-#include "Message.h"
 #include "ObjectPool.h"
 #include "Policy.h"
 #include "Protocol.h"
@@ -101,7 +101,7 @@ class Sender {
         /// Handle to the queue Message for access to the packets that will
         /// be sent.  This member documents that the packets are logically owned
         /// by the sendQueue and thus protected by the queueMutex.
-        Core::Message* packets;
+        Message* packets;
 
         /// The number of bytes that still need to be sent for a queued Message.
         int unsentBytes;
@@ -126,16 +126,25 @@ class Sender {
      * Sender::Message objects are contained in the Transport::Op but should
      * only be accessed by the Sender.
      */
-    class Message : public Homa::OutMessage, public Core::Message {
+    class Message : public Homa::OutMessage {
       public:
         /**
          * Construct an Message.
          */
         explicit Message(Sender* sender, Driver* driver)
-            : Core::Message(driver, sizeof(Protocol::Packet::DataHeader), 0)
-            , sender(sender)
+            : sender(sender)
+            , driver(driver)
+            , TRANSPORT_HEADER_LENGTH(sizeof(Protocol::Packet::DataHeader))
+            , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() -
+                                 TRANSPORT_HEADER_LENGTH)
             , id(0, 0)
             , destination()
+            , start(0)
+            , messageLength(0)
+            , numPackets(0)
+            , occupied()
+            // packets is not initialized to reduce the work done during
+            // construction. See Message::occupied.
             , state(Status::NOT_STARTED)
             , bucketNode(this)
             , messageTimeout(this)
@@ -143,39 +152,57 @@ class Sender {
             , queuedMessageInfo(this)
         {}
 
-        /// See Homa::OutMessage::send()
-        virtual void send(Driver::Address destination)
-        {
-            sender->sendMessage(this, destination);
-        }
-
-        /// See Homa::OutMessage::cancel()
-        virtual void cancel()
-        {
-            sender->cancelMessage(this);
-        }
-
-        /// See Homa::OutMessage::getStatus()
-        virtual Status getStatus() const
-        {
-            return state.load();
-        }
-
-        /// See Homa::OutMessage::release()
-        virtual void release()
-        {
-            sender->dropMessage(this);
-        }
+        virtual void append(const void* source, size_t count);
+        virtual void cancel();
+        virtual Status getStatus() const;
+        virtual void prepend(const void* source, size_t count);
+        virtual void release();
+        virtual void reserve(size_t count);
+        virtual void send(Driver::Address destination);
 
       private:
+        /// Define the maximum number of packets that a message can hold.
+        static const size_t MAX_MESSAGE_PACKETS = 1024;
+
+        Driver::Packet* getPacket(size_t index) const;
+        Driver::Packet* getOrAllocPacket(size_t index);
+
         /// The Sender responsible for sending this message.
         Sender* const sender;
+
+        /// Driver from which packets were allocated and to which they should be
+        /// returned when this message is no longer needed.
+        Driver* const driver;
+
+        /// Number of bytes at the beginning of each Packet that should be
+        /// reserved for the Homa transport header.
+        const int TRANSPORT_HEADER_LENGTH;
+
+        /// Number of bytes of data in each full packet.
+        const int PACKET_DATA_LENGTH;
 
         /// Contains the unique identifier for this message.
         Protocol::MessageId id;
 
         /// Contains destination address this message.
         Driver::Address destination;
+
+        /// First byte where data is or will go if empty.
+        int start;
+
+        /// Number of bytes in this Message including any reserved headroom.
+        int messageLength;
+
+        /// Number of packets currently contained in this message.
+        int numPackets;
+
+        /// Bit array representing which entires in the _packets_ array are set.
+        /// Used to avoid having to zero out the entire _packets_ array.
+        std::bitset<MAX_MESSAGE_PACKETS> occupied;
+
+        /// Collection of Packet objects that make up this context's Message.
+        /// These Packets will be released when this context is destroyed.
+        Driver::Packet* packets[MAX_MESSAGE_PACKETS];
 
         /// This message's current state.
         std::atomic<Status> state;

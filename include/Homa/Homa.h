@@ -121,8 +121,7 @@ class Message {
 };
 
 /**
- * Represents a Message that has been received over the network via
- * Homa::Transport.
+ * Represents an array of bytes that has been received over the network.
  *
  * This class is NOT thread-safe.
  */
@@ -187,11 +186,11 @@ class InMessage {
 };
 
 /**
- * Represents a Message that can be sent over the network via Homa::Transport.
+ * Represents an array of bytes that can be sent over the network.
  *
  * This class is NOT thread-safe.
  */
-class OutMessage : public virtual Message {
+class OutMessage {
   public:
     /**
      * Defines the possible states of an OutMessage.
@@ -206,12 +205,15 @@ class OutMessage : public virtual Message {
     };
 
     /**
-     * Send this message to the destination.
+     * Copy an array of bytes to the end of the Message.
      *
-     * @param destination
-     *      Address of the transport to which this message will be sent.
+     * @param source
+     *      Address of the first byte of data to be copied to the end of the
+     *      Message.
+     * @param count
+     *      Number of bytes to be appended.
      */
-    virtual void send(Driver::Address destination) = 0;
+    virtual void append(const void* source, size_t count) = 0;
 
     /**
      * Stop sending this message.
@@ -224,10 +226,51 @@ class OutMessage : public virtual Message {
     virtual Status getStatus() const = 0;
 
     /**
+     * Copy an array of bytes to the beginning of the Message.
+     *
+     * The number of bytes prepended must have been previously reserved;
+     * otherwise, the behavior is undefined.
+     *
+     * @param source
+     *      Address of the first byte of data (in a byte array) to be copied to
+     *      the beginning of the Message.
+     * @param num
+     *      Number of bytes to be prepended.
+     *
+     * @sa Message::reserve()
+     */
+    virtual void prepend(const void* source, size_t count) = 0;
+
+    /**
      * Signal that this message is no longer needed.  The caller should not
      * access this message following this call.
      */
     virtual void release() = 0;
+
+    /**
+     * Reserve a number of bytes at the beginning of the Message.
+     *
+     * The reserved space is used when bytes are prepended to the Message.
+     * Sending a Message with unused reserved space will result in undefined
+     * behavior.
+     *
+     * This method should be called before appending or prepending data to the
+     * Message; otherwise, the behavior is undefined.
+     *
+     * @param count
+     *      The number of bytes to be reserved.
+     *
+     * @sa Message::append(), Message::prepend()
+     */
+    virtual void reserve(size_t count) = 0;
+
+    /**
+     * Send this message to the destination.
+     *
+     * @param destination
+     *      Address of the transport to which this message will be sent.
+     */
+    virtual void send(Driver::Address destination) = 0;
 };
 
 /**
