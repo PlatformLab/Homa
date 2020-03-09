@@ -5,9 +5,19 @@ include(CMakeFindDependencyMacro)
 ################################################################################
 
 find_dependency(PerfUtils)
-find_dependency(Dpdk)
 
 ################################################################################
 ## Add target file #############################################################
 ################################################################################
 include("${CMAKE_CURRENT_LIST_DIR}/HomaTargets.cmake")
+
+################################################################################
+## Config Drivers ##############################################################
+################################################################################
+foreach(driver ${Homa_FIND_COMPONENTS})
+    if ("${driver}" STREQUAL "DpdkDriver")
+        find_dependency(Dpdk)
+    else()
+        message(FATAL_ERROR "Unknown Driver type ${driver}")
+    endif()
+endforeach()
