@@ -13,14 +13,13 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <Homa/Drivers/Fake/FakeDriver.h>
 #include <gtest/gtest.h>
 
-#include "FakeDriver.h"
-#include "StringUtil.h"
+#include <string>
 
 #include "../RawAddressType.h"
-
-#include <string>
+#include "StringUtil.h"
 
 namespace Homa {
 namespace Drivers {

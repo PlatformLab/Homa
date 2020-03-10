@@ -122,6 +122,7 @@ add_library(Homa::FakeDriver ALIAS FakeDriver)
 target_include_directories(FakeDriver
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(FakeDriver
     PUBLIC
@@ -194,7 +195,7 @@ endif()
 ## Install & Export ############################################################
 ################################################################################
 
-install(TARGETS Homa DpdkDriver EXPORT HomaTargets
+install(TARGETS Homa DpdkDriver FakeDriver EXPORT HomaTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin

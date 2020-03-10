@@ -14,6 +14,7 @@
  */
 
 #include <Homa/Debug.h>
+#include <Homa/Drivers/Fake/FakeDriver.h>
 #include <Homa/Homa.h>
 #include <unistd.h>
 
@@ -25,7 +26,6 @@
 #include <thread>
 #include <vector>
 
-#include "Drivers/Fake/FakeDriver.h"
 #include "Op/Op.h"
 #include "StringUtil.h"
 #include "docopt.h"
