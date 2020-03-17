@@ -60,10 +60,16 @@ class TransportImpl : public Transport {
 
     virtual void poll();
 
-    /// See Homa::Transport
+    /// See Homa::Transport::getDriver()
     virtual Driver* getDriver()
     {
         return driver;
+    }
+
+    /// See Homa::Transport::getId()
+    virtual uint64_t getId()
+    {
+        return transportId;
     }
 
   private:

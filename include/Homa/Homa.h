@@ -247,6 +247,11 @@ class Transport {
      * Return the driver that this transport uses to send and receive packets.
      */
     virtual Driver* getDriver() = 0;
+
+    /**
+     * Return this transport's unique identifier.
+     */
+    virtual uint64_t getId() = 0;
 };
 
 }  // namespace Homa
