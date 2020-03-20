@@ -33,12 +33,28 @@
 namespace Homa {
 
 /**
+ * Shorthand for an std::unique_ptr with a customized deleter.
+ */
+template <typename T>
+using unique_ptr = std::unique_ptr<T, typename T::Deleter>;
+
+/**
  * Represents an array of bytes that has been received over the network.
  *
  * This class is NOT thread-safe.
  */
 class InMessage {
   public:
+    /**
+     * Custom deleter for use with std::unique_ptr.
+     */
+    struct Deleter {
+        void operator()(InMessage* message)
+        {
+            message->release();
+        }
+    };
+
     /**
      * Inform the sender that this message has been processed successfully.
      */
@@ -90,6 +106,7 @@ class InMessage {
      */
     virtual void strip(size_t count) = 0;
 
+  protected:
     /**
      * Signal that this message is no longer needed.  The caller should not
      * access this message following this call.
@@ -114,6 +131,16 @@ class OutMessage {
         SENT,         //< The message has been completely sent.
         COMPLETED,    //< The message has been received and processed.
         FAILED,       //< The message failed to be delivered and processed.
+    };
+
+    /**
+     * Custom deleter for use with std::unique_ptr.
+     */
+    struct Deleter {
+        void operator()(OutMessage* message)
+        {
+            message->release();
+        }
     };
 
     /**
@@ -154,12 +181,6 @@ class OutMessage {
     virtual void prepend(const void* source, size_t count) = 0;
 
     /**
-     * Signal that this message is no longer needed.  The caller should not
-     * access this message following this call.
-     */
-    virtual void release() = 0;
-
-    /**
      * Reserve a number of bytes at the beginning of the Message.
      *
      * The reserved space is used when bytes are prepended to the Message.
@@ -183,6 +204,13 @@ class OutMessage {
      *      Address of the transport to which this message will be sent.
      */
     virtual void send(Driver::Address destination) = 0;
+
+  protected:
+    /**
+     * Signal that this message is no longer needed.  The caller should not
+     * access this message following this call.
+     */
+    virtual void release() = 0;
 };
 
 /**
@@ -215,25 +243,19 @@ class Transport {
     /**
      * Allocate Message that can be sent with this Transport.
      *
-     * The release() method should be called on the returned message when the
-     * caller no longer needs access to it.
-     *
      * @return
      *      A pointer to the allocated message.
      */
-    virtual Homa::OutMessage* alloc() = 0;
+    virtual Homa::unique_ptr<Homa::OutMessage> alloc() = 0;
 
     /**
      * Check for and return a Message sent to this Transport if available.
-     *
-     * The release() method should be called on the returned message when the
-     * caller no longer needs access to it.
      *
      * @return
      *      Pointer to the received message, if any.  Otherwise, nullptr is
      *      returned if no message has been delivered.
      */
-    virtual Homa::InMessage* receive() = 0;
+    virtual Homa::unique_ptr<Homa::InMessage> receive() = 0;
 
     /**
      * Make incremental progress performing all Transport functionality.

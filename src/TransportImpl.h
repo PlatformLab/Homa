@@ -47,15 +47,15 @@ class TransportImpl : public Transport {
     ~TransportImpl();
 
     /// See Homa::Transport::alloc()
-    virtual Homa::OutMessage* alloc()
+    virtual Homa::unique_ptr<Homa::OutMessage> alloc()
     {
-        return sender->allocMessage();
+        return Homa::unique_ptr<Homa::OutMessage>(sender->allocMessage());
     }
 
     /// See Homa::Transport::receive()
-    virtual Homa::InMessage* receive()
+    virtual Homa::unique_ptr<Homa::InMessage> receive()
     {
-        return receiver->receiveMessage();
+        return Homa::unique_ptr<Homa::InMessage>(receiver->receiveMessage());
     }
 
     virtual void poll();
