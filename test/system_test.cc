@@ -26,7 +26,6 @@
 #include <thread>
 #include <vector>
 
-#include "Op/Op.h"
 #include "StringUtil.h"
 #include "docopt.h"
 
@@ -41,7 +40,6 @@ static const char USAGE[] = R"(Homa System Test.
         -h --help       Show this screen.
         --version       Show version.
         -v --verbose    Show verbose output.
-        --hops=<n>      Number of hops an op should make [default: 1].
         --servers=<n>   Number of virtual servers [default: 1].
         --size=<n>      Number of bytes to send as a payload [default: 10].
         --lossRate=<f>  Rate at which packets are lost [default: 0.0].
@@ -52,7 +50,6 @@ bool _PRINT_SERVER_ = false;
 
 struct MessageHeader {
     uint64_t id;
-    uint64_t hops;
     uint64_t length;
 } __attribute__((packed));
 
@@ -60,14 +57,14 @@ struct Node {
     explicit Node(uint64_t id)
         : id(id)
         , driver()
-        , transport(&driver, id)
+        , transport(Homa::Transport::create(&driver, id))
         , thread()
         , run(false)
     {}
 
     const uint64_t id;
     Homa::Drivers::Fake::FakeDriver driver;
-    Homa::OpManager transport;
+    Homa::Transport* transport;
     std::thread thread;
     std::atomic<bool> run;
 };
@@ -75,47 +72,27 @@ struct Node {
 void
 serverMain(Node* server, std::vector<std::string> addresses)
 {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(0, addresses.size() - 1);
-
     while (true) {
         if (server->run.load() == false) {
             break;
         }
-        Homa::ServerOp op = server->transport.receiveServerOp();
-        if (op) {
-            MessageHeader header;
-            op.request->get(0, &header, sizeof(MessageHeader));
 
+        Homa::unique_ptr<Homa::InMessage> message =
+            server->transport->receive();
+
+        if (message) {
+            MessageHeader header;
+            message->get(0, &header, sizeof(MessageHeader));
             char buf[header.length];
-            op.request->get(sizeof(MessageHeader), &buf, header.length);
+            message->get(sizeof(MessageHeader), &buf, header.length);
 
             if (_PRINT_SERVER_) {
                 std::cout << "  -> Server " << server->id
-                          << " (opId: " << header.id << " hops:" << header.hops
-                          << ")" << std::endl;
+                          << " (opId: " << header.id << ")" << std::endl;
             }
-
-            if (_PRINT_SERVER_) {
-                std::cout << "  <- Server " << server->id
-                          << " (opId: " << header.id << " hops:" << header.hops
-                          << ")" << std::endl;
-            }
-
-            header.hops--;
-            op.response->append(&header, sizeof(MessageHeader));
-            op.response->append(buf, header.length);
-            if (header.hops == 0) {
-                op.reply();
-            } else {
-                std::string nextAddress = addresses[dis(gen)];
-                Homa::Driver::Address nextServerAddress =
-                    server->driver.getAddress(&nextAddress);
-                op.delegate(nextServerAddress);
-            }
+            message->acknowledge();
         }
-        server->transport.poll();
+        server->transport->poll();
     }
 }
 
@@ -124,7 +101,7 @@ serverMain(Node* server, std::vector<std::string> addresses)
  *      Number of Op that failed.
  */
 int
-clientMain(int count, int hops, int size, std::vector<std::string> addresses)
+clientMain(int count, int size, std::vector<std::string> addresses)
 {
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -144,40 +121,29 @@ clientMain(int count, int hops, int size, std::vector<std::string> addresses)
 
         std::string destAddress = addresses[randAddr(gen)];
 
-        Homa::RemoteOp op(&client.transport);
+        Homa::unique_ptr<Homa::OutMessage> message = client.transport->alloc();
         {
             MessageHeader header;
             header.id = id;
-            header.hops = hops;
             header.length = size;
-            op.request->append(&header, sizeof(MessageHeader));
-            op.request->append(payload, size);
+            message->append(&header, sizeof(MessageHeader));
+            message->append(payload, size);
             if (_PRINT_CLIENT_) {
-                std::cout << "Client -> (opId: " << header.id
-                          << " hops:" << header.hops << ")" << std::endl;
+                std::cout << "Client -> (opId: " << header.id << ")"
+                          << std::endl;
             }
         }
+        message->send(client.driver.getAddress(&destAddress));
 
-        op.send(client.driver.getAddress(&destAddress));
-        op.wait();
-
-        {
-            if (op.response == nullptr) {
+        while (1) {
+            Homa::OutMessage::Status status = message->getStatus();
+            if (status == Homa::OutMessage::Status::COMPLETED) {
+                break;
+            } else if (status == Homa::OutMessage::Status::FAILED) {
                 numFailed++;
-                continue;
+                break;
             }
-            MessageHeader header;
-            char buf[size];
-            op.response->get(0, &header, sizeof(MessageHeader));
-            op.response->get(sizeof(MessageHeader), &buf, header.length);
-            if (header.id != id || header.hops != 0 || header.length != size ||
-                memcmp(payload, buf, size) != 0) {
-                numFailed++;
-            }
-            if (_PRINT_CLIENT_) {
-                std::cout << "Client <- (opId: " << header.id
-                          << " hops:" << header.hops << ")" << std::endl;
-            }
+            client.transport->poll();
         }
     }
     return numFailed;
@@ -193,7 +159,6 @@ main(int argc, char* argv[])
 
     // Read in args.
     int numTests = args["<count>"].asLong();
-    int numHops = args["--hops"].asLong();
     int numServers = args["--servers"].asLong();
     int numBytes = args["--size"].asLong();
     int verboseLevel = args["--verbose"].asLong();
@@ -235,7 +200,7 @@ main(int argc, char* argv[])
         server->thread = std::move(std::thread(&serverMain, server, addresses));
     }
 
-    int numFails = clientMain(numTests, numHops, numBytes, addresses);
+    int numFails = clientMain(numTests, numBytes, addresses);
 
     for (auto it = servers.begin(); it != servers.end(); ++it) {
         Node* server = *it;
@@ -245,9 +210,8 @@ main(int argc, char* argv[])
     }
 
     if (printSummary) {
-        std::cout << numTests << " Ops tested (hops: " << numHops
-                  << "): " << numTests - numFails << " completed, " << numFails
-                  << " failed" << std::endl;
+        std::cout << numTests << " Messages tested: " << numTests - numFails
+                  << " completed, " << numFails << " failed" << std::endl;
     }
 
     return numFails;
