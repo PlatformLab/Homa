@@ -75,7 +75,6 @@ add_library(Homa
     src/CodeLocation.cc
     src/Debug.cc
     src/Homa.cc
-    src/Op/Op.cc
     src/Policy.cc
     src/Receiver.cc
     src/Sender.cc

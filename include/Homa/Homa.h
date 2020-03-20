@@ -24,7 +24,6 @@
 #define HOMA_INCLUDE_HOMA_HOMA_H
 
 #include <Homa/Driver.h>
-#include <Homa/Protocol.h>
 
 #include <atomic>
 #include <bitset>
