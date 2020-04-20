@@ -369,6 +369,47 @@ TEST_F(ReceiverTest, checkTimeouts)
     bucket->messageTimeouts.cancelTimeout(&message.messageTimeout);
 }
 
+TEST_F(ReceiverTest, Message_destructor_basic)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+
+    const uint16_t NUM_PKTS = 5;
+
+    message->numPackets = NUM_PKTS;
+    for (int i = 0; i < NUM_PKTS; ++i) {
+        message->occupied.set(i);
+    }
+
+    EXPECT_CALL(mockDriver, releasePackets(Eq(message->packets), Eq(NUM_PKTS)))
+        .Times(1);
+
+    receiver->messageAllocator.pool.destroy(message);
+}
+
+TEST_F(ReceiverTest, Message_destructor_holes)
+{
+    Protocol::MessageId id = {42, 32};
+    Receiver::Message* message = receiver->messageAllocator.pool.construct(
+        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+
+    const uint16_t NUM_PKTS = 4;
+
+    message->numPackets = NUM_PKTS;
+    message->occupied.set(0);
+    message->occupied.set(1);
+    message->occupied.set(3);
+    message->occupied.set(4);
+
+    EXPECT_CALL(mockDriver, releasePackets(Eq(&message->packets[0]), Eq(2)))
+        .Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Eq(&message->packets[3]), Eq(2)))
+        .Times(1);
+
+    receiver->messageAllocator.pool.destroy(message);
+}
+
 TEST_F(ReceiverTest, Message_acknowledge)
 {
     Protocol::MessageId id = {42, 32};

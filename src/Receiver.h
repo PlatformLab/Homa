@@ -159,6 +159,7 @@ class Receiver {
             , scheduledMessageInfo(this, messageLength)
         {}
 
+        virtual ~Message();
         virtual void acknowledge() const;
         virtual bool dropped() const;
         virtual void fail() const;
@@ -178,7 +179,7 @@ class Receiver {
 
       private:
         /// Define the maximum number of packets that a message can hold.
-        static const size_t MAX_MESSAGE_PACKETS = 1024;
+        static const int MAX_MESSAGE_PACKETS = 1024;
 
         Driver::Packet* getPacket(size_t index) const;
         bool setPacket(size_t index, Driver::Packet* packet);

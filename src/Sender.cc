@@ -515,6 +515,15 @@ Sender::checkTimeouts()
 }
 
 /**
+ * Destruct a Message. Will release all contained Packet objects.
+ */
+Sender::Message::~Message()
+{
+    // Sender message must be contiguous
+    driver->releasePackets(packets, numPackets);
+}
+
+/**
  * @copydoc Homa::OutMessage::append()
  */
 void

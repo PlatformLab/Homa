@@ -1016,6 +1016,26 @@ TEST_F(SenderTest, checkTimeouts)
     bucket->messageTimeouts.cancelTimeout(&message.messageTimeout);
 }
 
+TEST_F(SenderTest, Message_destructor)
+{
+    const int MAX_RAW_PACKET_LENGTH = 2000;
+    ON_CALL(mockDriver, getMaxPayloadSize)
+        .WillByDefault(Return(MAX_RAW_PACKET_LENGTH));
+    Sender::Message* msg = new Sender::Message(sender, &mockDriver);
+
+    const uint16_t NUM_PKTS = 5;
+
+    msg->numPackets = NUM_PKTS;
+    for (int i = 0; i < NUM_PKTS; ++i) {
+        msg->occupied.set(i);
+    }
+
+    EXPECT_CALL(mockDriver, releasePackets(Eq(msg->packets), Eq(NUM_PKTS)))
+        .Times(1);
+
+    delete msg;
+}
+
 TEST_F(SenderTest, Message_append_basic)
 {
     const int MAX_RAW_PACKET_LENGTH = 2000;

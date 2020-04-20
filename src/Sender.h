@@ -152,6 +152,7 @@ class Sender {
             , queuedMessageInfo(this)
         {}
 
+        virtual ~Message();
         virtual void append(const void* source, size_t count);
         virtual void cancel();
         virtual Status getStatus() const;
