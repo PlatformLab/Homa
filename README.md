@@ -29,7 +29,10 @@ be supported by building additional drivers.
 
 ## What is the current state of this implementation?
 
-This implementation is under active development but is currently incomplete.
+This implementation should be close to feature complete or at least runnable.
+The interface, however, is still in flux and thus not stable to develop against.
+Additionally, more testing needs to be done to ensure the implementation works
+as expected.
 
 ## Quick Start
 
