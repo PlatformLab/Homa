@@ -21,6 +21,7 @@
 
 #include "ControlPacket.h"
 #include "Debug.h"
+#include "Perf.h"
 
 namespace Homa {
 namespace Core {
@@ -942,6 +943,8 @@ Sender::checkPingTimeouts()
 void
 Sender::trySend()
 {
+    uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
+    bool idle = true;
     // Skip when there are no messages to send.
     if (!sendReady) {
         return;
@@ -970,6 +973,8 @@ Sender::trySend()
         QueuedMessageInfo* info = &message.queuedMessageInfo;
         assert(info->packetsGranted <= info->packets->numPackets);
         while (info->packetsSent < info->packetsGranted) {
+            // There are packets to send
+            idle = false;
             Driver::Packet* packet =
                 info->packets->getPacket(info->packetsSent);
             assert(packet != nullptr);
@@ -1008,6 +1013,11 @@ Sender::trySend()
     }
 
     sending.clear();
+    uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
+    if (!idle) {
+        Perf::threadCounters.active_cycles.fetch_add(elapsed_cycles,
+                                                     std::memory_order_relaxed);
+    }
 }
 
 }  // namespace Core

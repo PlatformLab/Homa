@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "Cycles.h"
+#include "Perf.h"
 #include "Protocol.h"
 
 namespace Homa {
@@ -92,10 +93,13 @@ TransportImpl::poll()
 void
 TransportImpl::processPackets()
 {
+    uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
+    bool idle = true;
     const int MAX_BURST = 32;
     Driver::Packet* packets[MAX_BURST];
     int numPackets = driver->receivePackets(MAX_BURST, packets);
     for (int i = 0; i < numPackets; ++i) {
+        idle = false;
         Driver::Packet* packet = packets[i];
         assert(packet->length >=
                Util::downCast<int>(sizeof(Protocol::Packet::CommonHeader)));
@@ -127,6 +131,11 @@ TransportImpl::processPackets()
                 sender->handleErrorPacket(packet, driver);
                 break;
         }
+    }
+    uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
+    if (!idle) {
+        Perf::threadCounters.active_cycles.fetch_add(elapsed_cycles,
+                                                     std::memory_order_relaxed);
     }
 }
 

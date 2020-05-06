@@ -17,6 +17,7 @@
 
 #include <Cycles.h>
 
+#include "Perf.h"
 #include "Util.h"
 
 namespace Homa {
@@ -701,6 +702,9 @@ Receiver::checkResendTimeouts()
 void
 Receiver::trySendGrants()
 {
+    uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
+    bool idle = true;
+
     // Skip scheduling if another poller is already working on it.
     if (granting.test_and_set()) {
         return;
@@ -747,6 +751,7 @@ Receiver::trySendGrants()
         // Send a GRANT if there are too few bytes granted and unreceived.
         int receivedBytes = info->messageLength - info->bytesRemaining;
         if (info->bytesGranted - receivedBytes < policy.minScheduledBytes) {
+            idle = false;
             // Calculate new grant limit
             int newGrantLimit = std::min(
                 receivedBytes + policy.maxScheduledBytes, info->messageLength);
@@ -770,6 +775,12 @@ Receiver::trySendGrants()
     }
 
     granting.clear();
+
+    uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
+    if (!idle) {
+        Perf::threadCounters.active_cycles.fetch_add(elapsed_cycles,
+                                                     std::memory_order_relaxed);
+    }
 }
 
 /**
