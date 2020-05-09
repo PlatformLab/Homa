@@ -40,6 +40,54 @@ struct Stats {
 
     /// Number of bytes received by the transport.
     uint64_t rx_bytes;
+
+    /// Number of data packets sent.
+    uint64_t tx_data_pkts;
+
+    /// Number of data packets received.
+    uint64_t rx_data_pkts;
+
+    /// Number of grant packets sent.
+    uint64_t tx_grant_pkts;
+
+    /// Number of grant packets received.
+    uint64_t rx_grant_pkts;
+
+    /// Number of done packets sent.
+    uint64_t tx_done_pkts;
+
+    /// Number of done packets received.
+    uint64_t rx_done_pkts;
+
+    /// Number of resend packets sent.
+    uint64_t tx_resend_pkts;
+
+    /// Number of resend packets received.
+    uint64_t rx_resend_pkts;
+
+    /// Number of busy packets sent.
+    uint64_t tx_busy_pkts;
+
+    /// Number of busy packets received.
+    uint64_t rx_busy_pkts;
+
+    /// Number of ping packets sent.
+    uint64_t tx_ping_pkts;
+
+    /// Number of ping packets received.
+    uint64_t rx_ping_pkts;
+
+    /// Number of unknown packets sent.
+    uint64_t tx_unknown_pkts;
+
+    /// Number of unknown packets received.
+    uint64_t rx_unknown_pkts;
+
+    /// Number of error packets sent.
+    uint64_t tx_error_pkts;
+
+    /// Number of error packets received.
+    uint64_t rx_error_pkts;
 };
 
 /**

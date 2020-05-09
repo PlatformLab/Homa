@@ -73,6 +73,22 @@ struct Counters {
         : active_cycles(0)
         , tx_bytes(0)
         , rx_bytes(0)
+        , tx_data_pkts(0)
+        , rx_data_pkts(0)
+        , tx_grant_pkts(0)
+        , rx_grant_pkts(0)
+        , tx_done_pkts(0)
+        , rx_done_pkts(0)
+        , tx_resend_pkts(0)
+        , rx_resend_pkts(0)
+        , tx_busy_pkts(0)
+        , rx_busy_pkts(0)
+        , tx_ping_pkts(0)
+        , rx_ping_pkts(0)
+        , tx_unknown_pkts(0)
+        , rx_unknown_pkts(0)
+        , tx_error_pkts(0)
+        , rx_error_pkts(0)
     {}
 
     /**
@@ -88,6 +104,22 @@ struct Counters {
         active_cycles.add(other->active_cycles);
         tx_bytes.add(other->tx_bytes);
         rx_bytes.add(other->rx_bytes);
+        tx_data_pkts.add(other->tx_data_pkts);
+        rx_data_pkts.add(other->rx_data_pkts);
+        tx_grant_pkts.add(other->tx_grant_pkts);
+        rx_grant_pkts.add(other->rx_grant_pkts);
+        tx_done_pkts.add(other->tx_done_pkts);
+        rx_done_pkts.add(other->rx_done_pkts);
+        tx_resend_pkts.add(other->tx_resend_pkts);
+        rx_resend_pkts.add(other->rx_resend_pkts);
+        tx_busy_pkts.add(other->tx_busy_pkts);
+        rx_busy_pkts.add(other->rx_busy_pkts);
+        tx_ping_pkts.add(other->tx_ping_pkts);
+        rx_ping_pkts.add(other->rx_ping_pkts);
+        tx_unknown_pkts.add(other->tx_unknown_pkts);
+        rx_unknown_pkts.add(other->rx_unknown_pkts);
+        tx_error_pkts.add(other->tx_error_pkts);
+        rx_error_pkts.add(other->rx_error_pkts);
     }
 
     /**
@@ -98,6 +130,22 @@ struct Counters {
         stats->active_cycles = active_cycles.get();
         stats->tx_bytes = tx_bytes.get();
         stats->rx_bytes = rx_bytes.get();
+        stats->tx_data_pkts = tx_data_pkts.get();
+        stats->rx_data_pkts = rx_data_pkts.get();
+        stats->tx_grant_pkts = tx_grant_pkts.get();
+        stats->rx_grant_pkts = rx_grant_pkts.get();
+        stats->tx_done_pkts = tx_done_pkts.get();
+        stats->rx_done_pkts = rx_done_pkts.get();
+        stats->tx_resend_pkts = tx_resend_pkts.get();
+        stats->rx_resend_pkts = rx_resend_pkts.get();
+        stats->tx_busy_pkts = tx_busy_pkts.get();
+        stats->rx_busy_pkts = rx_busy_pkts.get();
+        stats->tx_ping_pkts = tx_ping_pkts.get();
+        stats->rx_ping_pkts = rx_ping_pkts.get();
+        stats->tx_unknown_pkts = tx_unknown_pkts.get();
+        stats->rx_unknown_pkts = rx_unknown_pkts.get();
+        stats->tx_error_pkts = tx_error_pkts.get();
+        stats->rx_error_pkts = rx_error_pkts.get();
     }
 
     /// CPU time spent actively processing Homa messages in cycles.
@@ -108,6 +156,54 @@ struct Counters {
 
     /// Number of bytes received by the transport.
     Stat<uint64_t> rx_bytes;
+
+    /// Number of data packets sent.
+    Stat<uint64_t> tx_data_pkts;
+
+    /// Number of data packets received.
+    Stat<uint64_t> rx_data_pkts;
+
+    /// Number of grant packets sent.
+    Stat<uint64_t> tx_grant_pkts;
+
+    /// Number of grant packets received.
+    Stat<uint64_t> rx_grant_pkts;
+
+    /// Number of done packets sent.
+    Stat<uint64_t> tx_done_pkts;
+
+    /// Number of done packets received.
+    Stat<uint64_t> rx_done_pkts;
+
+    /// Number of resend packets sent.
+    Stat<uint64_t> tx_resend_pkts;
+
+    /// Number of resend packets received.
+    Stat<uint64_t> rx_resend_pkts;
+
+    /// Number of busy packets sent.
+    Stat<uint64_t> tx_busy_pkts;
+
+    /// Number of busy packets received.
+    Stat<uint64_t> rx_busy_pkts;
+
+    /// Number of ping packets sent.
+    Stat<uint64_t> tx_ping_pkts;
+
+    /// Number of ping packets received.
+    Stat<uint64_t> rx_ping_pkts;
+
+    /// Number of unknown packets sent.
+    Stat<uint64_t> tx_unknown_pkts;
+
+    /// Number of unknown packets received.
+    Stat<uint64_t> rx_unknown_pkts;
+
+    /// Number of error packets sent.
+    Stat<uint64_t> tx_error_pkts;
+
+    /// Number of error packets received.
+    Stat<uint64_t> rx_error_pkts;
 };
 
 /**

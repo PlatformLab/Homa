@@ -234,11 +234,13 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
             priority = info->priority;
         }
 
+        Perf::counters.tx_grant_pkts.add(1);
         ControlPacket::send<Protocol::Packet::GrantHeader>(
             driver, message->source, message->id, bytesGranted, priority);
     } else {
         // We are here because we have no knowledge of the message the Sender is
         // asking about.  Reply UNKNOWN so the Sender can react accordingly.
+        Perf::counters.tx_unknown_pkts.add(1);
         ControlPacket::send<Protocol::Packet::UnknownHeader>(
             driver, packet->address, id);
     }
@@ -343,6 +345,7 @@ Receiver::Message::acknowledge() const
 {
     MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
     SpinLock::Lock lock(bucket->mutex);
+    Perf::counters.tx_done_pkts.add(1);
     ControlPacket::send<Protocol::Packet::DoneHeader>(driver, source, id);
 }
 
@@ -363,6 +366,7 @@ Receiver::Message::fail() const
 {
     MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
     SpinLock::Lock lock(bucket->mutex);
+    Perf::counters.tx_error_pkts.add(1);
     ControlPacket::send<Protocol::Packet::ErrorHeader>(driver, source, id);
 }
 
@@ -672,6 +676,7 @@ Receiver::checkResendTimeouts()
                         // unscheduled packets (see
                         // Sender::handleResendPacket()).
                         SpinLock::Lock lock_scheduler(schedulerMutex);
+                        Perf::counters.tx_resend_pkts.add(1);
                         ControlPacket::send<Protocol::Packet::ResendHeader>(
                             message->driver, message->source, message->id,
                             Util::downCast<uint16_t>(index),
@@ -684,6 +689,7 @@ Receiver::checkResendTimeouts()
             if (num != 0) {
                 // Send out the last range of packets found.
                 SpinLock::Lock lock_scheduler(schedulerMutex);
+                Perf::counters.tx_resend_pkts.add(1);
                 ControlPacket::send<Protocol::Packet::ResendHeader>(
                     message->driver, message->source, message->id,
                     Util::downCast<uint16_t>(index),
@@ -757,6 +763,7 @@ Receiver::trySendGrants()
                 receivedBytes + policy.maxScheduledBytes, info->messageLength);
             assert(newGrantLimit >= info->bytesGranted);
             info->bytesGranted = newGrantLimit;
+            Perf::counters.tx_grant_pkts.add(1);
             ControlPacket::send<Protocol::Packet::GrantHeader>(
                 driver, source, id,
                 Util::downCast<uint32_t>(info->bytesGranted), info->priority);

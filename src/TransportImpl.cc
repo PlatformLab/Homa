@@ -108,27 +108,35 @@ TransportImpl::processPackets()
             static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
         switch (header->opcode) {
             case Protocol::Packet::DATA:
+                Perf::counters.rx_data_pkts.add(1);
                 receiver->handleDataPacket(packet, driver);
                 break;
             case Protocol::Packet::GRANT:
+                Perf::counters.rx_grant_pkts.add(1);
                 sender->handleGrantPacket(packet, driver);
                 break;
             case Protocol::Packet::DONE:
+                Perf::counters.rx_done_pkts.add(1);
                 sender->handleDonePacket(packet, driver);
                 break;
             case Protocol::Packet::RESEND:
+                Perf::counters.rx_resend_pkts.add(1);
                 sender->handleResendPacket(packet, driver);
                 break;
             case Protocol::Packet::BUSY:
+                Perf::counters.rx_busy_pkts.add(1);
                 receiver->handleBusyPacket(packet, driver);
                 break;
             case Protocol::Packet::PING:
+                Perf::counters.rx_ping_pkts.add(1);
                 receiver->handlePingPacket(packet, driver);
                 break;
             case Protocol::Packet::UNKNOWN:
+                Perf::counters.rx_unknown_pkts.add(1);
                 sender->handleUnknownPacket(packet, driver);
                 break;
             case Protocol::Packet::ERROR:
+                Perf::counters.rx_error_pkts.add(1);
                 sender->handleErrorPacket(packet, driver);
                 break;
         }

@@ -220,6 +220,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         // this Sender has been busy and the Receiver is trying to ensure there
         // are no lost packets.  Reply BUSY and allow this Sender to send DATA
         // when it's ready.
+        Perf::counters.tx_busy_pkts.add(1);
         ControlPacket::send<Protocol::Packet::BusyHeader>(
             driver, info->destination, info->id);
     } else {
@@ -231,6 +232,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
             Driver::Packet* packet = info->packets->getPacket(i);
             packet->priority = resendPriority;
             // Packets will be sent at the priority their original priority.
+            Perf::counters.tx_data_pkts.add(1);
             Perf::counters.tx_bytes.add(packet->length);
             driver->sendPacket(packet);
         }
@@ -376,6 +378,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             Driver::Packet* dataPacket = message->getPacket(0);
             assert(dataPacket != nullptr);
             dataPacket->priority = policy.priority;
+            Perf::counters.tx_data_pkts.add(1);
             Perf::counters.tx_bytes.add(dataPacket->length);
             driver->sendPacket(dataPacket);
             message->state.store(OutMessage::Status::SENT);
@@ -779,6 +782,7 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         Driver::Packet* packet = message->getPacket(0);
         assert(packet != nullptr);
         packet->priority = policy.priority;
+        Perf::counters.tx_data_pkts.add(1);
         Perf::counters.tx_bytes.add(packet->length);
         driver->sendPacket(packet);
         message->state.store(OutMessage::Status::SENT);
@@ -932,6 +936,7 @@ Sender::checkPingTimeouts()
 
             // Have not heard from the Receiver in the last timeout period. Ping
             // the receiver to ensure it still knows about this Message.
+            Perf::counters.tx_ping_pkts.add(1);
             ControlPacket::send<Protocol::Packet::PingHeader>(
                 message->driver, message->destination, message->id);
         }
@@ -988,6 +993,7 @@ Sender::trySend()
             }
             // ... if not, send away!
             packet->priority = info->priority;
+            Perf::counters.tx_data_pkts.add(1);
             Perf::counters.tx_bytes.add(packet->length);
             driver->sendPacket(packet);
             int packetDataBytes =
