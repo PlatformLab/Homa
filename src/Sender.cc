@@ -586,6 +586,15 @@ Sender::Message::getStatus() const
 }
 
 /**
+ * @copydoc Homa::OutMessage::length()
+ */
+size_t
+Sender::Message::length() const
+{
+    return Util::downCast<size_t>(messageLength - start);
+}
+
+/**
  * @copydoc Homa::OutMessage::prepend()
  */
 void

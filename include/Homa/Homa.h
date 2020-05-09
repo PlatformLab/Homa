@@ -164,6 +164,11 @@ class OutMessage {
     virtual Status getStatus() const = 0;
 
     /**
+     * Return the number of bytes this Message contains.
+     */
+    virtual size_t length() const = 0;
+
+    /**
      * Copy an array of bytes to the beginning of the Message.
      *
      * The number of bytes prepended must have been previously reserved;

@@ -1127,6 +1127,15 @@ TEST_F(SenderTest, Message_getStatus)
     // Nothing to test
 }
 
+TEST_F(SenderTest, Message_length)
+{
+    ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
+    Sender::Message msg(sender, &mockDriver);
+    msg.messageLength = 200;
+    msg.start = 20;
+    EXPECT_EQ(180U, msg.length());
+}
+
 TEST_F(SenderTest, Message_prepend)
 {
     ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));

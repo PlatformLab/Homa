@@ -156,6 +156,7 @@ class Sender {
         virtual void append(const void* source, size_t count);
         virtual void cancel();
         virtual Status getStatus() const;
+        virtual size_t length() const;
         virtual void prepend(const void* source, size_t count);
         virtual void release();
         virtual void reserve(size_t count);
