@@ -778,8 +778,7 @@ Receiver::trySendGrants()
 
     uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
     if (!idle) {
-        Perf::threadCounters.active_cycles.fetch_add(elapsed_cycles,
-                                                     std::memory_order_relaxed);
+        Perf::counters.active_cycles.add(elapsed_cycles);
     }
 }
 

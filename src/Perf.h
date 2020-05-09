@@ -27,8 +27,75 @@ namespace Perf {
  * Collection of collected performance counters.
  */
 struct Counters {
+    /**
+     * Wrapper class for individual counter entires to
+     */
+    template <typename T>
+    struct Stat : private std::atomic<T> {
+        /**
+         * Passthrough constructor.
+         */
+        template <typename... Args>
+        Stat(Args&&... args)
+            : std::atomic<T>(static_cast<Args&&>(args)...)
+        {}
+
+        /**
+         * Add the value of another Stat to this Stat.
+         */
+        void add(const Stat<T>& other)
+        {
+            this->fetch_add(other.load(std::memory_order_relaxed),
+                            std::memory_order_relaxed);
+        }
+
+        /**
+         * Add the given value to this Stat.
+         */
+        void add(T val)
+        {
+            this->fetch_add(val, std::memory_order_relaxed);
+        }
+
+        /**
+         * Return the stat value.
+         */
+        T get() const
+        {
+            return this->load(std::memory_order_relaxed);
+        }
+    };
+
+    /**
+     * Default constructor.
+     */
+    Counters()
+        : active_cycles(0)
+    {}
+
+    /**
+     * Default destructor.
+     */
+    ~Counters() = default;
+
+    /**
+     * Add the values in other to the corresponding counters in this object.
+     */
+    void add(const Counters* other)
+    {
+        active_cycles.add(other->active_cycles);
+    }
+
+    /**
+     * Export this object's counter values to a Stats structure.
+     */
+    void dumpStats(Stats* stats)
+    {
+        stats->active_cycles = active_cycles.get();
+    }
+
     /// CPU time spent actively processing Homa messages in cycles.
-    std::atomic<uint64_t> active_cycles;
+    Stat<uint64_t> active_cycles;
 };
 
 /**
@@ -42,7 +109,7 @@ struct ThreadCounters : public Counters {
 /**
  * Per thread counters.
  */
-extern thread_local ThreadCounters threadCounters;
+extern thread_local ThreadCounters counters;
 
 }  // namespace Perf
 }  // namespace Homa
