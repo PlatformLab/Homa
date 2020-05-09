@@ -231,6 +231,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
             Driver::Packet* packet = info->packets->getPacket(i);
             packet->priority = resendPriority;
             // Packets will be sent at the priority their original priority.
+            Perf::counters.tx_bytes.add(packet->length);
             driver->sendPacket(packet);
         }
     }
@@ -375,6 +376,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             Driver::Packet* dataPacket = message->getPacket(0);
             assert(dataPacket != nullptr);
             dataPacket->priority = policy.priority;
+            Perf::counters.tx_bytes.add(dataPacket->length);
             driver->sendPacket(dataPacket);
             message->state.store(OutMessage::Status::SENT);
         } else {
@@ -777,6 +779,7 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
         Driver::Packet* packet = message->getPacket(0);
         assert(packet != nullptr);
         packet->priority = policy.priority;
+        Perf::counters.tx_bytes.add(packet->length);
         driver->sendPacket(packet);
         message->state.store(OutMessage::Status::SENT);
     } else {
@@ -985,6 +988,7 @@ Sender::trySend()
             }
             // ... if not, send away!
             packet->priority = info->priority;
+            Perf::counters.tx_bytes.add(packet->length);
             driver->sendPacket(packet);
             int packetDataBytes =
                 packet->length - info->packets->TRANSPORT_HEADER_LENGTH;

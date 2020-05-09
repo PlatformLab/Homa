@@ -103,6 +103,7 @@ TransportImpl::processPackets()
         Driver::Packet* packet = packets[i];
         assert(packet->length >=
                Util::downCast<int>(sizeof(Protocol::Packet::CommonHeader)));
+        Perf::counters.rx_bytes.add(packet->length);
         Protocol::Packet::CommonHeader* header =
             static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
         switch (header->opcode) {

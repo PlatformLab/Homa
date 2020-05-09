@@ -34,6 +34,12 @@ struct Stats {
 
     /// CPU time spent actively processing Homa messages in cycles.
     uint64_t active_cycles;
+
+    /// Number of bytes sent by the transport.
+    uint64_t tx_bytes;
+
+    /// Number of bytes received by the transport.
+    uint64_t rx_bytes;
 };
 
 /**

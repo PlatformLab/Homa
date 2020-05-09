@@ -18,6 +18,8 @@
 
 #include <Homa/Driver.h>
 
+#include "Perf.h"
+
 namespace Homa {
 namespace Core {
 namespace ControlPacket {
@@ -42,6 +44,7 @@ send(Driver* driver, Driver::Address address, Args&&... args)
     packet->length = sizeof(PacketHeaderType);
     packet->address = address;
     packet->priority = driver->getHighestPacketPriority();
+    Perf::counters.tx_bytes.add(packet->length);
     driver->sendPacket(packet);
     driver->releasePackets(&packet, 1);
 }

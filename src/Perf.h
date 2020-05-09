@@ -71,6 +71,8 @@ struct Counters {
      */
     Counters()
         : active_cycles(0)
+        , tx_bytes(0)
+        , rx_bytes(0)
     {}
 
     /**
@@ -84,6 +86,8 @@ struct Counters {
     void add(const Counters* other)
     {
         active_cycles.add(other->active_cycles);
+        tx_bytes.add(other->tx_bytes);
+        rx_bytes.add(other->rx_bytes);
     }
 
     /**
@@ -92,10 +96,18 @@ struct Counters {
     void dumpStats(Stats* stats)
     {
         stats->active_cycles = active_cycles.get();
+        stats->tx_bytes = tx_bytes.get();
+        stats->rx_bytes = rx_bytes.get();
     }
 
     /// CPU time spent actively processing Homa messages in cycles.
     Stat<uint64_t> active_cycles;
+
+    /// Number of bytes sent by the transport.
+    Stat<uint64_t> tx_bytes;
+
+    /// Number of bytes received by the transport.
+    Stat<uint64_t> rx_bytes;
 };
 
 /**
