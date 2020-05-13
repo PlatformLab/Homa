@@ -340,19 +340,21 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
     // attempt to dequeue a batch of received packets from the NIC
     // as well as from the loopback ring.
     uint32_t incomingPkts = 0;
+    uint32_t loopbackPkts = 0;
     {
         SpinLock::Lock lock(rx.mutex);
+
         incomingPkts = rte_eth_rx_burst(
             port, 0, mPkts, Homa::Util::downCast<uint16_t>(maxPackets));
-    }
 
-    uint32_t loopbackPkts = rte_ring_count(loopbackRing);
-    if (incomingPkts + loopbackPkts > maxPackets) {
-        loopbackPkts = maxPackets - incomingPkts;
-    }
-    for (uint32_t i = 0; i < loopbackPkts; i++) {
-        rte_ring_dequeue(loopbackRing,
-                         reinterpret_cast<void**>(&mPkts[incomingPkts + i]));
+        loopbackPkts = rte_ring_count(loopbackRing);
+        if (incomingPkts + loopbackPkts > maxPackets) {
+            loopbackPkts = maxPackets - incomingPkts;
+        }
+        for (uint32_t i = 0; i < loopbackPkts; i++) {
+            rte_ring_dequeue(loopbackRing, reinterpret_cast<void**>(
+                                               &mPkts[incomingPkts + i]));
+        }
     }
     uint32_t totalPkts = incomingPkts + loopbackPkts;
 
@@ -388,6 +390,7 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
             }
         }
 
+        assert(rte_pktmbuf_pkt_len(m) >= headerLength);
         uint32_t length = rte_pktmbuf_pkt_len(m) - headerLength;
         assert(length <= MAX_PAYLOAD_SIZE);
 
