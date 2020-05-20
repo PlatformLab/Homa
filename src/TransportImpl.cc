@@ -144,6 +144,8 @@ TransportImpl::processPackets()
     uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
     if (!idle) {
         Perf::counters.active_cycles.add(elapsed_cycles);
+    } else {
+        Perf::counters.idle_cycles.add(elapsed_cycles);
     }
 }
 
