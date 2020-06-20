@@ -751,6 +751,50 @@ TEST_F(SenderTest, handleUnknownPacket_singlePacketMessage)
     EXPECT_FALSE(sender->sendReady.load());
 }
 
+TEST_F(SenderTest, handleUnknownPacket_NO_RETRY)
+{
+    Protocol::MessageId id = {42, 1};
+    Driver::Address destination = (Driver::Address)22;
+
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage());
+    message->options = OutMessage::Options::NO_RETRY;
+    std::vector<Homa::Mock::MockDriver::MockPacket*> packets;
+    char payload[5][1028];
+    for (int i = 0; i < 5; ++i) {
+        Homa::Mock::MockDriver::MockPacket* packet =
+            new Homa::Mock::MockDriver::MockPacket(payload[i]);
+        packets.push_back(packet);
+        setMessagePacket(message, i, packet);
+    }
+    message->destination = destination;
+    message->messageLength = 4500;
+    message->state.store(Homa::OutMessage::Status::IN_PROGRESS);
+    SenderTest::addMessage(sender, id, message, true);
+    bucket->messageTimeouts.setTimeout(&message->messageTimeout);
+    bucket->pingTimeouts.setTimeout(&message->pingTimeout);
+    EXPECT_TRUE(
+        sender->sendQueue.contains(&message->queuedMessageInfo.sendQueueNode));
+
+    Protocol::Packet::UnknownHeader* header =
+        static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender->handleUnknownPacket(&mockPacket, &mockDriver);
+
+    EXPECT_FALSE(
+        sender->sendQueue.contains(&message->queuedMessageInfo.sendQueueNode));
+    EXPECT_EQ(nullptr, message->messageTimeout.node.list);
+    EXPECT_EQ(nullptr, message->pingTimeout.node.list);
+    EXPECT_EQ(Homa::OutMessage::Status::FAILED, message->state);
+    EXPECT_EQ(Homa::OutMessage::Status::FAILED, message->state);
+    EXPECT_FALSE(sender->sendReady.load());
+}
+
 TEST_F(SenderTest, handleUnknownPacket_no_message)
 {
     Protocol::MessageId id = {42, 1};
@@ -1303,11 +1347,13 @@ TEST_F(SenderTest, sendMessage_basic)
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
 
-    sender->sendMessage(message, destination);
+    sender->sendMessage(message, destination,
+                        Sender::Message::Options::NO_RETRY);
 
     // Check Message metadata
     EXPECT_EQ(id, message->id);
     EXPECT_EQ(destination, message->destination);
+    EXPECT_EQ(Sender::Message::Options::NO_RETRY, message->options);
 
     // Check packet metadata
     Protocol::Packet::DataHeader* header =

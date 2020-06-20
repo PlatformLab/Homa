@@ -332,8 +332,32 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
     }
 
     OutMessage::Status status = message->getStatus();
-    if (status == OutMessage::Status::IN_PROGRESS ||
-        status == OutMessage::Status::SENT) {
+    assert(status != OutMessage::Status::NOT_STARTED);
+    if (status != OutMessage::Status::IN_PROGRESS &&
+        status != OutMessage::Status::SENT) {
+        // The message is already considered "done" so the UNKNOWN packet
+        // must be a stale response to a ping.
+    } else if (message->options & OutMessage::Options::NO_RETRY) {
+        // Option: NO_RETRY
+
+        // Either the Message or the DONE packet was lost; consider the message
+        // failed since the application asked for the message not to be retried.
+
+        // Remove Message from sendQueue.
+        if (message->numPackets > 1) {
+            SpinLock::Lock lock_queue(queueMutex);
+            QueuedMessageInfo* info = &message->queuedMessageInfo;
+            if (message->state == OutMessage::Status::IN_PROGRESS) {
+                assert(sendQueue.contains(&info->sendQueueNode));
+                sendQueue.remove(&info->sendQueueNode);
+            }
+            assert(!sendQueue.contains(&info->sendQueueNode));
+        }
+
+        bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+        bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+        message->state.store(OutMessage::Status::FAILED);
+    } else {
         // Message isn't done yet so we will restart sending the message.
 
         // Make sure the message is not in the sendQueue before making any
@@ -405,9 +429,6 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
                 QueuedMessageInfo::ComparePriority());
             sendReady.store(true);
         }
-    } else {
-        // The message is already considered "done" so the UNKNOWN packet
-        // must be a stale response to a ping.
     }
 
     driver->releasePackets(&packet, 1);
@@ -676,9 +697,10 @@ Sender::Message::reserve(size_t count)
  * @copydoc Homa::OutMessage::send()
  */
 void
-Sender::Message::send(Driver::Address destination)
+Sender::Message::send(Driver::Address destination,
+                      Sender::Message::Options options)
 {
-    sender->sendMessage(this, destination);
+    sender->sendMessage(this, destination, options);
 }
 
 /**
@@ -730,11 +752,14 @@ Sender::Message::getOrAllocPacket(size_t index)
  *      Sender::Message to be sent.
  * @param destination
  *      Destination address for this message.
+ * @param options
+ *      Flags indicating requested non-default send behavior.
  *
  * @sa dropMessage()
  */
 void
-Sender::sendMessage(Sender::Message* message, Driver::Address destination)
+Sender::sendMessage(Sender::Message* message, Driver::Address destination,
+                    Sender::Message::Options options)
 {
     // Prepare the message
     assert(message->driver == driver);
@@ -749,6 +774,7 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination)
 
     message->id = id;
     message->destination = destination;
+    message->options = options;
     message->state.store(OutMessage::Status::IN_PROGRESS);
 
     int actualMessageLen = 0;

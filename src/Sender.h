@@ -139,6 +139,7 @@ class Sender {
                                  TRANSPORT_HEADER_LENGTH)
             , id(0, 0)
             , destination()
+            , options(Options::NONE)
             , start(0)
             , messageLength(0)
             , numPackets(0)
@@ -160,7 +161,8 @@ class Sender {
         virtual void prepend(const void* source, size_t count);
         virtual void release();
         virtual void reserve(size_t count);
-        virtual void send(Driver::Address destination);
+        virtual void send(Driver::Address destination,
+                          Options options = Options::NONE);
 
       private:
         /// Define the maximum number of packets that a message can hold.
@@ -188,6 +190,9 @@ class Sender {
 
         /// Contains destination address this message.
         Driver::Address destination;
+
+        /// Contains flags for any requested optional send behavior.
+        Options options;
 
         /// First byte where data is or will go if empty.
         int start;
@@ -379,7 +384,8 @@ class Sender {
         Protocol::MessageId::Hasher hasher;
     };
 
-    void sendMessage(Sender::Message* message, Driver::Address destination);
+    void sendMessage(Sender::Message* message, Driver::Address destination,
+                     Message::Options options = Message::Options::NONE);
     void cancelMessage(Sender::Message* message);
     void dropMessage(Sender::Message* message);
     uint64_t checkMessageTimeouts();

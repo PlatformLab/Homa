@@ -133,6 +133,16 @@ class OutMessage {
     };
 
     /**
+     * Options with which an OutMessage can be sent.
+     */
+    enum Options {
+        NONE = 0,           //< Default send behavior.
+        NO_RETRY = 1 << 0,  //< Message will not be resent if recoverable send
+                            //< failure occurs; provides at-most-once delivery
+                            //< of messages.
+    };
+
+    /**
      * Custom deleter for use with std::unique_ptr.
      */
     struct Deleter {
@@ -206,8 +216,11 @@ class OutMessage {
      *
      * @param destination
      *      Address of the transport to which this message will be sent.
+     * @param options
+     *      Flags to request non-default sending behavior.
      */
-    virtual void send(Driver::Address destination) = 0;
+    virtual void send(Driver::Address destination,
+                      Options options = Options::NONE) = 0;
 
   protected:
     /**
