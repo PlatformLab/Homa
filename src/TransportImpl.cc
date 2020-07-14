@@ -93,13 +93,16 @@ TransportImpl::poll()
 void
 TransportImpl::processPackets()
 {
-    uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
-    bool idle = true;
+    // Keep track of time spent doing active processing versus idle.
+    Perf::Timer activityTimer;
+    activityTimer.split();
+    uint64_t activeTime = 0;
+    uint64_t idleTime = 0;
+
     const int MAX_BURST = 32;
     Driver::Packet* packets[MAX_BURST];
     int numPackets = driver->receivePackets(MAX_BURST, packets);
     for (int i = 0; i < numPackets; ++i) {
-        idle = false;
         Driver::Packet* packet = packets[i];
         assert(packet->length >=
                Util::downCast<int>(sizeof(Protocol::Packet::CommonHeader)));
@@ -140,13 +143,12 @@ TransportImpl::processPackets()
                 sender->handleErrorPacket(packet, driver);
                 break;
         }
+        activeTime += activityTimer.split();
     }
-    uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
-    if (!idle) {
-        Perf::counters.active_cycles.add(elapsed_cycles);
-    } else {
-        Perf::counters.idle_cycles.add(elapsed_cycles);
-    }
+    idleTime += activityTimer.split();
+
+    Perf::counters.active_cycles.add(activeTime);
+    Perf::counters.idle_cycles.add(idleTime);
 }
 
 }  // namespace Core
