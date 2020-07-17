@@ -37,19 +37,15 @@ class MockSender : public Core::Sender {
                  pingIntervalCycles)
     {}
 
-    MOCK_METHOD0(allocMessage, Homa::OutMessage*());
-    MOCK_METHOD2(handleDonePacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD2(handleGrantPacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD2(handleResendPacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD2(handleUnknownPacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD2(handleErrorPacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD0(poll, void());
-    MOCK_METHOD0(checkTimeouts, uint64_t());
+    MOCK_METHOD(Homa::OutMessage*, allocMessage, (uint16_t sport), (override));
+    MOCK_METHOD(void, handleDonePacket, (Driver::Packet* packet), (override));
+    MOCK_METHOD(void, handleGrantPacket, (Driver::Packet* packet), (override));
+    MOCK_METHOD(void, handleResendPacket, (Driver::Packet* packet), (override));
+    MOCK_METHOD(void, handleUnknownPacket, (Driver::Packet* packet),
+                (override));
+    MOCK_METHOD(void, handleErrorPacket, (Driver::Packet* packet), (override));
+    MOCK_METHOD(void, poll, (), (override));
+    MOCK_METHOD(uint64_t, checkTimeouts, (), (override));
 };
 
 }  // namespace Mock

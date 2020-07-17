@@ -75,9 +75,9 @@ class Manager {
     virtual ~Manager() = default;
     virtual int getResendPriority();
     virtual Scheduled getScheduledPolicy();
-    virtual Unscheduled getUnscheduledPolicy(const Driver::Address destination,
+    virtual Unscheduled getUnscheduledPolicy(const IpAddress destination,
                                              const uint32_t messageLength);
-    virtual void signalNewMessage(const Driver::Address source,
+    virtual void signalNewMessage(const IpAddress source,
                                   uint8_t policyVersion,
                                   uint32_t messageLength);
     virtual void poll();
@@ -107,7 +107,7 @@ class Manager {
     /// The scheduled policy for the Transport that owns this Policy::Manager.
     Scheduled localScheduledPolicy;
     /// Collection of the known Policies for each peered Homa::Transport;
-    std::unordered_map<Driver::Address, UnscheduledPolicy> peerPolicies;
+    std::unordered_map<IpAddress, UnscheduledPolicy> peerPolicies;
     /// Number of bytes that can be transmitted in one round-trip-time.
     const uint32_t RTT_BYTES;
     /// The highest network packet priority that the driver supports.

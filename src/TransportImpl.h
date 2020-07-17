@@ -47,9 +47,10 @@ class TransportImpl : public Transport {
     ~TransportImpl();
 
     /// See Homa::Transport::alloc()
-    virtual Homa::unique_ptr<Homa::OutMessage> alloc()
+    virtual Homa::unique_ptr<Homa::OutMessage> alloc(uint16_t sourcePort)
     {
-        return Homa::unique_ptr<Homa::OutMessage>(sender->allocMessage());
+        Homa::OutMessage* outMessage = sender->allocMessage(sourcePort);
+        return Homa::unique_ptr<Homa::OutMessage>(outMessage);
     }
 
     /// See Homa::Transport::receive()
@@ -74,6 +75,7 @@ class TransportImpl : public Transport {
 
   private:
     void processPackets();
+    void processPacket(Driver::Packet* packet, IpAddress source);
 
     /// Unique identifier for this transport.
     const std::atomic<uint64_t> transportId;

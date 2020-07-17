@@ -18,7 +18,6 @@
 
 #include <string>
 
-#include "../RawAddressType.h"
 #include "StringUtil.h"
 
 namespace Homa {
@@ -34,46 +33,12 @@ TEST(FakeDriverTest, constructor)
     EXPECT_EQ(nextAddressId, driver.localAddressId);
 }
 
-TEST(FakeDriverTest, getAddress_string)
-{
-    FakeDriver driver;
-    std::string addressStr("42");
-    Driver::Address address = driver.getAddress(&addressStr);
-    EXPECT_EQ("42", driver.addressToString(address));
-}
-
-TEST(FakeDriverTest, getAddress_wireformat)
-{
-    FakeDriver driver;
-    Driver::WireFormatAddress wireformatAddress;
-    wireformatAddress.type = RawAddressType::FAKE;
-    *reinterpret_cast<uint64_t*>(wireformatAddress.bytes) = 42;
-    Driver::Address address = driver.getAddress(&wireformatAddress);
-    EXPECT_EQ("42", driver.addressToString(address));
-}
-
-TEST(FakeDriverTest, addressToString)
-{
-    FakeDriver driver;
-    Driver::Address address = 42;
-    EXPECT_EQ("42", driver.addressToString(address));
-}
-
-TEST(FakeDriverTest, addressToWireFormat)
-{
-    FakeDriver driver;
-    Driver::WireFormatAddress wireformatAddress;
-    driver.addressToWireFormat(42, &wireformatAddress);
-    EXPECT_EQ("42",
-              driver.addressToString(driver.getAddress(&wireformatAddress)));
-}
-
 TEST(FakeDriverTest, allocPacket)
 {
     FakeDriver driver;
     Driver::Packet* packet = driver.allocPacket();
     // allocPacket doesn't do much so we just need to make sure we can call it.
-    delete packet;
+    delete container_of(packet, FakePacket, base);
 }
 
 TEST(FakeDriverTest, sendPackets)
@@ -82,13 +47,14 @@ TEST(FakeDriverTest, sendPackets)
     FakeDriver driver2;
 
     Driver::Packet* packets[4];
+    IpAddress destinations[4];
+    int prio[4];
     for (int i = 0; i < 4; ++i) {
         packets[i] = driver1.allocPacket();
-        packets[i]->address = driver2.getLocalAddress();
-        packets[i]->priority = i;
+        destinations[i] = driver2.getLocalAddress();
+        prio[i] = i;
     }
-    std::string addressStr("42");
-    packets[2]->address = driver1.getAddress(&addressStr);
+    destinations[2] = IpAddress(42);
 
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(0).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(1).size());
@@ -99,7 +65,7 @@ TEST(FakeDriverTest, sendPackets)
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(7).size());
 
-    driver1.sendPacket(packets[0]);
+    driver1.sendPacket(packets[0], destinations[0], prio[0]);
 
     EXPECT_EQ(1U, driver2.nic.priorityQueue.at(0).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(1).size());
@@ -110,13 +76,12 @@ TEST(FakeDriverTest, sendPackets)
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(7).size());
     {
-        Driver::Packet* packet = static_cast<Driver::Packet*>(
-            driver2.nic.priorityQueue.at(0).front());
-        EXPECT_EQ(driver1.getLocalAddress(), packet->address);
+        Driver::Packet* packet = &driver2.nic.priorityQueue.at(0).front()->base;
+        EXPECT_EQ(driver1.getLocalAddress(), packet->sourceIp);
     }
 
     for (int i = 0; i < 4; ++i) {
-        driver1.sendPacket(packets[i]);
+        driver1.sendPacket(packets[i], destinations[i], prio[i]);
     }
 
     EXPECT_EQ(2U, driver2.nic.priorityQueue.at(0).size());
@@ -128,7 +93,7 @@ TEST(FakeDriverTest, sendPackets)
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(7).size());
 
-    delete packets[2];
+    delete container_of(packets[2], FakePacket, base);
 }
 
 TEST(FakeDriverTest, receivePackets)
@@ -235,10 +200,8 @@ TEST(FakeDriverTest, getBandwidth)
 TEST(FakeDriverTest, getLocalAddress)
 {
     uint64_t nextAddressId = FakeDriver().localAddressId + 1;
-    std::string addressStr = StringUtil::format("%lu", nextAddressId);
-
     FakeDriver driver;
-    EXPECT_EQ(driver.getAddress(&addressStr), driver.getLocalAddress());
+    EXPECT_EQ(nextAddressId, driver.getLocalAddress());
 }
 
 }  // namespace

@@ -97,14 +97,14 @@ Manager::getScheduledPolicy()
  * unilaterally "granted" (unscheduled) bytes for a new Message to be sent.
  *
  * @param destination
- *      The policy for the Transport at this Address will be returned.
+ *      The policy for the Transport at this IpAddress will be returned.
  * @param messageLength
  *      The policy for message containing this many bytes will be returned.
  *
  * @sa Policy::Unscheduled
  */
 Unscheduled
-Manager::getUnscheduledPolicy(const Driver::Address destination,
+Manager::getUnscheduledPolicy(const IpAddress destination,
                               const uint32_t messageLength)
 {
     SpinLock::Lock lock(mutex);
@@ -140,14 +140,14 @@ Manager::getUnscheduledPolicy(const Driver::Address destination,
  * Called by the Receiver when a new Message has started to arrive.
  *
  * @param source
- *      Address of the Transport from which the new Message was received.
+ *      IpAddress of the Transport from which the new Message was received.
  * @param policyVersion
  *      Version of the policy the Sender used when sending the Message.
  * @param messageLength
  *      Number of bytes the new incoming Message contains.
  */
 void
-Manager::signalNewMessage(const Driver::Address source, uint8_t policyVersion,
+Manager::signalNewMessage(const IpAddress source, uint8_t policyVersion,
                           uint32_t messageLength)
 {
     SpinLock::Lock lock(mutex);

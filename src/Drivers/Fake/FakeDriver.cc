@@ -72,8 +72,8 @@ static class FakeNetwork {
     }
 
     /// Deliver the provide packet to the specified destination.
-    void sendPacket(FakePacket* packet, Driver::Address src,
-                    Driver::Address dst)
+    void sendPacket(FakePacket* packet, int priority, IpAddress src,
+                    IpAddress dst)
     {
         FakeNIC* nic = nullptr;
         {
@@ -92,10 +92,10 @@ static class FakeNetwork {
         assert(nic != nullptr);
         std::lock_guard<std::mutex> lock_nic(nic->mutex, std::adopt_lock);
         FakePacket* dstPacket = new FakePacket(*packet);
-        dstPacket->address = src;
-        assert(dstPacket->priority < NUM_PRIORITIES);
-        assert(dstPacket->priority >= 0);
-        nic->priorityQueue.at(dstPacket->priority).push_back(dstPacket);
+        dstPacket->base.sourceIp = src;
+        assert(priority < NUM_PRIORITIES);
+        assert(priority >= 0);
+        nic->priorityQueue.at(priority).push_back(dstPacket);
     }
 
     void setPacketLossRate(double lossRate)
@@ -115,10 +115,9 @@ static class FakeNetwork {
     std::mutex mutex;
 
     /// Holds all the packets being sent through the fake network.
-    std::unordered_map<Driver::Address, FakeNIC*> network;
+    std::unordered_map<IpAddress, FakeNIC*> network;
 
-    /// The FakeAddress identifier for the next FakeDriver that "connects" to
-    /// the FakeNetwork.
+    /// Identifier for the next FakeDriver that "connects" to the FakeNetwork.
     std::atomic<uint64_t> nextAddressId;
 
     /// Rate at which packets should be dropped when sent over this network.
@@ -178,72 +177,25 @@ FakeDriver::~FakeDriver()
 }
 
 /**
- * See Driver::getAddress()
- */
-Driver::Address
-FakeDriver::getAddress(std::string const* const addressString)
-{
-    char* end;
-    uint64_t address = std::strtoul(addressString->c_str(), &end, 10);
-    if (address == 0) {
-        throw BadAddress(HERE_STR, StringUtil::format("Bad address string: %s",
-                                                      addressString->c_str()));
-    }
-    return address;
-}
-
-/**
- * See Driver::getAddress()
- */
-Driver::Address
-FakeDriver::getAddress(Driver::WireFormatAddress const* const wireAddress)
-{
-    const Address* address =
-        reinterpret_cast<const Address*>(wireAddress->bytes);
-    return *address;
-}
-
-/**
- * See Driver::addressToString()
- */
-std::string
-FakeDriver::addressToString(const Address address)
-{
-    char buf[21];
-    snprintf(buf, sizeof(buf), "%lu", address);
-    return buf;
-}
-
-/**
- * See Driver::addressToWireFormat()
- */
-void
-FakeDriver::addressToWireFormat(const Address address,
-                                WireFormatAddress* wireAddress)
-{
-    new (reinterpret_cast<Address*>(wireAddress->bytes)) Address(address);
-}
-
-/**
  * See Driver::allocPacket()
  */
 Driver::Packet*
 FakeDriver::allocPacket()
 {
     FakePacket* packet = new FakePacket();
-    return packet;
+    return &packet->base;
 }
 
 /**
  * See Driver::sendPacket()
  */
 void
-FakeDriver::sendPacket(Packet* packet)
+FakeDriver::sendPacket(Packet* packet, IpAddress destination, int priority)
 {
-    FakePacket* srcPacket = static_cast<FakePacket*>(packet);
-    Address srcAddress = getLocalAddress();
-    Address dstAddress = srcPacket->address;
-    fakeNetwork.sendPacket(srcPacket, srcAddress, dstAddress);
+    FakePacket* srcPacket = container_of(packet, FakePacket, base);
+    IpAddress srcAddress = getLocalAddress();
+    IpAddress dstAddress = destination;
+    fakeNetwork.sendPacket(srcPacket, priority, srcAddress, dstAddress);
     queueEstimator.signalBytesSent(packet->length);
 }
 
@@ -257,8 +209,9 @@ FakeDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
     uint32_t numReceived = 0;
     for (int i = NUM_PRIORITIES - 1; i >= 0; --i) {
         while (numReceived < maxPackets && !nic.priorityQueue.at(i).empty()) {
-            receivedPackets[numReceived] = nic.priorityQueue.at(i).front();
+            FakePacket* fakePacket = nic.priorityQueue.at(i).front();
             nic.priorityQueue.at(i).pop_front();
+            receivedPackets[numReceived] = &fakePacket->base;
             numReceived++;
         }
     }
@@ -272,8 +225,7 @@ void
 FakeDriver::releasePackets(Packet* packets[], uint16_t numPackets)
 {
     for (uint16_t i = 0; i < numPackets; ++i) {
-        FakePacket* packet = static_cast<FakePacket*>(packets[i]);
-        delete packet;
+        delete container_of(packets[i], FakePacket, base);
     }
 }
 
@@ -308,7 +260,7 @@ FakeDriver::getBandwidth()
 /**
  * See Driver::getLocalAddress()
  */
-Driver::Address
+IpAddress
 FakeDriver::getLocalAddress()
 {
     return localAddressId;

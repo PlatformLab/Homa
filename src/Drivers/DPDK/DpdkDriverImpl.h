@@ -109,12 +109,6 @@ class DpdkDriver::Impl {
         explicit Packet(struct rte_mbuf* mbuf, void* data);
         explicit Packet(OverflowBuffer* overflowBuf);
 
-        /// see Driver::Packet::getMaxPayloadSize()
-        virtual int getMaxPayloadSize()
-        {
-            return MAX_PAYLOAD_SIZE;
-        }
-
         /// Used to indicate whether the packet is backed by an DPDK mbuf or a
         /// driver-level OverflowBuffer.
         enum BufferType { MBUF, OVERFLOW_BUF } bufType;  ///< Packet BufferType.
