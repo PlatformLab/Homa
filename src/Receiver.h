@@ -30,6 +30,7 @@
 #include "Protocol.h"
 #include "SpinLock.h"
 #include "Timeout.h"
+#include "Util.h"
 
 namespace Homa {
 namespace Core {
@@ -46,9 +47,9 @@ class Receiver {
                       uint64_t messageTimeoutCycles,
                       uint64_t resendIntervalCycles);
     virtual ~Receiver();
-    virtual void handleDataPacket(Driver::Packet* packet, Driver* driver);
-    virtual void handleBusyPacket(Driver::Packet* packet, Driver* driver);
-    virtual void handlePingPacket(Driver::Packet* packet, Driver* driver);
+    virtual void handleDataPacket(Driver::Packet* packet, IpAddress sourceIp);
+    virtual void handleBusyPacket(Driver::Packet* packet);
+    virtual void handlePingPacket(Driver::Packet* packet, IpAddress sourceIp);
     virtual Homa::InMessage* receiveMessage();
     virtual void poll();
     virtual uint64_t checkTimeouts();
@@ -132,7 +133,7 @@ class Receiver {
 
         explicit Message(Receiver* receiver, Driver* driver,
                          size_t packetHeaderLength, size_t messageLength,
-                         Protocol::MessageId id, Driver::Address source,
+                         Protocol::MessageId id, SocketAddress source,
                          int numUnscheduledPackets)
             : receiver(receiver)
             , driver(driver)
@@ -195,7 +196,7 @@ class Receiver {
         const Protocol::MessageId id;
 
         /// Contains source address this message.
-        const Driver::Address source;
+        const SocketAddress source;
 
         /// Number of bytes at the beginning of each Packet that should be
         /// reserved for the Homa transport header.
@@ -473,7 +474,7 @@ class Receiver {
 
     /// Collection of all peers; used for fast access.  Access is protected by
     /// the schedulerMutex.
-    std::unordered_map<Driver::Address, Peer> peerTable;
+    std::unordered_map<IpAddress, Peer> peerTable;
 
     /// List of peers with inbound messages that require grants to complete.
     /// Access is protected by the schedulerMutex.

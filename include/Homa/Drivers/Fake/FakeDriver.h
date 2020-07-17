@@ -34,7 +34,7 @@ const int NUM_PRIORITIES = 8;
 /// Maximum number of bytes a packet can hold.
 const uint32_t MAX_PAYLOAD_SIZE = 1500;
 
-/// A set of methods to contol the underlying FakeNetwork's behavior.
+/// A set of methods to control the underlying FakeNetwork's behavior.
 namespace FakeNetworkConfig {
 /**
  * Configure the FakeNetwork to drop packets at the specified loss rate.
@@ -51,43 +51,34 @@ void setPacketLossRate(double lossRate);
  *
  * @sa Driver::Packet
  */
-class FakePacket : public Driver::Packet {
-  public:
+struct FakePacket {
+    /// C-style "inheritance"; used to maintain the base struct as a POD type.
+    Driver::Packet base;
+
+    /// Raw storage for this packets payload.
+    char buf[MAX_PAYLOAD_SIZE];
+
     /**
      * FakePacket constructor.
-     *
-     * @param maxPayloadSize
-     *      The maximum number of bytes this packet can hold.
      */
     explicit FakePacket()
-        : Packet(buf, 0)
+        : base{.payload = buf,
+               .length = 0,
+               .sourceIp = 0}
+        , buf()
     {}
 
     /**
      * Copy constructor.
      */
     FakePacket(const FakePacket& other)
-        : Packet(buf, other.length)
+        : base{.payload = buf,
+               .length = other.base.length,
+               .sourceIp = 0}
+        , buf()
     {
-        address = other.address;
-        priority = other.priority;
-        memcpy(buf, other.buf, MAX_PAYLOAD_SIZE);
+        memcpy(base.payload, other.base.payload, MAX_PAYLOAD_SIZE);
     }
-
-    virtual ~FakePacket() {}
-
-    /// see Driver::Packet::getMaxPayloadSize()
-    virtual int getMaxPayloadSize()
-    {
-        return MAX_PAYLOAD_SIZE;
-    }
-
-  private:
-    /// Raw storage for this packets payload.
-    char buf[MAX_PAYLOAD_SIZE];
-
-    // Disable Assignment
-    FakePacket& operator=(const FakePacket&) = delete;
 };
 
 /// Holds the incoming packets for a particular driver.
@@ -117,20 +108,15 @@ class FakeDriver : public Driver {
      */
     virtual ~FakeDriver();
 
-    virtual Address getAddress(std::string const* const addressString);
-    virtual Address getAddress(WireFormatAddress const* const wireAddress);
-    virtual std::string addressToString(const Address address);
-    virtual void addressToWireFormat(const Address address,
-                                     WireFormatAddress* wireAddress);
     virtual Packet* allocPacket();
-    virtual void sendPacket(Packet* packet);
+    virtual void sendPacket(Packet* packet, IpAddress destination, int priority);
     virtual uint32_t receivePackets(uint32_t maxPackets,
                                     Packet* receivedPackets[]);
     virtual void releasePackets(Packet* packets[], uint16_t numPackets);
     virtual int getHighestPacketPriority();
     virtual uint32_t getMaxPayloadSize();
     virtual uint32_t getBandwidth();
-    virtual Address getLocalAddress();
+    virtual IpAddress getLocalAddress();
     virtual uint32_t getQueuedBytes();
 
   private:

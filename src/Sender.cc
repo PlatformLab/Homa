@@ -67,10 +67,10 @@ Sender::~Sender() {}
  * Allocate an OutMessage that can be sent with this Sender.
  */
 Homa::OutMessage*
-Sender::allocMessage()
+Sender::allocMessage(uint16_t sourcePort)
 {
     SpinLock::Lock lock_allocator(messageAllocator.mutex);
-    return messageAllocator.pool.construct(this, driver);
+    return messageAllocator.pool.construct(this, sourcePort);
 }
 
 /**
@@ -78,12 +78,9 @@ Sender::allocMessage()
  *
  * @param packet
  *      Incoming DONE packet to be processed.
- * @param driver
- *      Driver from which the packet was received and to which it should be
- *      returned after the packet has been processed.
  */
 void
-Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
+Sender::handleDonePacket(Driver::Packet* packet)
 {
     Protocol::Packet::DoneHeader* header =
         static_cast<Protocol::Packet::DoneHeader*>(packet->payload);
@@ -152,12 +149,9 @@ Sender::handleDonePacket(Driver::Packet* packet, Driver* driver)
  *
  * @param packet
  *      Incoming RESEND packet to be processed.
- * @param driver
- *      Driver from which the packet was received and to which it should be
- *      returned after the packet has been processed.
  */
 void
-Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
+Sender::handleResendPacket(Driver::Packet* packet)
 {
     Protocol::Packet::ResendHeader* header =
         static_cast<Protocol::Packet::ResendHeader*>(packet->payload);
@@ -222,7 +216,7 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         // when it's ready.
         Perf::counters.tx_busy_pkts.add(1);
         ControlPacket::send<Protocol::Packet::BusyHeader>(
-            driver, info->destination, info->id);
+            driver, info->destination.ip, info->id);
     } else {
         // There are some packets to resend but only resend packets that have
         // already been sent.
@@ -230,11 +224,10 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
         int resendPriority = policyManager->getResendPriority();
         for (uint16_t i = index; i < resendEnd; ++i) {
             Driver::Packet* packet = info->packets->getPacket(i);
-            packet->priority = resendPriority;
             // Packets will be sent at the priority their original priority.
             Perf::counters.tx_data_pkts.add(1);
             Perf::counters.tx_bytes.add(packet->length);
-            driver->sendPacket(packet);
+            driver->sendPacket(packet, message->destination.ip, resendPriority);
         }
     }
 
@@ -246,12 +239,9 @@ Sender::handleResendPacket(Driver::Packet* packet, Driver* driver)
  *
  * @param packet
  *      Incoming GRANT packet to be processed.
- * @param driver
- *      Driver from which the packet was received and to which it should be
- *      returned after the packet has been processed.
  */
 void
-Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
+Sender::handleGrantPacket(Driver::Packet* packet)
 {
     Protocol::Packet::GrantHeader* header =
         static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
@@ -310,12 +300,9 @@ Sender::handleGrantPacket(Driver::Packet* packet, Driver* driver)
  *
  * @param packet
  *      Incoming UNKNOWN packet to be processed.
- * @param driver
- *      Driver from which the packet was received and to which it should be
- *      returned after the packet has been processed.
  */
 void
-Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
+Sender::handleUnknownPacket(Driver::Packet* packet)
 {
     Protocol::Packet::UnknownHeader* header =
         static_cast<Protocol::Packet::UnknownHeader*>(packet->payload);
@@ -376,7 +363,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
 
         // Get the current policy for unscheduled bytes.
         Policy::Unscheduled policy = policyManager->getUnscheduledPolicy(
-            message->destination, message->messageLength);
+            message->destination.ip, message->messageLength);
         int unscheduledIndexLimit =
             ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
              message->PACKET_DATA_LENGTH);
@@ -401,10 +388,10 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             // If there is only one packet in the message, send it right away.
             Driver::Packet* dataPacket = message->getPacket(0);
             assert(dataPacket != nullptr);
-            dataPacket->priority = policy.priority;
             Perf::counters.tx_data_pkts.add(1);
             Perf::counters.tx_bytes.add(dataPacket->length);
-            driver->sendPacket(dataPacket);
+            driver->sendPacket(dataPacket, message->destination.ip,
+                    policy.priority);
             message->state.store(OutMessage::Status::SENT);
         } else {
             // Otherwise, queue the message to be sent in SRPT order.
@@ -413,7 +400,8 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             // Some of these values should still be set from when the message
             // was first queued.
             assert(info->id == message->id);
-            assert(info->destination == message->destination);
+            assert(!memcmp(&info->destination, &message->destination,
+                    sizeof(info->destination)));
             assert(info->packets == message);
             // Some values need to be updated
             info->unsentBytes = message->messageLength;
@@ -439,12 +427,9 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
  *
  * @param packet
  *      Incoming ERROR packet to be processed.
- * @param driver
- *      Driver from which the packet was received and to which it should be
- *      returned after the packet has been processed.
  */
 void
-Sender::handleErrorPacket(Driver::Packet* packet, Driver* driver)
+Sender::handleErrorPacket(Driver::Packet* packet)
 {
     Protocol::Packet::ErrorHeader* header =
         static_cast<Protocol::Packet::ErrorHeader*>(packet->payload);
@@ -697,7 +682,7 @@ Sender::Message::reserve(size_t count)
  * @copydoc Homa::OutMessage::send()
  */
 void
-Sender::Message::send(Driver::Address destination,
+Sender::Message::send(SocketAddress destination,
                       Sender::Message::Options options)
 {
     sender->sendMessage(this, destination, options);
@@ -758,7 +743,7 @@ Sender::Message::getOrAllocPacket(size_t index)
  * @sa dropMessage()
  */
 void
-Sender::sendMessage(Sender::Message* message, Driver::Address destination,
+Sender::sendMessage(Sender::Message* message, SocketAddress destination,
                     Sender::Message::Options options)
 {
     // Prepare the message
@@ -767,7 +752,7 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination,
     Protocol::MessageId id(transportId, nextMessageSequenceNumber++);
 
     Policy::Unscheduled policy = policyManager->getUnscheduledPolicy(
-        destination, message->messageLength);
+        destination.ip, message->messageLength);
     int unscheduledPacketLimit =
         ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
          message->PACKET_DATA_LENGTH);
@@ -789,10 +774,10 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination,
                 i * message->PACKET_DATA_LENGTH);
         }
 
-        packet->address = message->destination;
         new (packet->payload) Protocol::Packet::DataHeader(
-            message->id, Util::downCast<uint32_t>(message->messageLength),
-            policy.version, Util::downCast<uint16_t>(unscheduledPacketLimit),
+            message->source.port, destination.port, message->id,
+            Util::downCast<uint32_t>(message->messageLength), policy.version,
+            Util::downCast<uint16_t>(unscheduledPacketLimit),
             Util::downCast<uint16_t>(i));
         actualMessageLen += (packet->length - message->TRANSPORT_HEADER_LENGTH);
     }
@@ -816,10 +801,9 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination,
         // If there is only one packet in the message, send it right away.
         Driver::Packet* packet = message->getPacket(0);
         assert(packet != nullptr);
-        packet->priority = policy.priority;
         Perf::counters.tx_data_pkts.add(1);
         Perf::counters.tx_bytes.add(packet->length);
-        driver->sendPacket(packet);
+        driver->sendPacket(packet, message->destination.ip, policy.priority);
         message->state.store(OutMessage::Status::SENT);
     } else {
         // Otherwise, queue the message to be sent in SRPT order.
@@ -984,7 +968,7 @@ Sender::checkPingTimeouts()
             // the receiver to ensure it still knows about this Message.
             Perf::counters.tx_ping_pkts.add(1);
             ControlPacket::send<Protocol::Packet::PingHeader>(
-                message->driver, message->destination, message->id);
+                message->driver, message->destination.ip, message->id);
         }
         globalNextTimeout = std::min(globalNextTimeout, nextTimeout);
     }
@@ -1038,10 +1022,9 @@ Sender::trySend()
                 break;
             }
             // ... if not, send away!
-            packet->priority = info->priority;
             Perf::counters.tx_data_pkts.add(1);
             Perf::counters.tx_bytes.add(packet->length);
-            driver->sendPacket(packet);
+            driver->sendPacket(packet, message.destination.ip, info->priority);
             int packetDataBytes =
                 packet->length - info->packets->TRANSPORT_HEADER_LENGTH;
             assert(info->unsentBytes >= packetDataBytes);

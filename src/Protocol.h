@@ -122,16 +122,20 @@ struct HeaderPrefix {
 
 /**
  * Describes the wire format for header fields that are common to all packet
- * types.
+ * types. Note: the first 4 bytes are identical for TCP, UDP, and Homa.
  */
 struct CommonHeader {
+    uint16_t sport, dport;///< Transport layer (L4) source and destination ports
+                          ///< in network byte order; only used by DataHeader.
     HeaderPrefix prefix;  ///< Common to all versions of the protocol.
     uint8_t opcode;       ///< One of the values of Opcode.
     MessageId messageId;  ///< RemoteOp/Message associated with this packet.
 
     /// CommonHeader constructor.
     CommonHeader(Opcode opcode, MessageId messageId)
-        : prefix(1)
+        : sport(0)
+        , dport(0)
+        , prefix(1)
         , opcode(opcode)
         , messageId(messageId)
     {}
@@ -157,14 +161,18 @@ struct DataHeader {
     // starting at the offset corresponding to the given packet index.
 
     /// DataHeader constructor.
-    DataHeader(MessageId messageId, uint32_t totalLength, uint8_t policyVersion,
+    DataHeader(uint16_t sport, uint16_t dport, MessageId messageId,
+               uint32_t totalLength, uint8_t policyVersion,
                uint16_t unscheduledIndexLimit, uint16_t index)
         : common(Opcode::DATA, messageId)
         , totalLength(totalLength)
         , policyVersion(policyVersion)
         , unscheduledIndexLimit(unscheduledIndexLimit)
         , index(index)
-    {}
+    {
+        common.sport = htobe16(sport);
+        common.dport = htobe16(dport);
+    }
 } __attribute__((packed));
 
 /**
