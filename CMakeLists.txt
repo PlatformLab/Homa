@@ -13,7 +13,7 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/modules)
 find_package(Doxygen OPTIONAL_COMPONENTS dot mscgen dia)
 
 # Network Interface library (https://www.dpdk.org/)
-find_package(Dpdk REQUIRED)
+# find_package(Dpdk REQUIRED)
 
 # Source control tool; needed to download external libraries.
 find_package(Git REQUIRED)
@@ -135,34 +135,34 @@ target_compile_options(FakeDriver
 )
 
 ## lib DpdkDriver ##############################################################
-add_library(DpdkDriver
-    src/Drivers/DPDK/DpdkDriver.cc
-    src/Drivers/DPDK/DpdkDriverImpl.cc
-    src/Drivers/DPDK/MacAddress.cc
-)
-add_library(Homa::DpdkDriver ALIAS DpdkDriver)
-target_include_directories(DpdkDriver
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-        $<INSTALL_INTERFACE:include>
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-target_link_libraries(DpdkDriver
-    PRIVATE
-        Dpdk::Dpdk
-    PUBLIC
-        Homa
-)
-target_compile_features(DpdkDriver
-    PUBLIC
-        cxx_std_11
-)
-target_compile_options(DpdkDriver
-    PRIVATE
-        -Wall
-        -Wextra
-)
+#add_library(DpdkDriver
+#    src/Drivers/DPDK/DpdkDriver.cc
+#    src/Drivers/DPDK/DpdkDriverImpl.cc
+#    src/Drivers/DPDK/MacAddress.cc
+#)
+#add_library(Homa::DpdkDriver ALIAS DpdkDriver)
+#target_include_directories(DpdkDriver
+#    PUBLIC
+#        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+#        $<INSTALL_INTERFACE:include>
+#    PRIVATE
+#        ${CMAKE_CURRENT_SOURCE_DIR}/src
+#)
+#target_link_libraries(DpdkDriver
+#    PRIVATE
+#        Dpdk::Dpdk
+#    PUBLIC
+#        Homa
+#)
+#target_compile_features(DpdkDriver
+#    PUBLIC
+#        cxx_std_11
+#)
+#target_compile_options(DpdkDriver
+#    PRIVATE
+#        -Wall
+#        -Wextra
+#)
 
 ################################################################################
 ## Tests #######################################################################
@@ -195,7 +195,8 @@ endif()
 ## Install & Export ############################################################
 ################################################################################
 
-install(TARGETS Homa DpdkDriver FakeDriver EXPORT HomaTargets
+#install(TARGETS Homa DpdkDriver FakeDriver EXPORT HomaTargets
+install(TARGETS Homa FakeDriver EXPORT HomaTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
@@ -274,11 +275,11 @@ target_sources(unit_test
 target_link_libraries(unit_test FakeDriver)
 
 #DPDK Tests
-target_sources(unit_test
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Drivers/DPDK/MacAddressTest.cc
-)
-target_link_libraries(unit_test DpdkDriver)
+#target_sources(unit_test
+#    PUBLIC
+#        ${CMAKE_CURRENT_SOURCE_DIR}/src/Drivers/DPDK/MacAddressTest.cc
+#)
+#target_link_libraries(unit_test DpdkDriver)
 
 target_link_libraries(unit_test gmock_main)
 # -fno-access-control allows access to private members for testing

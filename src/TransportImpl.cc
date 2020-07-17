@@ -95,46 +95,55 @@ TransportImpl::processPackets()
     int numPackets = driver->receivePackets(MAX_BURST, packets);
     for (int i = 0; i < numPackets; ++i) {
         Driver::Packet* packet = packets[i];
-        assert(packet->length >=
-               Util::downCast<int>(sizeof(Protocol::Packet::CommonHeader)));
-        Perf::counters.rx_bytes.add(packet->length);
-        Protocol::Packet::CommonHeader* header =
-            static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
-        switch (header->opcode) {
-            case Protocol::Packet::DATA:
-                Perf::counters.rx_data_pkts.add(1);
-                receiver->handleDataPacket(packet, driver);
-                break;
-            case Protocol::Packet::GRANT:
-                Perf::counters.rx_grant_pkts.add(1);
-                sender->handleGrantPacket(packet, driver);
-                break;
-            case Protocol::Packet::DONE:
-                Perf::counters.rx_done_pkts.add(1);
-                sender->handleDonePacket(packet, driver);
-                break;
-            case Protocol::Packet::RESEND:
-                Perf::counters.rx_resend_pkts.add(1);
-                sender->handleResendPacket(packet, driver);
-                break;
-            case Protocol::Packet::BUSY:
-                Perf::counters.rx_busy_pkts.add(1);
-                receiver->handleBusyPacket(packet, driver);
-                break;
-            case Protocol::Packet::PING:
-                Perf::counters.rx_ping_pkts.add(1);
-                receiver->handlePingPacket(packet, driver);
-                break;
-            case Protocol::Packet::UNKNOWN:
-                Perf::counters.rx_unknown_pkts.add(1);
-                sender->handleUnknownPacket(packet, driver);
-                break;
-            case Protocol::Packet::ERROR:
-                Perf::counters.rx_error_pkts.add(1);
-                sender->handleErrorPacket(packet, driver);
-                break;
-        }
+        processPacket(packet, packet->sourceIp);
+    }
+
+    if (numPackets > 0) {
         Perf::counters.active_cycles.add(timer.split());
+    }
+}
+
+void
+TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
+{
+    assert(packet->length >=
+           Util::downCast<int>(sizeof(Protocol::Packet::CommonHeader)));
+    Perf::counters.rx_bytes.add(packet->length);
+    Protocol::Packet::CommonHeader* header =
+        static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
+    switch (header->opcode) {
+        case Protocol::Packet::DATA:
+            Perf::counters.rx_data_pkts.add(1);
+            receiver->handleDataPacket(packet, sourceIp);
+            break;
+        case Protocol::Packet::GRANT:
+            Perf::counters.rx_grant_pkts.add(1);
+            sender->handleGrantPacket(packet);
+            break;
+        case Protocol::Packet::DONE:
+            Perf::counters.rx_done_pkts.add(1);
+            sender->handleDonePacket(packet);
+            break;
+        case Protocol::Packet::RESEND:
+            Perf::counters.rx_resend_pkts.add(1);
+            sender->handleResendPacket(packet);
+            break;
+        case Protocol::Packet::BUSY:
+            Perf::counters.rx_busy_pkts.add(1);
+            receiver->handleBusyPacket(packet);
+            break;
+        case Protocol::Packet::PING:
+            Perf::counters.rx_ping_pkts.add(1);
+            receiver->handlePingPacket(packet, sourceIp);
+            break;
+        case Protocol::Packet::UNKNOWN:
+            Perf::counters.rx_unknown_pkts.add(1);
+            sender->handleUnknownPacket(packet);
+            break;
+        case Protocol::Packet::ERROR:
+            Perf::counters.rx_error_pkts.add(1);
+            sender->handleErrorPacket(packet);
+            break;
     }
 }
 

@@ -82,11 +82,11 @@ Receiver::~Receiver()
  *
  * @param packet
  *      The incoming packet to be processed.
- * @param driver
- *      The driver from which the packet was received.
+ * @param sourceIp
+ *      Source IP address of the packet.
  */
 void
-Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
+Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
 {
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(packet->payload);
@@ -102,15 +102,17 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
         int numUnscheduledPackets = header->unscheduledIndexLimit;
         {
             SpinLock::Lock lock_allocator(messageAllocator.mutex);
+            SocketAddress srcAddress = {.ip = sourceIp,
+                                        .port = be16toh(header->common.sport)};
             message = messageAllocator.pool.construct(
-                this, driver, dataHeaderLength, messageLength, id,
-                packet->address, numUnscheduledPackets);
+                this, driver, dataHeaderLength, messageLength, id, srcAddress,
+                numUnscheduledPackets);
             Perf::counters.allocated_rx_messages.add(1);
         }
 
         bucket->messages.push_back(&message->bucketNode);
-        policyManager->signalNewMessage(message->source, header->policyVersion,
-                                        header->totalLength);
+        policyManager->signalNewMessage(
+            message->source.ip, header->policyVersion, header->totalLength);
 
         if (message->scheduled) {
             // Message needs to be scheduled.
@@ -122,7 +124,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
     // Things that must be true (sanity check)
     assert(id == message->id);
     assert(message->driver == driver);
-    assert(message->source == packet->address);
+    assert(message->source.ip == sourceIp);
+    assert(message->source.port == be16toh(header->common.sport));
     assert(message->messageLength == Util::downCast<int>(header->totalLength));
 
     // Add the packet
@@ -171,11 +174,9 @@ Receiver::handleDataPacket(Driver::Packet* packet, Driver* driver)
  *
  * @param packet
  *      The incoming BUSY packet to be processed.
- * @param driver
- *      The driver from which the BUSY packet was received.
  */
 void
-Receiver::handleBusyPacket(Driver::Packet* packet, Driver* driver)
+Receiver::handleBusyPacket(Driver::Packet* packet)
 {
     Protocol::Packet::BusyHeader* header =
         static_cast<Protocol::Packet::BusyHeader*>(packet->payload);
@@ -200,11 +201,11 @@ Receiver::handleBusyPacket(Driver::Packet* packet, Driver* driver)
  *
  * @param packet
  *      The incoming PING packet to be processed.
- * @param driver
- *      The driver from which the PING packet was received.
+ * @param sourceIp
+ *      Source IP address of the packet.
  */
 void
-Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
+Receiver::handlePingPacket(Driver::Packet* packet, IpAddress sourceIp)
 {
     Protocol::Packet::PingHeader* header =
         static_cast<Protocol::Packet::PingHeader*>(packet->payload);
@@ -238,13 +239,13 @@ Receiver::handlePingPacket(Driver::Packet* packet, Driver* driver)
 
         Perf::counters.tx_grant_pkts.add(1);
         ControlPacket::send<Protocol::Packet::GrantHeader>(
-            driver, message->source, message->id, bytesGranted, priority);
+            driver, message->source.ip, message->id, bytesGranted, priority);
     } else {
         // We are here because we have no knowledge of the message the Sender is
         // asking about.  Reply UNKNOWN so the Sender can react accordingly.
         Perf::counters.tx_unknown_pkts.add(1);
-        ControlPacket::send<Protocol::Packet::UnknownHeader>(
-            driver, packet->address, id);
+        ControlPacket::send<Protocol::Packet::UnknownHeader>(driver, sourceIp,
+                                                             id);
     }
     driver->releasePackets(&packet, 1);
 }
@@ -326,7 +327,7 @@ Receiver::Message::acknowledge() const
     MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
     SpinLock::Lock lock(bucket->mutex);
     Perf::counters.tx_done_pkts.add(1);
-    ControlPacket::send<Protocol::Packet::DoneHeader>(driver, source, id);
+    ControlPacket::send<Protocol::Packet::DoneHeader>(driver, source.ip, id);
 }
 
 /**
@@ -347,7 +348,7 @@ Receiver::Message::fail() const
     MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
     SpinLock::Lock lock(bucket->mutex);
     Perf::counters.tx_error_pkts.add(1);
-    ControlPacket::send<Protocol::Packet::ErrorHeader>(driver, source, id);
+    ControlPacket::send<Protocol::Packet::ErrorHeader>(driver, source.ip, id);
 }
 
 /**
@@ -655,7 +656,7 @@ Receiver::checkResendTimeouts(uint64_t now, MessageBucket* bucket)
                     SpinLock::Lock lock_scheduler(schedulerMutex);
                     Perf::counters.tx_resend_pkts.add(1);
                     ControlPacket::send<Protocol::Packet::ResendHeader>(
-                        message->driver, message->source, message->id,
+                        message->driver, message->source.ip, message->id,
                         Util::downCast<uint16_t>(index),
                         Util::downCast<uint16_t>(num),
                         message->scheduledMessageInfo.priority);
@@ -668,7 +669,7 @@ Receiver::checkResendTimeouts(uint64_t now, MessageBucket* bucket)
             SpinLock::Lock lock_scheduler(schedulerMutex);
             Perf::counters.tx_resend_pkts.add(1);
             ControlPacket::send<Protocol::Packet::ResendHeader>(
-                message->driver, message->source, message->id,
+                message->driver, message->source.ip, message->id,
                 Util::downCast<uint16_t>(index), Util::downCast<uint16_t>(num),
                 message->scheduledMessageInfo.priority);
         }
@@ -736,7 +737,7 @@ Receiver::trySendGrants()
         ScheduledMessageInfo* info = &message->scheduledMessageInfo;
         // Access message const variables without message mutex.
         const Protocol::MessageId id = message->id;
-        const Driver::Address source = message->source;
+        const IpAddress sourceIp = message->source.ip;
 
         // Recalculate message priority
         info->priority =
@@ -752,7 +753,7 @@ Receiver::trySendGrants()
             info->bytesGranted = newGrantLimit;
             Perf::counters.tx_grant_pkts.add(1);
             ControlPacket::send<Protocol::Packet::GrantHeader>(
-                driver, source, id,
+                driver, sourceIp, id,
                 Util::downCast<uint32_t>(info->bytesGranted), info->priority);
             Perf::counters.active_cycles.add(timer.split());
         }
@@ -788,7 +789,7 @@ Receiver::schedule(Receiver::Message* message, const SpinLock::Lock& lock)
 {
     (void)lock;
     ScheduledMessageInfo* info = &message->scheduledMessageInfo;
-    Peer* peer = &peerTable[message->source];
+    Peer* peer = &peerTable[message->source.ip];
     // Insert the Message
     peer->scheduledMessages.push_front(&info->scheduledMessageNode);
     Intrusive::deprioritize<Message>(&peer->scheduledMessages,

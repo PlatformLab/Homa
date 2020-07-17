@@ -41,7 +41,7 @@ class ReceiverTest : public ::testing::Test {
   public:
     ReceiverTest()
         : mockDriver()
-        , mockPacket(&payload)
+        , mockPacket{&payload}
         , mockPolicyManager(&mockDriver)
         , payload()
         , receiver()
@@ -68,7 +68,7 @@ class ReceiverTest : public ::testing::Test {
     static const uint64_t resendIntervalCycles = 100;
 
     NiceMock<Homa::Mock::MockDriver> mockDriver;
-    NiceMock<Homa::Mock::MockDriver::MockPacket> mockPacket;
+    Homa::Mock::MockDriver::MockPacket mockPacket;
     NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;
     char payload[1028];
     Receiver* receiver;
@@ -105,21 +105,21 @@ TEST_F(ReceiverTest, handleDataPacket)
     header->totalLength = totalMessageLength;
     header->policyVersion = policyVersion;
     header->unscheduledIndexLimit = 1;
-    mockPacket.address = Driver::Address(22);
+    mockPacket.sourceIp = IpAddress(22);
 
     // -------------------------------------------------------------------------
     // Receive packet[1]. New message.
     header->index = 1;
     mockPacket.length = HEADER_SIZE + 1000;
     EXPECT_CALL(mockPolicyManager,
-                signalNewMessage(Eq(mockPacket.address), Eq(policyVersion),
+                signalNewMessage(Eq(mockPacket.sourceIp), Eq(policyVersion),
                                  Eq(totalMessageLength)))
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(0);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
     // ---------
 
     {
@@ -148,7 +148,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(1);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
     // ---------
 
     EXPECT_EQ(1U, message->numPackets);
@@ -162,7 +162,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(0);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
     // ---------
 
     EXPECT_EQ(2U, message->numPackets);
@@ -177,7 +177,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(0);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
     // ---------
 
     EXPECT_EQ(3U, message->numPackets);
@@ -192,7 +192,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(0);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
     // ---------
 
     EXPECT_EQ(4U, message->numPackets);
@@ -207,7 +207,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(1);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, &mockDriver);
+    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
     // ---------
 
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -217,7 +217,7 @@ TEST_F(ReceiverTest, handleBusyPacket_basic)
 {
     Protocol::MessageId id(42, 32);
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(0), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{0, 60001}, 0);
     Receiver::MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
     bucket->messages.push_back(&message->bucketNode);
 
@@ -228,7 +228,7 @@ TEST_F(ReceiverTest, handleBusyPacket_basic)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    receiver->handleBusyPacket(&mockPacket, &mockDriver);
+    receiver->handleBusyPacket(&mockPacket);
 
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(10100U, message->resendTimeout.expirationCycleTime);
@@ -245,15 +245,15 @@ TEST_F(ReceiverTest, handleBusyPacket_unknown)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    receiver->handleBusyPacket(&mockPacket, &mockDriver);
+    receiver->handleBusyPacket(&mockPacket);
 }
 
 TEST_F(ReceiverTest, handlePingPacket_basic)
 {
     Protocol::MessageId id(42, 32);
-    Driver::Address mockAddress = 22;
+    IpAddress mockAddress = 22;
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 20000, id, mockAddress, 0);
+        receiver, &mockDriver, 0, 20000, id, SocketAddress{mockAddress, 0}, 0);
     ASSERT_TRUE(message->scheduled);
     Receiver::ScheduledMessageInfo* info = &message->scheduledMessageInfo;
     info->bytesGranted = 500;
@@ -263,25 +263,25 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
     bucket->messages.push_back(&message->bucketNode);
 
     char pingPayload[1028];
-    Homa::Mock::MockDriver::MockPacket pingPacket(pingPayload);
-    pingPacket.address = mockAddress;
+    Homa::Mock::MockDriver::MockPacket pingPacket{pingPayload};
+    pingPacket.sourceIp = mockAddress;
     Protocol::Packet::PingHeader* pingHeader =
         (Protocol::Packet::PingHeader*)pingPacket.payload;
     pingHeader->common.messageId = id;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket), Eq(mockAddress), _))
+        .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
         .Times(1);
 
-    receiver->handlePingPacket(&pingPacket, &mockDriver);
+    receiver->handlePingPacket(&pingPacket, pingPacket.sourceIp);
 
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->resendTimeout.expirationCycleTime);
 
-    EXPECT_EQ(mockAddress, mockPacket.address);
     Protocol::Packet::GrantHeader* header =
         (Protocol::Packet::GrantHeader*)payload;
     EXPECT_EQ(Protocol::Packet::GRANT, header->common.opcode);
@@ -295,22 +295,23 @@ TEST_F(ReceiverTest, handlePingPacket_unknown)
     Protocol::MessageId id(42, 32);
 
     char pingPayload[1028];
-    Homa::Mock::MockDriver::MockPacket pingPacket(pingPayload);
-    pingPacket.address = (Driver::Address)22;
+    Homa::Mock::MockDriver::MockPacket pingPacket{pingPayload};
+    IpAddress mockAddress = (IpAddress)22;
+    pingPacket.sourceIp = mockAddress;
     Protocol::Packet::PingHeader* pingHeader =
         (Protocol::Packet::PingHeader*)pingPacket.payload;
     pingHeader->common.messageId = id;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket), Eq(mockAddress), _))
+        .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
         .Times(1);
 
-    receiver->handlePingPacket(&pingPacket, &mockDriver);
+    receiver->handlePingPacket(&pingPacket, pingPacket.sourceIp);
 
-    EXPECT_EQ(pingPacket.address, mockPacket.address);
     Protocol::Packet::UnknownHeader* header =
         (Protocol::Packet::UnknownHeader*)payload;
     EXPECT_EQ(Protocol::Packet::UNKNOWN, header->common.opcode);
@@ -321,10 +322,10 @@ TEST_F(ReceiverTest, receiveMessage)
 {
     Receiver::Message* msg0 = receiver->messageAllocator.pool.construct(
         receiver, &mockDriver, 0, 0, Protocol::MessageId(42, 0),
-        Driver::Address(22), 0);
+        SocketAddress{22, 60001}, 0);
     Receiver::Message* msg1 = receiver->messageAllocator.pool.construct(
         receiver, &mockDriver, 0, 0, Protocol::MessageId(42, 0),
-        Driver::Address(22), 0);
+        SocketAddress{22, 60001}, 0);
 
     receiver->receivedMessages.queue.push_back(&msg0->receivedMessageNode);
     receiver->receivedMessages.queue.push_back(&msg1->receivedMessageNode);
@@ -350,7 +351,7 @@ TEST_F(ReceiverTest, Message_destructor_basic)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
 
     const uint16_t NUM_PKTS = 5;
 
@@ -369,7 +370,7 @@ TEST_F(ReceiverTest, Message_destructor_holes)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
 
     const uint16_t NUM_PKTS = 4;
 
@@ -391,10 +392,12 @@ TEST_F(ReceiverTest, Message_acknowledge)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver,
+                sendPacket(Eq(&mockPacket), Eq(message->source.ip), _))
+        .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -405,14 +408,13 @@ TEST_F(ReceiverTest, Message_acknowledge)
     EXPECT_EQ(Protocol::Packet::DONE, header->opcode);
     EXPECT_EQ(id, header->messageId);
     EXPECT_EQ(sizeof(Protocol::Packet::DoneHeader), mockPacket.length);
-    EXPECT_EQ(message->source, mockPacket.address);
 }
 
 TEST_F(ReceiverTest, Message_dropped)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
 
     message->state = Receiver::Message::State::IN_PROGRESS;
 
@@ -427,10 +429,12 @@ TEST_F(ReceiverTest, Message_fail)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver,
+                sendPacket(Eq(&mockPacket), Eq(message->source.ip), _))
+        .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -441,7 +445,6 @@ TEST_F(ReceiverTest, Message_fail)
     EXPECT_EQ(Protocol::Packet::ERROR, header->opcode);
     EXPECT_EQ(id, header->messageId);
     EXPECT_EQ(sizeof(Protocol::Packet::ErrorHeader), mockPacket.length);
-    EXPECT_EQ(message->source, mockPacket.address);
 }
 
 TEST_F(ReceiverTest, Message_get_basic)
@@ -449,10 +452,10 @@ TEST_F(ReceiverTest, Message_get_basic)
     ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 24, 24 + 2007, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 24, 24 + 2007, id, SocketAddress{22, 60001}, 0);
     char buf[4096];
-    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
-    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+    Homa::Mock::MockDriver::MockPacket packet0{buf + 0};
+    Homa::Mock::MockDriver::MockPacket packet1{buf + 2048};
 
     char source[] = "Hello, world!";
     message->setPacket(0, &packet0);
@@ -476,10 +479,10 @@ TEST_F(ReceiverTest, Message_get_offsetTooLarge)
     ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 24, 24 + 2007, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 24, 24 + 2007, id, SocketAddress{22, 60001}, 0);
     char buf[4096];
-    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
-    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+    Homa::Mock::MockDriver::MockPacket packet0{buf + 0};
+    Homa::Mock::MockDriver::MockPacket packet1{buf + 2048};
 
     message->setPacket(0, &packet0);
     message->setPacket(1, &packet1);
@@ -502,10 +505,10 @@ TEST_F(ReceiverTest, Message_get_missingPacket)
     ON_CALL(mockDriver, getMaxPayloadSize).WillByDefault(Return(2048));
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 24, 24 + 2007, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 24, 24 + 2007, id, SocketAddress{22, 60001}, 0);
     char buf[4096];
-    Homa::Mock::MockDriver::MockPacket packet0(buf + 0);
-    Homa::Mock::MockDriver::MockPacket packet1(buf + 2048);
+    Homa::Mock::MockDriver::MockPacket packet0{buf + 0};
+    Homa::Mock::MockDriver::MockPacket packet1{buf + 2048};
 
     char source[] = "Hello,";
     message->setPacket(0, &packet0);
@@ -534,7 +537,7 @@ TEST_F(ReceiverTest, Message_length)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
     message->messageLength = 200;
     message->start = 20;
     EXPECT_EQ(180U, message->length());
@@ -544,7 +547,7 @@ TEST_F(ReceiverTest, Message_strip)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
     message->messageLength = 30;
     message->start = 0;
 
@@ -566,7 +569,7 @@ TEST_F(ReceiverTest, Message_getPacket)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
 
     Driver::Packet* packet = (Driver::Packet*)42;
     message->packets[0] = packet;
@@ -582,7 +585,7 @@ TEST_F(ReceiverTest, Message_setPacket)
 {
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 0, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
     Driver::Packet* packet = (Driver::Packet*)42;
 
     EXPECT_FALSE(message->occupied.test(0));
@@ -603,12 +606,12 @@ TEST_F(ReceiverTest, MessageBucket_findMessage)
 
     Protocol::MessageId id0 = {42, 0};
     Receiver::Message* msg0 = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 0, id0, 0,
-        0);
+        receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 0, id0,
+        SocketAddress{0, 60001}, 0);
     Protocol::MessageId id1 = {42, 1};
     Receiver::Message* msg1 = receiver->messageAllocator.pool.construct(
         receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 0, id1,
-        Driver::Address(0), 0);
+        SocketAddress{0, 60001}, 0);
     Protocol::MessageId id_none = {42, 42};
 
     bucket->messages.push_back(&msg0->bucketNode);
@@ -636,7 +639,7 @@ TEST_F(ReceiverTest, dropMessage)
     SpinLock::Lock dummy(dummyMutex);
     Protocol::MessageId id = {42, 32};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
-        receiver, &mockDriver, 0, 1000, id, Driver::Address(22), 0);
+        receiver, &mockDriver, 0, 1000, id, SocketAddress{22, 60001}, 0);
     ASSERT_TRUE(message->scheduled);
     Receiver::MessageBucket* bucket = receiver->messageBuckets.getBucket(id);
 
@@ -647,7 +650,7 @@ TEST_F(ReceiverTest, dropMessage)
 
     EXPECT_EQ(1U, receiver->messageAllocator.pool.outstandingObjects);
     EXPECT_EQ(message, bucket->findMessage(id, dummy));
-    EXPECT_EQ(&receiver->peerTable[message->source],
+    EXPECT_EQ(&receiver->peerTable[message->source.ip],
               message->scheduledMessageInfo.peer);
     EXPECT_FALSE(bucket->messageTimeouts.list.empty());
     EXPECT_FALSE(bucket->resendTimeouts.list.empty());
@@ -670,7 +673,7 @@ TEST_F(ReceiverTest, checkMessageTimeouts)
         Protocol::MessageId id = {42, 10 + i};
         op[i] = reinterpret_cast<void*>(i);
         message[i] = receiver->messageAllocator.pool.construct(
-            receiver, &mockDriver, 0, 1000, id, 0, 0);
+            receiver, &mockDriver, 0, 1000, id, SocketAddress{0, 60001}, 0);
         bucket->messages.push_back(&message[i]->bucketNode);
         bucket->messageTimeouts.setTimeout(&message[i]->messageTimeout);
         bucket->resendTimeouts.setTimeout(&message[i]->resendTimeout);
@@ -735,7 +738,7 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     for (uint64_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messageAllocator.pool.construct(
-            receiver, &mockDriver, 0, 10000, id, Driver::Address(22), 5);
+            receiver, &mockDriver, 0, 10000, id, SocketAddress{22, 60001}, 5);
         bucket->resendTimeouts.setTimeout(&message[i]->resendTimeout);
     }
 
@@ -773,14 +776,18 @@ TEST_F(ReceiverTest, checkResendTimeouts)
 
     char buf1[1024];
     char buf2[1024];
-    Homa::Mock::MockDriver::MockPacket mockResendPacket1(buf1);
-    Homa::Mock::MockDriver::MockPacket mockResendPacket2(buf2);
+    Homa::Mock::MockDriver::MockPacket mockResendPacket1{buf1};
+    Homa::Mock::MockDriver::MockPacket mockResendPacket2{buf2};
 
     EXPECT_CALL(mockDriver, allocPacket())
         .WillOnce(Return(&mockResendPacket1))
         .WillOnce(Return(&mockResendPacket2));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockResendPacket1))).Times(1);
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockResendPacket2))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockResendPacket1),
+                                       Eq(message[0]->source.ip), _))
+        .Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockResendPacket2),
+                                       Eq(message[0]->source.ip), _))
+        .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockResendPacket1), Eq(1)))
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockResendPacket2), Eq(1)))
@@ -801,7 +808,6 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     EXPECT_EQ(2U, header1->index);
     EXPECT_EQ(4U, header1->num);
     EXPECT_EQ(sizeof(Protocol::Packet::ResendHeader), mockResendPacket1.length);
-    EXPECT_EQ(message[0]->source, mockResendPacket1.address);
     Protocol::Packet::ResendHeader* header2 =
         static_cast<Protocol::Packet::ResendHeader*>(mockResendPacket2.payload);
     EXPECT_EQ(Protocol::Packet::RESEND, header2->common.opcode);
@@ -809,7 +815,6 @@ TEST_F(ReceiverTest, checkResendTimeouts)
     EXPECT_EQ(8U, header2->index);
     EXPECT_EQ(2U, header2->num);
     EXPECT_EQ(sizeof(Protocol::Packet::ResendHeader), mockResendPacket2.length);
-    EXPECT_EQ(message[0]->source, mockResendPacket2.address);
 
     // Message[1]: Blocked on grants
     EXPECT_EQ(10100, message[1]->resendTimeout.expirationCycleTime);
@@ -837,7 +842,8 @@ TEST_F(ReceiverTest, trySendGrants)
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messageAllocator.pool.construct(
             receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader),
-            10000 * (i + 1), id, Driver::Address(100 + i), 10 * (i + 1));
+            10000 * (i + 1), id, SocketAddress{IpAddress(100 + i), 60001},
+            10 * (i + 1));
         {
             SpinLock::Lock lock_scheduler(receiver->schedulerMutex);
             receiver->schedule(message[i], lock_scheduler);
@@ -864,7 +870,7 @@ TEST_F(ReceiverTest, trySendGrants)
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket), _, _)).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -890,7 +896,7 @@ TEST_F(ReceiverTest, trySendGrants)
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
     EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(&mockPacket));
-    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket), _, _)).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
@@ -911,7 +917,7 @@ TEST_F(ReceiverTest, trySendGrants)
     policy.maxScheduledBytes = 10000;
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
-    EXPECT_CALL(mockDriver, sendPacket(_)).Times(0);
+    EXPECT_CALL(mockDriver, sendPacket(_, _, _)).Times(0);
 
     receiver->trySendGrants();
 
@@ -930,7 +936,7 @@ TEST_F(ReceiverTest, trySendGrants)
     policy.maxScheduledBytes = 10000;
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
-    EXPECT_CALL(mockDriver, sendPacket(_)).Times(0);
+    EXPECT_CALL(mockDriver, sendPacket(_, _, _)).Times(0);
 
     receiver->trySendGrants();
 
@@ -945,13 +951,13 @@ TEST_F(ReceiverTest, schedule)
 {
     Receiver::Message* message[4];
     Receiver::ScheduledMessageInfo* info[4];
-    Driver::Address address[4] = {22, 33, 33, 22};
+    IpAddress address[4] = {22, 33, 33, 22};
     int messageLength[4] = {2000, 3000, 1000, 4000};
     for (uint64_t i = 0; i < 4; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messageAllocator.pool.construct(
             receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader),
-            messageLength[i], id, address[i], 0);
+            messageLength[i], id, SocketAddress{address[i], 60001}, 0);
         info[i] = &message[i]->scheduledMessageInfo;
     }
 
@@ -1013,19 +1019,19 @@ TEST_F(ReceiverTest, unschedule)
     int messageLength[5] = {10, 20, 30, 10, 20};
     for (uint64_t i = 0; i < 5; ++i) {
         Protocol::MessageId id = {42, 10 + i};
-        Driver::Address source = Driver::Address((i / 3) + 10);
+        IpAddress source = IpAddress((i / 3) + 10);
         message[i] = receiver->messageAllocator.pool.construct(
             receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader),
-            messageLength[i], id, source, 0);
+            messageLength[i], id, SocketAddress{source, 60001}, 0);
         info[i] = &message[i]->scheduledMessageInfo;
         receiver->schedule(message[i], lock);
     }
 
-    ASSERT_EQ(Driver::Address(10), message[0]->source);
-    ASSERT_EQ(Driver::Address(10), message[1]->source);
-    ASSERT_EQ(Driver::Address(10), message[2]->source);
-    ASSERT_EQ(Driver::Address(11), message[3]->source);
-    ASSERT_EQ(Driver::Address(11), message[4]->source);
+    ASSERT_EQ(IpAddress(10), message[0]->source.ip);
+    ASSERT_EQ(IpAddress(10), message[1]->source.ip);
+    ASSERT_EQ(IpAddress(10), message[2]->source.ip);
+    ASSERT_EQ(IpAddress(11), message[3]->source.ip);
+    ASSERT_EQ(IpAddress(11), message[4]->source.ip);
     ASSERT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
     ASSERT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
 
@@ -1098,15 +1104,15 @@ TEST_F(ReceiverTest, updateSchedule)
     for (uint64_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         int messageLength = 10 * (i + 1);
-        Driver::Address source = Driver::Address(((i + 1) / 2) + 10);
+        IpAddress source = IpAddress(((i + 1) / 2) + 10);
         other[i] = receiver->messageAllocator.pool.construct(
             receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader),
-            10 * (i + 1), id, source, 0);
+            10 * (i + 1), id, SocketAddress{source, 60001}, 0);
         receiver->schedule(other[i], lock);
     }
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
         receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 100,
-        Protocol::MessageId(42, 1), Driver::Address(11), 0);
+        Protocol::MessageId(42, 1), SocketAddress{11, 60001}, 0);
     receiver->schedule(message, lock);
     ASSERT_EQ(&receiver->peerTable.at(10), other[0]->scheduledMessageInfo.peer);
     ASSERT_EQ(&receiver->peerTable.at(11), other[1]->scheduledMessageInfo.peer);

@@ -36,14 +36,13 @@ class MockReceiver : public Core::Receiver {
         : Receiver(driver, nullptr, messageTimeoutCycles, resendIntervalCycles)
     {}
 
-    MOCK_METHOD2(handleDataPacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD2(handleBusyPacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD2(handlePingPacket,
-                 void(Driver::Packet* packet, Driver* driver));
-    MOCK_METHOD0(receiveMessage, Homa::InMessage*());
-    MOCK_METHOD0(poll, void());
+    MOCK_METHOD(void, handleDataPacket,
+                (Driver::Packet * packet, IpAddress sourceIp), (override));
+    MOCK_METHOD(void, handleBusyPacket, (Driver::Packet * packet), (override));
+    MOCK_METHOD(void, handlePingPacket,
+                (Driver::Packet * packet, IpAddress sourceIp), (override));
+    MOCK_METHOD(Homa::InMessage*, receiveMessage, (), (override));
+    MOCK_METHOD(void, poll, (), (override));
 };
 
 }  // namespace Mock

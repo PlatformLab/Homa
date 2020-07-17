@@ -31,21 +31,19 @@ namespace ControlPacket {
  * @param driver
  *      Driver with which to send the packet.
  * @param address
- *      Destination address for the packet to be sent.
+ *      Destination IP address for the packet to be sent.
  * @param args
  *      Arguments to PacketHeaderType's constructor.
  */
 template <typename PacketHeaderType, typename... Args>
 void
-send(Driver* driver, Driver::Address address, Args&&... args)
+send(Driver* driver, IpAddress address, Args&&... args)
 {
     Driver::Packet* packet = driver->allocPacket();
     new (packet->payload) PacketHeaderType(static_cast<Args&&>(args)...);
     packet->length = sizeof(PacketHeaderType);
-    packet->address = address;
-    packet->priority = driver->getHighestPacketPriority();
     Perf::counters.tx_bytes.add(packet->length);
-    driver->sendPacket(packet);
+    driver->sendPacket(packet, address, driver->getHighestPacketPriority());
     driver->releasePackets(&packet, 1);
 }
 

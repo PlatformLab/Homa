@@ -22,6 +22,28 @@
 
 namespace Homa {
 
+/// IPv4 address in host byte order.
+using IpAddress = uint32_t;
+
+/**
+ * Represents a packet of data that can be send or is received over the network.
+ * A Packet logically contains only the transport-layer (L4) Homa header in
+ * addition to application data.
+ *
+ * This struct specifies the minimal object layout of a packet that the core
+ * Homa protocol depends on (e.g., Homa::Core::{Sender, Receiver}); this is
+ * useful for applications that only want to use the transport layer of this
+ * library and have their own infrastructures for sending and receiving packets.
+ */
+struct PacketSpec {
+    /// Pointer to an array of bytes containing the payload of this Packet.
+    /// This array is valid until the Packet is released back to the Driver.
+    void* payload;
+
+    /// Number of bytes in the payload.
+    int32_t length;
+}  __attribute__((packed));
+
 /**
  * Used by Homa::Transport to send and receive unreliable datagrams.  Provides
  * the interface to which all Driver implementations must conform.
@@ -31,132 +53,45 @@ namespace Homa {
 class Driver {
   public:
     /**
-     * Represents a Network address.
+     * Represents a packet that can be send or is received over the network.
      *
-     * Each Address representation is specific to the Driver instance that
-     * returned the it; they cannot be use interchangeably between different
-     * Driver instances.
+     * The layout of this struct has two parts: the first part is essentially
+     * a copy of PacketSpec, while the second part contains members specific
+     * to our driver implementation.
+     *
+     * @sa Homa::PacketSpec
      */
-    using Address = uint64_t;
+    struct Packet final {
+        // === PacketSpec definitions ===
+        // The order and types of the following members must match those in
+        // PacketSpec precisely.
 
-    /**
-     * Used to hold a driver's serialized byte-format for a network address.
-     *
-     * Each driver may define its own byte-format so long as fits within the
-     * bytes array.
-     */
-    struct WireFormatAddress {
-        uint8_t type;  ///< Can be used to distinguish between different wire
-                       ///< address formats.
-        uint8_t bytes[19];  ///< Holds an Address's serialized byte-format.
-    } __attribute__((packed));
+        /// See Homa::PacketSpec::payload.
+        void* payload;
 
-    /**
-     * Represents a packet of data that can be send or is received over the
-     * network. A Packet logically contains only the payload and not any Driver
-     * specific headers.
-     *
-     * A Packet may be Driver specific and should not used interchangeably
-     * between Driver instances or implementations.
-     *
-     * This class is NOT thread-safe but the Transport and Driver's use of
-     * Packet objects should be allow the Transport and the Driver to execute on
-     * different threads.
-     */
-    class Packet {
-      public:
-        /// Packet's source or destination.  When sending a Packet, the address
-        /// field will contain the destination Address. When receiving a Packet,
-        /// address field will contain the source Address.
-        Address address;
+        /// See Homa::PacketSpec::length
+        int32_t length;
 
-        /// Packet's network priority (send only); the lowest possible priority
-        /// is 0.  The highest priority is positive number defined by the
-        /// Driver; the highest priority can be queried by calling the method
-        /// getHighestPacketPriority().
-        int priority;
+        // === Extended definitions ===
+        // The following members are specific to the driver framework bundled
+        // in this library. Therefore, these members must *NOT* appear in the
+        // core components of Homa transport; they are only used in a few
+        // places to facilitate the glue code between transport and driver.
 
-        /// Pointer to an array of bytes containing the payload of this Packet.
-        /// This array is valid until the Packet is released back to the Driver.
-        void* const payload;
+        /// Packet's source IpAddress. Only meaningful when this packet is an
+        /// incoming packet.
+        IpAddress sourceIp;
+    }  __attribute__((packed));
 
-        /// Number of bytes in the payload.
-        int length;
-
-        /// Return the maximum number of bytes the payload can hold.
-        virtual int getMaxPayloadSize() = 0;
-
-      protected:
-        /**
-         * Construct a Packet.
-         */
-        explicit Packet(void* payload, int length = 0)
-            : address()
-            , priority(0)
-            , payload(payload)
-            , length(length)
-        {}
-
-        // DISALLOW_COPY_AND_ASSIGN
-        Packet(const Packet&) = delete;
-        Packet& operator=(const Packet&) = delete;
-    };
+    // Static checks to enforce the object layout compatibility between
+    // Driver::Packet and PacketSpec.
+    static_assert(offsetof(Packet, payload) == offsetof(PacketSpec, payload));
+    static_assert(offsetof(Packet, length) == offsetof(PacketSpec, length));
 
     /**
      * Driver destructor.
      */
     virtual ~Driver() = default;
-
-    /**
-     * Return a Driver specific network address for the given string
-     * representation of the address.
-     *
-     * @param addressString
-     *      The string representation of the address to return.  The address
-     *      string format can be Driver specific.
-     *
-     * @return
-     *      Address that can be the source or destination of a Packet.
-     *
-     * @throw BadAddress
-     *      _addressString_ is malformed.
-     */
-    virtual Address getAddress(std::string const* const addressString) = 0;
-
-    /**
-     * Return a Driver specific network address for the given serialized
-     * byte-format of the address.
-     *
-     * @param wireAddress
-     *      The serialized byte-format of the address to be returned.  The
-     *      format can be Driver specific.
-     *
-     * @return
-     *      Address that can be the source or destination of a Packet.
-     *
-     * @throw BadAddress
-     *      _rawAddress_ is malformed.
-     */
-    virtual Address getAddress(WireFormatAddress const* const wireAddress) = 0;
-
-    /**
-     * Return the string representation of a network address.
-     *
-     * @param address
-     *      Address whose string representation should be returned.
-     */
-    virtual std::string addressToString(const Address address) = 0;
-
-    /**
-     * Serialize a network address into its Raw byte format.
-     *
-     * @param address
-     *      Address to be serialized.
-     * @param[out] wireAddress
-     *      WireFormatAddress object to which the Address is serialized.
-     */
-    virtual void addressToWireFormat(const Address address,
-                                     WireFormatAddress* wireAddress) = 0;
 
     /**
      * Allocate a new Packet object from the Driver's pool of resources. The
@@ -187,8 +122,16 @@ class Driver {
      *
      * @param packet
      *      Packet to be sent over the network.
+     * @param destination
+     *      IP address of the packet destination.
+     * @param priority
+     *      Packet's network priority; the lowest possible priority is 0.
+     *      The highest priority is positive number defined by the Driver;
+     *      the highest priority can be queried by calling the method
+     *      getHighestPacketPriority().
      */
-    virtual void sendPacket(Packet* packet) = 0;
+    virtual void sendPacket(Packet* packet, IpAddress destination,
+            int priority) = 0;
 
     /**
      * Request that the Driver enter the "corked" mode where outbound packets
@@ -273,10 +216,10 @@ class Driver {
     virtual uint32_t getBandwidth() = 0;
 
     /**
-     * Return this Driver's local network Address which it uses as the source
-     * Address for outgoing packets.
+     * Return this Driver's local IP address which it uses as the source
+     * address for outgoing packets.
      */
-    virtual Address getLocalAddress() = 0;
+    virtual IpAddress getLocalAddress() = 0;
 
     /**
      * Return the number of bytes that have been passed to the Driver through

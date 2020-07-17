@@ -59,7 +59,7 @@ TEST(PolicyManagerTest, getUnscheduledPolicy)
     EXPECT_CALL(mockDriver, getBandwidth).WillOnce(Return(8000));
     EXPECT_CALL(mockDriver, getHighestPacketPriority).WillOnce(Return(7));
     Policy::Manager manager(&mockDriver);
-    Driver::Address dest(22);
+    IpAddress dest(22);
 
     {
         Policy::Unscheduled policy = manager.getUnscheduledPolicy(dest, 1);

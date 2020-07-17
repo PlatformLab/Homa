@@ -35,32 +35,22 @@ class MockDriver : public Driver {
      *
      * @sa Driver::Packet.
      */
-    class MockPacket : public Driver::Packet {
-      public:
-        MockPacket(void* payload, uint16_t length = 0)
-            : Packet(payload, length)
-        {}
+    using MockPacket = Driver::Packet;
 
-        MOCK_METHOD0(getMaxPayloadSize, int());
-    };
-
-    MOCK_METHOD1(getAddress, Address(std::string const* const addressString));
-    MOCK_METHOD1(getAddress,
-                 Address(WireFormatAddress const* const wireAddress));
-    MOCK_METHOD1(addressToString, std::string(Address address));
-    MOCK_METHOD2(addressToWireFormat,
-                 void(Address address, WireFormatAddress* wireAddress));
-    MOCK_METHOD0(allocPacket, Packet*());
-    MOCK_METHOD1(sendPacket, void(Packet* packet));
-    MOCK_METHOD0(flushPackets, void());
-    MOCK_METHOD2(receivePackets,
-                 uint32_t(uint32_t maxPackets, Packet* receivedPackets[]));
-    MOCK_METHOD2(releasePackets, void(Packet* packets[], uint16_t numPackets));
-    MOCK_METHOD0(getHighestPacketPriority, int());
-    MOCK_METHOD0(getMaxPayloadSize, uint32_t());
-    MOCK_METHOD0(getBandwidth, uint32_t());
-    MOCK_METHOD0(getLocalAddress, Address());
-    MOCK_METHOD0(getQueuedBytes, uint32_t());
+    MOCK_METHOD(Packet*, allocPacket, (), (override));
+    MOCK_METHOD(void, sendPacket,
+                (Packet* packet, IpAddress destination, int priority),
+                (override));
+    MOCK_METHOD(void, flushPackets, ());
+    MOCK_METHOD(uint32_t, receivePackets,
+                (uint32_t maxPackets, Packet* receivedPackets[]), (override));
+    MOCK_METHOD(void, releasePackets, (Packet* packets[], uint16_t numPackets),
+                (override));
+    MOCK_METHOD(int, getHighestPacketPriority, (), (override));
+    MOCK_METHOD(uint32_t, getMaxPayloadSize, (), (override));
+    MOCK_METHOD(uint32_t, getBandwidth, (), (override));
+    MOCK_METHOD(IpAddress, getLocalAddress, (), (override));
+    MOCK_METHOD(uint32_t, getQueuedBytes, (), (override));
 };
 
 }  // namespace Mock

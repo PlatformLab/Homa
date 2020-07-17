@@ -70,7 +70,7 @@ struct Node {
 };
 
 void
-serverMain(Node* server, std::vector<std::string> addresses)
+serverMain(Node* server, std::vector<Homa::IpAddress> addresses)
 {
     while (true) {
         if (server->run.load() == false) {
@@ -101,7 +101,7 @@ serverMain(Node* server, std::vector<std::string> addresses)
  *      Number of Op that failed.
  */
 int
-clientMain(int count, int size, std::vector<std::string> addresses)
+clientMain(int count, int size, std::vector<Homa::IpAddress> addresses)
 {
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -119,9 +119,9 @@ clientMain(int count, int size, std::vector<std::string> addresses)
             payload[i] = randData(gen);
         }
 
-        std::string destAddress = addresses[randAddr(gen)];
+        Homa::IpAddress destAddress = addresses[randAddr(gen)];
 
-        Homa::unique_ptr<Homa::OutMessage> message = client.transport->alloc();
+        Homa::unique_ptr<Homa::OutMessage> message = client.transport->alloc(0);
         {
             MessageHeader header;
             header.id = id;
@@ -133,7 +133,7 @@ clientMain(int count, int size, std::vector<std::string> addresses)
                           << std::endl;
             }
         }
-        message->send(client.driver.getAddress(&destAddress));
+        message->send(Homa::SocketAddress{destAddress, 60001});
 
         while (1) {
             Homa::OutMessage::Status status = message->getStatus();
@@ -185,12 +185,11 @@ main(int argc, char* argv[])
     Homa::Drivers::Fake::FakeNetworkConfig::setPacketLossRate(packetLossRate);
 
     uint64_t nextServerId = 101;
-    std::vector<std::string> addresses;
+    std::vector<Homa::IpAddress> addresses;
     std::vector<Node*> servers;
     for (int i = 0; i < numServers; ++i) {
         Node* server = new Node(nextServerId++);
-        addresses.emplace_back(std::string(
-            server->driver.addressToString(server->driver.getLocalAddress())));
+        addresses.emplace_back(server->driver.getLocalAddress());
         servers.push_back(server);
     }
 

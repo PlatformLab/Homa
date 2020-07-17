@@ -38,6 +38,17 @@ template <typename T>
 using unique_ptr = std::unique_ptr<T, typename T::Deleter>;
 
 /**
+ * Represents a socket address to (from) which we can send (receive) messages.
+ */
+struct SocketAddress {
+    /// IPv4 address in host byte order.
+    IpAddress ip;
+
+    /// Port number in host byte order.
+    uint16_t port;
+};
+
+/**
  * Represents an array of bytes that has been received over the network.
  *
  * This class is NOT thread-safe.
@@ -222,11 +233,11 @@ class OutMessage {
      * Send this message to the destination.
      *
      * @param destination
-     *      Address of the transport to which this message will be sent.
+     *      Network address to which this message will be sent.
      * @param options
      *      Flags to request non-default sending behavior.
      */
-    virtual void send(Driver::Address destination,
+    virtual void send(SocketAddress destination,
                       Options options = Options::NONE) = 0;
 
   protected:
@@ -267,10 +278,12 @@ class Transport {
     /**
      * Allocate Message that can be sent with this Transport.
      *
+     * @param sourcePort
+     *      Port number of the socket from which the message will be sent.
      * @return
      *      A pointer to the allocated message.
      */
-    virtual Homa::unique_ptr<Homa::OutMessage> alloc() = 0;
+    virtual Homa::unique_ptr<Homa::OutMessage> alloc(uint16_t sourcePort) = 0;
 
     /**
      * Check for and return a Message sent to this Transport if available.
