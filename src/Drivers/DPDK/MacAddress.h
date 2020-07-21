@@ -28,13 +28,18 @@ namespace DPDK {
 struct MacAddress {
     explicit MacAddress(const uint8_t raw[6]);
     explicit MacAddress(const char* macStr);
-    explicit MacAddress(const Driver::WireFormatAddress* const wireAddress);
-    explicit MacAddress(const Driver::Address addr);
     MacAddress(const MacAddress&) = default;
     std::string toString() const;
-    void toWireFormat(Driver::WireFormatAddress* wireAddress) const;
-    Driver::Address toAddress() const;
     bool isNull() const;
+
+    /**
+     * Equality function for MacAddress, for use in std::unordered_maps etc.
+     */
+    bool operator==(const MacAddress& other) const
+    {
+        return (*(uint32_t*)(address + 0) == *(uint32_t*)(other.address + 0)) &&
+               (*(uint16_t*)(address + 4) == *(uint16_t*)(other.address + 4));
+    }
 
     /// The raw bytes of the MAC address.
     uint8_t address[6];

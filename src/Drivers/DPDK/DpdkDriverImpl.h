@@ -28,6 +28,7 @@
 #include <rte_version.h>
 
 #include <chrono>
+#include <unordered_map>
 
 #include "MacAddress.h"
 #include "ObjectPool.h"
@@ -65,8 +66,13 @@ const uint16_t MAX_PKT_BURST = 32;
 /// field defined in the VLAN tag to specify the packet priority.
 const uint32_t VLAN_TAG_LEN = 4;
 
-// Size of Ethernet header including VLAN tag, in bytes.
-const uint32_t PACKET_HDR_LEN = ETHER_HDR_LEN + VLAN_TAG_LEN;
+/// Strictly speaking, this DPDK driver is supposed to send/receive IP packets;
+/// however, it currently only records the source IP address right after the
+/// Ethernet header for simplicity.
+const uint32_t IP_HDR_LEN = sizeof(IpAddress);
+
+// Size of Ethernet header including VLAN tag plus IP header, in bytes.
+const uint32_t PACKET_HDR_LEN = ETHER_HDR_LEN + VLAN_TAG_LEN + IP_HDR_LEN;
 
 // The MTU (Maximum Transmission Unit) size of an Ethernet frame, which is the
 // maximum size of the packet an Ethernet frame can carry in its payload. This
@@ -104,10 +110,12 @@ class DpdkDriver::Impl {
      * Dpdk specific Packet object used to track a its lifetime and
      * contents.
      */
-    class Packet : public Driver::Packet {
-      public:
+    struct Packet {
         explicit Packet(struct rte_mbuf* mbuf, void* data);
         explicit Packet(OverflowBuffer* overflowBuf);
+
+        /// C-style "inheritance"
+        Driver::Packet base;
 
         /// Used to indicate whether the packet is backed by an DPDK mbuf or a
         /// driver-level OverflowBuffer.
@@ -122,26 +130,18 @@ class DpdkDriver::Impl {
         /// The memory location of this packet's header. The header should be
         /// PACKET_HDR_LEN in length.
         void* header;
-
-      private:
-        Packet(const Packet&) = delete;
-        Packet& operator=(const Packet&) = delete;
     };
 
-    Impl(int port, const Config* const config = nullptr);
-    Impl(int port, int argc, char* argv[],
+    Impl(const char* ifname, const Config* const config = nullptr);
+    Impl(const char* ifname, int argc, char* argv[],
          const Config* const config = nullptr);
-    Impl(int port, NoEalInit _, const Config* const config = nullptr);
+    Impl(const char* ifname, NoEalInit _, const Config* const config = nullptr);
     virtual ~Impl();
 
     // Interface Methods
-    Driver::Address getAddress(std::string const* const addressString);
-    Driver::Address getAddress(WireFormatAddress const* const wireAddress);
-    std::string addressToString(const Address address);
-    void addressToWireFormat(const Address address,
-                             WireFormatAddress* wireAddress);
-    Packet* allocPacket();
-    void sendPacket(Driver::Packet* packet);
+    Driver::Packet* allocPacket();
+    void sendPacket(Driver::Packet* packet, IpAddress destination,
+                    int priority);
     void cork();
     void uncork();
     uint32_t receivePackets(uint32_t maxPackets,
@@ -150,7 +150,7 @@ class DpdkDriver::Impl {
     int getHighestPacketPriority();
     uint32_t getMaxPayloadSize();
     uint32_t getBandwidth();
-    Driver::Address getLocalAddress();
+    IpAddress getLocalAddress();
     uint32_t getQueuedBytes();
 
   private:
@@ -163,12 +163,21 @@ class DpdkDriver::Impl {
     static void txBurstErrorCallback(struct rte_mbuf* pkts[], uint16_t unsent,
                                      void* userdata);
 
+    /// Name of the Linux network interface to be used by DPDK.
+    std::string ifname;
+
     /// Stores the NIC's physical port id addressed by the instantiated
     /// driver.
-    const uint16_t port;
+    uint16_t port;
 
-    /// Stores the address of the NIC (either native or set by override).
-    const MacAddress localMac;
+    /// Address resolution table that translates IP addresses to MAC addresses.
+    std::unordered_map<IpAddress, MacAddress> arpTable;
+
+    /// Stores the IpAddress of the driver.
+    IpAddress localIp;
+
+    /// Stores the HW address of the NIC (either native or set by override).
+    MacAddress localMac;
 
     /// Stores the driver's maximum network packet priority (either default or
     /// set by override).

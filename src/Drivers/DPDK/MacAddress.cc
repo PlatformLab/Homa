@@ -18,7 +18,6 @@
 #include "StringUtil.h"
 
 #include "../../CodeLocation.h"
-#include "../RawAddressType.h"
 
 namespace Homa {
 namespace Drivers {
@@ -56,33 +55,6 @@ MacAddress::MacAddress(const char* macStr)
 }
 
 /**
- * Create a new address from a given address in its raw byte format.
- * @param raw
- *      The raw bytes format.
- *
- * @sa Driver::Address::Raw
- */
-MacAddress::MacAddress(const Driver::WireFormatAddress* const wireAddress)
-{
-    if (wireAddress->type != RawAddressType::MAC) {
-        throw BadAddress(HERE_STR, "Bad address: Raw format is not type MAC");
-    }
-    static_assert(sizeof(wireAddress->bytes) >= 6);
-    memcpy(address, wireAddress->bytes, 6);
-}
-
-/**
- * Create a new address given the Driver::Address representation.
- *
- * @param addr
- *      The Driver::Address representation of an address.
- */
-MacAddress::MacAddress(const Driver::Address addr)
-{
-    memcpy(address, &addr, 6);
-}
-
-/**
  * Return the string representation of this address.
  */
 std::string
@@ -92,31 +64,6 @@ MacAddress::toString() const
     snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x", address[0],
              address[1], address[2], address[3], address[4], address[5]);
     return buf;
-}
-
-/**
- * Serialized this address into a wire format.
- *
- * @param[out] wireAddress
- *      WireFormatAddress object to which the this address is serialized.
- */
-void
-MacAddress::toWireFormat(Driver::WireFormatAddress* wireAddress) const
-{
-    static_assert(sizeof(wireAddress->bytes) >= 6);
-    memcpy(wireAddress->bytes, address, 6);
-    wireAddress->type = RawAddressType::MAC;
-}
-
-/**
- * Return a Driver::Address representation of this address.
- */
-Driver::Address
-MacAddress::toAddress() const
-{
-    Driver::Address addr = 0;
-    memcpy(&addr, address, 6);
-    return addr;
 }
 
 /**
