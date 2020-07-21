@@ -34,6 +34,18 @@ target_link_libraries(system_test
     docopt
 )
 
+## dpdk_test #################################################################
+
+add_executable(dpdk_test
+    dpdk_test.cc
+)
+target_link_libraries(dpdk_test
+    PRIVATE
+        Homa::DpdkDriver
+        docopt
+        PerfUtils
+)
+
 ## Perf ########################################################################
 
 add_executable(Perf

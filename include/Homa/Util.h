@@ -57,6 +57,8 @@ downCast(const Large& large)
 
 std::string demangle(const char* name);
 std::string hexDump(const void* buf, uint64_t bytes);
+std::string ipToString(uint32_t ip);
+uint32_t stringToIp(const char* ip);
 
 /**
  * This class is used to temporarily release lock in a safe fashion. Creating
