@@ -53,14 +53,14 @@ class DpdkDriver : public Driver {
      * has exclusive access to DPDK. Note: This call will initialize the DPDK
      * EAL with default values.
      *
-     * @param port
-     *      Selects which physical port to use for communication.
+     * @param ifname
+     *      Selects which network interface to use for communication.
      * @param config
      *      Optional configuration parameters (see Config).
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    DpdkDriver(int port, const Config* const config = nullptr);
+    DpdkDriver(const char* ifname, const Config* const config = nullptr);
 
     /**
      * Construct a DpdkDriver and initialize the DPDK EAL using the provided
@@ -75,7 +75,7 @@ class DpdkDriver : public Driver {
      * overriding the default affinity set by rte_eal_init().
      *
      * @param port
-     *      Selects which physical port to use for communication.
+     *      Selects which network interface to use for communication.
      * @param argc
      *      Parameter passed to rte_eal_init().
      * @param argv
@@ -85,7 +85,7 @@ class DpdkDriver : public Driver {
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    DpdkDriver(int port, int argc, char* argv[],
+    DpdkDriver(const char* ifname, int argc, char* argv[],
                const Config* const config = nullptr);
 
     /// Used to signal to the DpdkDriver constructor that the DPDK EAL should
@@ -101,7 +101,7 @@ class DpdkDriver : public Driver {
      * called before calling this constructor.
      *
      * @param port
-     *      Selects which physical port to use for communication.
+     *      Selects which network interface to use for communication.
      * @param _
      *      Parameter is used only to define this constructors alternate
      *      signature.
@@ -110,29 +110,20 @@ class DpdkDriver : public Driver {
      * @throw DriverInitFailure
      *      Thrown if DpdkDriver fails to initialize for any reason.
      */
-    DpdkDriver(int port, NoEalInit _, const Config* const config = nullptr);
+    DpdkDriver(const char* ifname, NoEalInit _,
+               const Config* const config = nullptr);
 
     /**
      * DpdkDriver Destructor.
      */
     virtual ~DpdkDriver();
 
-    /// See Driver::getAddress()
-    virtual Address getAddress(std::string const* const addressString);
-    virtual Address getAddress(WireFormatAddress const* const wireAddress);
-
-    /// See Driver::addressToString()
-    virtual std::string addressToString(const Address address);
-
-    /// See Driver::addressToWireFormat()
-    virtual void addressToWireFormat(const Address address,
-                                     WireFormatAddress* wireAddress);
-
     /// See Driver::allocPacket()
     virtual Packet* allocPacket();
 
     /// See Driver::sendPacket()
-    virtual void sendPacket(Packet* packet);
+    virtual void sendPacket(Packet* packet, IpAddress destination,
+                            int priority);
 
     /// See Driver::cork()
     virtual void cork();
@@ -157,7 +148,7 @@ class DpdkDriver : public Driver {
     virtual uint32_t getBandwidth();
 
     /// See Driver::getLocalAddress()
-    virtual Driver::Address getLocalAddress();
+    virtual IpAddress getLocalAddress();
 
     /// See Driver::getQueuedBytes();
     virtual uint32_t getQueuedBytes();

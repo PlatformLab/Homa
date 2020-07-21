@@ -17,13 +17,19 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <fstream>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <unistd.h>
+
 #include "DpdkDriverImpl.h"
 
 #include <rte_malloc.h>
-#include <unistd.h>
 
 #include "CodeLocation.h"
 #include "StringUtil.h"
+#include "Homa/Util.h"
 
 namespace Homa {
 
@@ -45,7 +51,7 @@ const char* default_eal_argv[] = {"homa", NULL};
  *      Memory location in the mbuf where the packet data should be stored.
  */
 DpdkDriver::Impl::Packet::Packet(struct rte_mbuf* mbuf, void* data)
-    : Driver::Packet(data, 0)
+    : base {.payload = data, .length = 0, .sourceIp = 0}
     , bufType(MBUF)
     , bufRef()
 {
@@ -59,7 +65,7 @@ DpdkDriver::Impl::Packet::Packet(struct rte_mbuf* mbuf, void* data)
  *      Overflow buffer that holds this packet.
  */
 DpdkDriver::Impl::Packet::Packet(OverflowBuffer* overflowBuf)
-    : Driver::Packet(overflowBuf->data, 0)
+    : base {.payload = overflowBuf->data, .length = 0, .sourceIp = 0}
     , bufType(OVERFLOW_BUF)
     , bufRef()
 {
@@ -69,17 +75,21 @@ DpdkDriver::Impl::Packet::Packet(OverflowBuffer* overflowBuf)
 /**
  * See DpdkDriver::DpdkDriver()
  */
-DpdkDriver::Impl::Impl(int port, const Config* const config)
-    : Impl(port, default_eal_argc, const_cast<char**>(default_eal_argv), config)
+DpdkDriver::Impl::Impl(const char* ifname, const Config* const config)
+    : Impl(ifname, default_eal_argc, const_cast<char**>(default_eal_argv),
+           config)
 {}
 
 /**
  * See DpdkDriver::DpdkDriver()
  */
-DpdkDriver::Impl::Impl(int port, int argc, char* argv[],
+DpdkDriver::Impl::Impl(const char* ifname, int argc, char* argv[],
                        const Config* const config)
-    : port(port)
-    , localMac(Driver::Address(0))
+    : ifname(ifname)
+    , port()
+    , arpTable()
+    , localIp()
+    , localMac("00:00:00:00:00:00")
     , HIGHEST_PACKET_PRIORITY(
           (config == nullptr || config->HIGHEST_PACKET_PRIORITY_OVERRIDE < 0)
               ? Homa::Util::arrayLength(PRIORITY_TO_PCP) - 1
@@ -124,10 +134,14 @@ DpdkDriver::Impl::Impl(int port, int argc, char* argv[],
 /**
  * See DpdkDriver::DpdkDriver()
  */
-DpdkDriver::Impl::Impl(int port, __attribute__((__unused__)) NoEalInit _,
+DpdkDriver::Impl::Impl(const char* ifname,
+                       __attribute__((__unused__)) NoEalInit _,
                        const Config* const config)
-    : port(port)
-    , localMac(Driver::Address(0))
+    : ifname(ifname)
+    , port()
+    , arpTable()
+    , localIp()
+    , localMac("00:00:00:00:00:00")
     , HIGHEST_PACKET_PRIORITY(
           (config == nullptr || config->HIGHEST_PACKET_PRIORITY_OVERRIDE < 0)
               ? Homa::Util::arrayLength(PRIORITY_TO_PCP) - 1
@@ -159,37 +173,8 @@ DpdkDriver::Impl::~Impl()
     rte_mempool_free(mbufPool);
 }
 
-// See Driver::getAddress()
-Driver::Address
-DpdkDriver::Impl::getAddress(std::string const* const addressString)
-{
-    return MacAddress(addressString->c_str()).toAddress();
-}
-
-// See Driver::getAddress()
-Driver::Address
-DpdkDriver::Impl::getAddress(Driver::WireFormatAddress const* const wireAddress)
-{
-    return MacAddress(wireAddress).toAddress();
-}
-
-/// See Driver::addressToString()
-std::string
-DpdkDriver::Impl::addressToString(const Driver::Address address)
-{
-    return MacAddress(address).toString();
-}
-
-/// See Driver::addressToWireFormat()
-void
-DpdkDriver::Impl::addressToWireFormat(const Driver::Address address,
-                                      Driver::WireFormatAddress* wireAddress)
-{
-    MacAddress(address).toWireFormat(wireAddress);
-}
-
 // See Driver::allocPacket()
-DpdkDriver::Impl::Packet*
+Driver::Packet*
 DpdkDriver::Impl::allocPacket()
 {
     DpdkDriver::Impl::Packet* packet = nullptr;
@@ -222,15 +207,17 @@ DpdkDriver::Impl::allocPacket()
         packet = packetPool.construct(buf);
         NOTICE("OverflowBuffer used.");
     }
-    return packet;
+    return &packet->base;
 }
 
 // See Driver::sendPacket()
 void
-DpdkDriver::Impl::sendPacket(Driver::Packet* packet)
+DpdkDriver::Impl::sendPacket(Driver::Packet* packet, IpAddress destination,
+                             int priority)
 {
+    ;
     DpdkDriver::Impl::Packet* pkt =
-        static_cast<DpdkDriver::Impl::Packet*>(packet);
+        container_of(packet, DpdkDriver::Impl::Packet, base);
     struct rte_mbuf* mbuf = nullptr;
     // If the packet is held in an Overflow buffer, we need to copy it out
     // into a new mbuf.
@@ -246,15 +233,15 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet)
                 numMbufsAvail, numMbufsInUse);
             return;
         }
-        char* buf = rte_pktmbuf_append(
-            mbuf, Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN + pkt->length));
+        char* buf = rte_pktmbuf_append(mbuf,
+            Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN + pkt->base.length));
         if (unlikely(NULL == buf)) {
             WARNING("rte_pktmbuf_append call failed; dropping packet");
             rte_pktmbuf_free(mbuf);
             return;
         }
         char* data = buf + PACKET_HDR_LEN;
-        rte_memcpy(data, pkt->payload, pkt->length);
+        rte_memcpy(data, pkt->base.payload, pkt->base.length);
     } else {
         mbuf = pkt->bufRef.mbuf;
 
@@ -269,9 +256,14 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet)
 
     // Fill out the destination and source MAC addresses plus the Ethernet
     // frame type (i.e., IEEE 802.1Q VLAN tagging).
-    MacAddress macAddr(pkt->address);
+    auto it = arpTable.find(destination);
+    if (it == arpTable.end()) {
+        WARNING("Failed to find ARP record for packet; dropping packet");
+        return;
+    }
+    MacAddress& destMac = it->second;
     struct ether_hdr* ethHdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr*);
-    rte_memcpy(&ethHdr->d_addr, macAddr.address, ETHER_ADDR_LEN);
+    rte_memcpy(&ethHdr->d_addr, destMac.address, ETHER_ADDR_LEN);
     rte_memcpy(&ethHdr->s_addr, localMac.address, ETHER_ADDR_LEN);
     ethHdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
 
@@ -279,13 +271,16 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet)
     // encapsulated frame (DEI and VLAN ID are not relevant and trivially
     // set to 0).
     struct vlan_hdr* vlanHdr = reinterpret_cast<struct vlan_hdr*>(ethHdr + 1);
-    vlanHdr->vlan_tci = rte_cpu_to_be_16(PRIORITY_TO_PCP[pkt->priority]);
+    vlanHdr->vlan_tci = rte_cpu_to_be_16(PRIORITY_TO_PCP[priority]);
     vlanHdr->eth_proto = rte_cpu_to_be_16(EthPayloadType::HOMA);
+
+    // Store our local IP address right before the payload.
+    *rte_pktmbuf_mtod_offset(mbuf, uint32_t*, PACKET_HDR_LEN - 4) = localIp;
 
     // In the normal case, we pre-allocate a pakcet's mbuf with enough
     // storage to hold the MAX_PAYLOAD_SIZE.  If the actual payload is
     // smaller, trim the mbuf to size to avoid sending unecessary bits.
-    uint32_t actualLength = PACKET_HDR_LEN + pkt->length;
+    uint32_t actualLength = PACKET_HDR_LEN + pkt->base.length;
     uint32_t mbufDataLength = rte_pktmbuf_pkt_len(mbuf);
     if (actualLength < mbufDataLength) {
         if (rte_pktmbuf_trim(mbuf, mbufDataLength - actualLength) < 0) {
@@ -297,7 +292,7 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet)
     }
 
     // loopback if src mac == dst mac
-    if (localMac.toAddress() == pkt->address) {
+    if (localMac == destMac) {
         struct rte_mbuf* mbuf_clone = rte_pktmbuf_clone(mbuf, mbufPool);
         if (unlikely(mbuf_clone == NULL)) {
             WARNING("Failed to clone packet for loopback; dropping packet");
@@ -417,6 +412,9 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
             }
         }
 
+        uint32_t srcIp = *rte_pktmbuf_mtod_offset(m, uint32_t*, headerLength);
+        headerLength += sizeof(srcIp);
+        payload += sizeof(srcIp);
         assert(rte_pktmbuf_pkt_len(m) >= headerLength);
         uint32_t length = rte_pktmbuf_pkt_len(m) - headerLength;
         assert(length <= MAX_PAYLOAD_SIZE);
@@ -434,10 +432,10 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
                 packet = packetPool.construct(buf);
             }
         }
-        packet->address = MacAddress(ethHdr->s_addr.addr_bytes).toAddress();
-        packet->length = length;
+        packet->base.length = length;
+        packet->base.sourceIp = srcIp;
 
-        receivedPackets[numPacketsReceived++] = packet;
+        receivedPackets[numPacketsReceived++] = &packet->base;
     }
 
     return numPacketsReceived;
@@ -450,7 +448,7 @@ DpdkDriver::Impl::releasePackets(Driver::Packet* packets[], uint16_t numPackets)
     for (uint16_t i = 0; i < numPackets; ++i) {
         SpinLock::Lock lock(packetLock);
         DpdkDriver::Impl::Packet* packet =
-            static_cast<DpdkDriver::Impl::Packet*>(packets[i]);
+            container_of(packets[i], DpdkDriver::Impl::Packet, base);
         if (likely(packet->bufType == DpdkDriver::Impl::Packet::MBUF)) {
             rte_pktmbuf_free(packet->bufRef.mbuf);
             mbufsOutstanding--;
@@ -483,10 +481,10 @@ DpdkDriver::Impl::getBandwidth()
 }
 
 // See Driver::getLocalAddress()
-Driver::Address
+IpAddress
 DpdkDriver::Impl::getLocalAddress()
 {
-    return localMac.toAddress();
+    return localIp;
 }
 
 // See Driver::getQueuedBytes();
@@ -526,10 +524,70 @@ DpdkDriver::Impl::_eal_init(int argc, char* argv[])
 void
 DpdkDriver::Impl::_init()
 {
-    struct ether_addr mac;
     struct rte_eth_conf portConf;
     int ret;
     uint16_t mtu;
+
+    // Populate the ARP table with records in /proc/net/arp (inspired by
+    // net-tools/arp.c)
+    std::ifstream input("/proc/net/arp");
+    for (std::string line; getline(input, line);) {
+        char ip[100];
+        char hwa[100];
+        char mask[100];
+        char dev[100];
+        int type, flags;
+        int cols = sscanf(line.c_str(), "%s 0x%x 0x%x %99s %99s %99s\n",
+                ip, &type, &flags, hwa, mask, dev);
+        if (cols != 6) continue;
+        arpTable.emplace(Homa::Util::stringToIp(ip), hwa);
+    }
+
+    // Use ioctl to obtain the IP and MAC addresses of the network interface.
+    struct ifreq ifr;
+    ifname.copy(ifr.ifr_name, ifname.length());
+    ifr.ifr_name[ifname.length() + 1] = 0;
+    if (ifname.length() >= sizeof(ifr.ifr_name)) {
+        throw DriverInitFailure(HERE_STR,
+            StringUtil::format("Interface name %s too long", ifname.c_str()));
+    }
+
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == -1) {
+        throw DriverInitFailure(HERE_STR,
+            StringUtil::format("Failed to create socket: %s", strerror(errno)));
+    }
+
+    if (ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
+        char* error = strerror(errno);
+        close(fd);
+        throw DriverInitFailure(HERE_STR,
+            StringUtil::format("Failed to obtain IP address: %s", error));
+    }
+    localIp = be32toh(((struct sockaddr_in*) &ifr.ifr_addr)->sin_addr.s_addr);
+
+    if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
+        char* error = strerror(errno);
+        close(fd);
+        throw DriverInitFailure(HERE_STR,
+            StringUtil::format("Failed to obtain MAC address: %s", error));
+    }
+    close(fd);
+    memcpy(localMac.address, ifr.ifr_hwaddr.sa_data, 6);
+
+    // Iterate over ethernet devices to locate the port identifier.
+    int p;
+    RTE_ETH_FOREACH_DEV(p) {
+        struct ether_addr mac;
+        rte_eth_macaddr_get(p, &mac);
+        if (MacAddress(mac.addr_bytes) == localMac) {
+            port = p;
+            break;
+        }
+    }
+    NOTICE("Using interface %s, ip %s, mac %s, port %u",
+        ifname.c_str(), Homa::Util::ipToString(localIp).c_str(),
+        localMac.toString().c_str(), port);
 
     std::string poolName = StringUtil::format("homa_mbuf_pool_%u", port);
     std::string ringName = StringUtil::format("homa_loopback_ring_%u", port);
@@ -553,10 +611,6 @@ DpdkDriver::Impl::_init()
             HERE_STR,
             StringUtil::format("Ethernet port %u doesn't exist", port));
     }
-
-    // Read the MAC address from the NIC via DPDK.
-    rte_eth_macaddr_get(port, &mac);
-    new (const_cast<MacAddress*>(&localMac)) MacAddress(mac.addr_bytes);
 
     // configure some default NIC port parameters
     memset(&portConf, 0, sizeof(portConf));

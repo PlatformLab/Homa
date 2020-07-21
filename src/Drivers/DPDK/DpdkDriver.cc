@@ -21,49 +21,20 @@ namespace Homa {
 namespace Drivers {
 namespace DPDK {
 
-DpdkDriver::DpdkDriver(int port, const Config* const config)
-    : pImpl(new Impl(port, config))
+DpdkDriver::DpdkDriver(const char* ifname, const Config* const config)
+    : pImpl(new Impl(ifname, config))
 {}
 
-DpdkDriver::DpdkDriver(int port, int argc, char* argv[],
+DpdkDriver::DpdkDriver(const char* ifname, int argc, char* argv[],
                        const Config* const config)
-    : pImpl(new Impl(port, argc, argv, config))
+    : pImpl(new Impl(ifname, argc, argv, config))
 {}
 
-DpdkDriver::DpdkDriver(int port, NoEalInit _, const Config* const config)
-    : pImpl(new Impl(port, _, config))
+DpdkDriver::DpdkDriver(const char* ifname, NoEalInit _, const Config* const config)
+    : pImpl(new Impl(ifname, _, config))
 {}
 
 DpdkDriver::~DpdkDriver() = default;
-
-/// See Driver::getAddress()
-Driver::Address
-DpdkDriver::getAddress(std::string const* const addressString)
-{
-    return pImpl->getAddress(addressString);
-}
-
-/// See Driver::getAddress()
-Driver::Address
-DpdkDriver::getAddress(WireFormatAddress const* const wireAddress)
-{
-    return pImpl->getAddress(wireAddress);
-}
-
-/// See Driver::addressToString()
-std::string
-DpdkDriver::addressToString(const Address address)
-{
-    return pImpl->addressToString(address);
-}
-
-/// See Driver::addressToWireFormat()
-void
-DpdkDriver::addressToWireFormat(const Address address,
-                                WireFormatAddress* wireAddress)
-{
-    pImpl->addressToWireFormat(address, wireAddress);
-}
 
 /// See Driver::allocPacket()
 Driver::Packet*
@@ -74,9 +45,9 @@ DpdkDriver::allocPacket()
 
 /// See Driver::sendPacket()
 void
-DpdkDriver::sendPacket(Packet* packet)
+DpdkDriver::sendPacket(Packet* packet, IpAddress destination, int priority)
 {
-    return pImpl->sendPacket(packet);
+    return pImpl->sendPacket(packet, destination, priority);
 }
 
 /// See Driver::cork()
@@ -128,7 +99,7 @@ DpdkDriver::getBandwidth()
 }
 
 /// See Driver::getLocalAddress()
-Driver::Address
+IpAddress
 DpdkDriver::getLocalAddress()
 {
     return pImpl->getLocalAddress();
