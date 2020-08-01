@@ -140,6 +140,11 @@ class OutMessage {
         NO_RETRY = 1 << 0,  //< Message will not be resent if recoverable send
                             //< failure occurs; provides at-most-once delivery
                             //< of messages.
+        NO_KEEP_ALIVE = 1 << 1,  //< Once the Message has been sent, Homa will
+                                 //< not automatically ping the Message's
+                                 //< receiver to ensure the receiver is still
+                                 //< alive and the Message will not "timeout"
+                                 //< due to receiver inactivity.
     };
 
     /**
@@ -292,6 +297,17 @@ class Transport {
      */
     virtual uint64_t getId() = 0;
 };
+
+/**
+ * Combine Options flags.
+ */
+inline OutMessage::Options
+operator|(OutMessage::Options lhs, OutMessage::Options rhs)
+{
+    typedef std::underlying_type<OutMessage::Options>::type options_t;
+    return OutMessage::Options(static_cast<options_t>(lhs) |
+                               static_cast<options_t>(rhs));
+}
 
 }  // namespace Homa
 

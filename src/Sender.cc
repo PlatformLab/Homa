@@ -920,6 +920,12 @@ Sender::checkMessageTimeouts()
             // Found expired timeout.
             if (message->state != OutMessage::Status::COMPLETED) {
                 message->state.store(OutMessage::Status::FAILED);
+                // A sent NO_KEEP_ALIVE message should never reach this state
+                // since the shorter ping timeout should have already canceled
+                // the message timeout.
+                assert(
+                    !((message->state == OutMessage::Status::SENT) &&
+                      (message->options & OutMessage::Options::NO_KEEP_ALIVE)));
             }
             bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
             bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
@@ -963,6 +969,11 @@ Sender::checkPingTimeouts()
             // Found expired timeout.
             if (message->state == OutMessage::Status::COMPLETED ||
                 message->state == OutMessage::Status::FAILED) {
+                bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+                continue;
+            } else if (message->options & OutMessage::Options::NO_KEEP_ALIVE &&
+                       message->state == OutMessage::Status::SENT) {
+                bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
                 bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
                 continue;
             } else {

@@ -1578,8 +1578,8 @@ TEST_F(SenderTest, checkMessageTimeouts_empty)
 
 TEST_F(SenderTest, checkPingTimeouts_basic)
 {
-    Sender::Message* message[4];
-    for (uint64_t i = 0; i < 4; ++i) {
+    Sender::Message* message[5];
+    for (uint64_t i = 0; i < 5; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = dynamic_cast<Sender::Message*>(sender->allocMessage());
         SenderTest::addMessage(sender, id, message[i]);
@@ -1589,15 +1589,19 @@ TEST_F(SenderTest, checkPingTimeouts_basic)
 
     // Message[0]: Normal timeout: COMPLETED
     message[0]->state = Homa::OutMessage::Status::COMPLETED;
-    message[0]->pingTimeout.expirationCycleTime = 9998;
+    message[0]->pingTimeout.expirationCycleTime = 9997;
     // Message[1]: Normal timeout: FAILED
     message[1]->state = Homa::OutMessage::Status::FAILED;
-    message[1]->pingTimeout.expirationCycleTime = 9999;
-    // Message[2]: Normal timeout: SENT
+    message[1]->pingTimeout.expirationCycleTime = 9998;
+    // Message[2]: Normal timeout: NO_KEEP_ALIVE && SENT
+    message[2]->options = Homa::OutMessage::Options::NO_KEEP_ALIVE;
     message[2]->state = Homa::OutMessage::Status::SENT;
-    message[2]->pingTimeout.expirationCycleTime = 10000;
-    // Message[3]: No timeout
-    message[3]->pingTimeout.expirationCycleTime = 10001;
+    message[2]->pingTimeout.expirationCycleTime = 9999;
+    // Message[3]: Normal timeout: SENT
+    message[3]->state = Homa::OutMessage::Status::SENT;
+    message[3]->pingTimeout.expirationCycleTime = 10000;
+    // Message[4]: No timeout
+    message[4]->pingTimeout.expirationCycleTime = 10001;
 
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
 
@@ -1608,19 +1612,21 @@ TEST_F(SenderTest, checkPingTimeouts_basic)
 
     uint64_t nextTimeout = sender->checkPingTimeouts();
 
-    EXPECT_EQ(message[3]->pingTimeout.expirationCycleTime, nextTimeout);
+    EXPECT_EQ(message[4]->pingTimeout.expirationCycleTime, nextTimeout);
     // Message[0]: Normal timeout: COMPLETED
     EXPECT_EQ(nullptr, message[0]->pingTimeout.node.list);
     // Message[1]: Normal timeout: FAILED
     EXPECT_EQ(nullptr, message[1]->pingTimeout.node.list);
-    // Message[2]: Normal timeout: SENT
-    EXPECT_EQ(10100, message[2]->pingTimeout.expirationCycleTime);
+    // Message[2]: Normal timeout: NO_KEEP_ALIVE && SENT
+    EXPECT_EQ(nullptr, message[2]->pingTimeout.node.list);
+    // Message[3]: Normal timeout: SENT
+    EXPECT_EQ(10100, message[3]->pingTimeout.expirationCycleTime);
     Protocol::Packet::CommonHeader* header =
         static_cast<Protocol::Packet::CommonHeader*>(mockPacket.payload);
     EXPECT_EQ(Protocol::Packet::PING, header->opcode);
-    EXPECT_EQ(message[2]->id, header->messageId);
-    // Message[3]: No timeout
-    EXPECT_EQ(10001, message[3]->pingTimeout.expirationCycleTime);
+    EXPECT_EQ(message[3]->id, header->messageId);
+    // Message[4]: No timeout
+    EXPECT_EQ(10001, message[4]->pingTimeout.expirationCycleTime);
 }
 
 TEST_F(SenderTest, checkPingTimeouts_empty)
