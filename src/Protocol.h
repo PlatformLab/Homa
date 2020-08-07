@@ -104,38 +104,40 @@ enum Opcode {
 
 /**
  * This is the first part of the Homa packet header and is common to all
- * versions of the protocol. The struct contains version information about the
+ * versions of the protocol. The first four bytes of the header store the source
+ * and destination ports, which is common for many transport layer protocols
+ * (e.g., TCP, UDP, etc.) The struct also contains version information about the
  * protocol used in the encompassing packet. The Transport should always send
  * this prefix and can always expect it when receiving a Homa packet. The prefix
  * is separated into its own struct because the Transport may need to know the
  * protocol version before interpreting the rest of the packet.
  */
 struct HeaderPrefix {
+    uint16_t sport, dport;///< Transport layer (L4) source and destination ports
+                          ///< in network byte order; only used by DataHeader.
     uint8_t version;  ///< The version of the protocol being used by this
                       ///< packet.
 
     /// HeaderPrefix constructor.
-    HeaderPrefix(uint8_t version)
-        : version(version)
+    HeaderPrefix(uint16_t sport, uint16_t dport, uint8_t version)
+        : sport(sport)
+        , dport(dport)
+        , version(version)
     {}
 } __attribute__((packed));
 
 /**
  * Describes the wire format for header fields that are common to all packet
- * types. Note: the first 4 bytes are identical for TCP, UDP, and Homa.
+ * types.
  */
 struct CommonHeader {
-    uint16_t sport, dport;///< Transport layer (L4) source and destination ports
-                          ///< in network byte order; only used by DataHeader.
     HeaderPrefix prefix;  ///< Common to all versions of the protocol.
     uint8_t opcode;       ///< One of the values of Opcode.
     MessageId messageId;  ///< RemoteOp/Message associated with this packet.
 
     /// CommonHeader constructor.
     CommonHeader(Opcode opcode, MessageId messageId)
-        : sport(0)
-        , dport(0)
-        , prefix(1)
+        : prefix(0, 0, 1)
         , opcode(opcode)
         , messageId(messageId)
     {}
@@ -170,8 +172,8 @@ struct DataHeader {
         , unscheduledIndexLimit(unscheduledIndexLimit)
         , index(index)
     {
-        common.sport = htobe16(sport);
-        common.dport = htobe16(dport);
+        common.prefix.sport = htobe16(sport);
+        common.prefix.dport = htobe16(dport);
     }
 } __attribute__((packed));
 

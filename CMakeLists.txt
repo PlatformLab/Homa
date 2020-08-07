@@ -1,6 +1,6 @@
 cmake_minimum_required (VERSION 3.11)
 
-project(Homa VERSION 0.1.1.0 LANGUAGES CXX)
+project(Homa VERSION 0.1.2.0 LANGUAGES CXX)
 
 ################################################################################
 ## Dependency Configuration ####################################################
@@ -74,6 +74,7 @@ endif()
 add_library(Homa
     src/CodeLocation.cc
     src/Debug.cc
+    src/Driver.cc
     src/Homa.cc
     src/Perf.cc
     src/Policy.cc

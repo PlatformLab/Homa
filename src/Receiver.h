@@ -474,7 +474,7 @@ class Receiver {
 
     /// Collection of all peers; used for fast access.  Access is protected by
     /// the schedulerMutex.
-    std::unordered_map<IpAddress, Peer> peerTable;
+    std::unordered_map<IpAddress, Peer, IpAddress::Hasher> peerTable;
 
     /// List of peers with inbound messages that require grants to complete.
     /// Access is protected by the schedulerMutex.

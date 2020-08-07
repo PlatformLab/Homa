@@ -100,21 +100,5 @@ hexDump(const void* buf, uint64_t bytes)
     return output.str();
 }
 
-std::string
-ipToString(uint32_t ip)
-{
-    return StringUtil::format("%d.%d.%d.%d",
-        (ip >> 24) & 0xff, (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff);
-}
-
-uint32_t
-stringToIp(const char* ipStr)
-{
-    unsigned int bytes[4];
-    sscanf(ipStr, "%u.%u.%u.%u", &bytes[0], &bytes[1], &bytes[2], &bytes[3]);
-    return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
-}
-
-
 }  // namespace Util
 }  // namespace Homa

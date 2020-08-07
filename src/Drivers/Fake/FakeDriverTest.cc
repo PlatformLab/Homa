@@ -27,7 +27,7 @@ namespace {
 
 TEST(FakeDriverTest, constructor)
 {
-    uint64_t nextAddressId = FakeDriver().localAddressId + 1;
+    uint32_t nextAddressId = FakeDriver().localAddressId + 1;
 
     FakeDriver driver;
     EXPECT_EQ(nextAddressId, driver.localAddressId);
@@ -38,7 +38,7 @@ TEST(FakeDriverTest, allocPacket)
     FakeDriver driver;
     Driver::Packet* packet = driver.allocPacket();
     // allocPacket doesn't do much so we just need to make sure we can call it.
-    delete container_of(packet, FakePacket, base);
+    delete container_of(packet, &FakePacket::base);
 }
 
 TEST(FakeDriverTest, sendPackets)
@@ -54,7 +54,7 @@ TEST(FakeDriverTest, sendPackets)
         destinations[i] = driver2.getLocalAddress();
         prio[i] = i;
     }
-    destinations[2] = IpAddress(42);
+    destinations[2] = IpAddress{42};
 
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(0).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(1).size());
@@ -76,7 +76,7 @@ TEST(FakeDriverTest, sendPackets)
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(7).size());
     {
-        Driver::Packet* packet = &driver2.nic.priorityQueue.at(0).front()->base;
+        FakePacket* packet = driver2.nic.priorityQueue.at(0).front();
         EXPECT_EQ(driver1.getLocalAddress(), packet->sourceIp);
     }
 
@@ -93,7 +93,7 @@ TEST(FakeDriverTest, sendPackets)
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(7).size());
 
-    delete container_of(packets[2], FakePacket, base);
+    delete container_of(packets[2], &FakePacket::base);
 }
 
 TEST(FakeDriverTest, receivePackets)
@@ -102,6 +102,7 @@ TEST(FakeDriverTest, receivePackets)
     FakeDriver driver;
 
     Driver::Packet* packets[4];
+    IpAddress srcAddrs[4];
 
     // 3 packets at priority 7
     for (int i = 0; i < 3; ++i)
@@ -123,7 +124,7 @@ TEST(FakeDriverTest, receivePackets)
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(6).size());
     EXPECT_EQ(3U, driver.nic.priorityQueue.at(7).size());
 
-    EXPECT_EQ(4U, driver.receivePackets(4, packets));
+    EXPECT_EQ(4U, driver.receivePackets(4, packets, srcAddrs));
     driver.releasePackets(packets, 4);
 
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(0).size());
@@ -135,7 +136,7 @@ TEST(FakeDriverTest, receivePackets)
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(7).size());
 
-    EXPECT_EQ(1U, driver.receivePackets(1, packets));
+    EXPECT_EQ(1U, driver.receivePackets(1, packets, srcAddrs));
     driver.releasePackets(packets, 1);
 
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(0).size());
@@ -158,7 +159,7 @@ TEST(FakeDriverTest, receivePackets)
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(6).size());
     EXPECT_EQ(1U, driver.nic.priorityQueue.at(7).size());
 
-    EXPECT_EQ(1U, driver.receivePackets(1, packets));
+    EXPECT_EQ(1U, driver.receivePackets(1, packets, srcAddrs));
     driver.releasePackets(packets, 1);
 
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(0).size());
@@ -170,7 +171,7 @@ TEST(FakeDriverTest, receivePackets)
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver.nic.priorityQueue.at(7).size());
 
-    EXPECT_EQ(3U, driver.receivePackets(4, packets));
+    EXPECT_EQ(3U, driver.receivePackets(4, packets, srcAddrs));
     driver.releasePackets(packets, 3);
 }
 
@@ -199,9 +200,9 @@ TEST(FakeDriverTest, getBandwidth)
 
 TEST(FakeDriverTest, getLocalAddress)
 {
-    uint64_t nextAddressId = FakeDriver().localAddressId + 1;
+    uint32_t nextAddressId = FakeDriver().localAddressId + 1;
     FakeDriver driver;
-    EXPECT_EQ(nextAddressId, driver.getLocalAddress());
+    EXPECT_EQ(nextAddressId, (uint32_t)driver.getLocalAddress());
 }
 
 }  // namespace

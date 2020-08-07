@@ -133,7 +133,8 @@ class DpdkDriver : public Driver {
 
     /// See Driver::receivePackets()
     virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    Packet* receivedPackets[]);
+                                    Packet* receivedPackets[],
+                                    IpAddress sourceAddresses[]);
 
     /// See Driver::releasePackets()
     virtual void releasePackets(Packet* packets[], uint16_t numPackets);

@@ -104,7 +104,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
             SpinLock::Lock lock_allocator(messageAllocator.mutex);
             SocketAddress srcAddress = {
                 .ip = sourceIp,
-                .port = be16toh(header->common.sport)
+                .port = be16toh(header->common.prefix.sport)
             };
             message = messageAllocator.pool.construct(
                 this, driver, dataHeaderLength, messageLength, id,
@@ -126,7 +126,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
     assert(id == message->id);
     assert(message->driver == driver);
     assert(message->source.ip == sourceIp);
-    assert(message->source.port == be16toh(header->common.sport));
+    assert(message->source.port == be16toh(header->common.prefix.sport));
     assert(message->messageLength == Util::downCast<int>(header->totalLength));
 
     // Add the packet

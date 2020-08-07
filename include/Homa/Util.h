@@ -22,10 +22,11 @@
 #include <string>
 
 /// Cast a member of a structure out to the containing structure.
-#define container_of(ptr, type, member) ({ \
-    const typeof( ((type *)0)->member ) \
-    *__mptr = (ptr); \
-    (type *)( (char *)__mptr - offsetof(type,member) );})
+template<class P, class M>
+P* container_of(M* ptr, const M P::*member)
+{
+    return (P*)((char*) ptr - (size_t) &(reinterpret_cast<P*>(0)->*member));
+}
 
 namespace Homa {
 namespace Util {
@@ -57,8 +58,6 @@ downCast(const Large& large)
 
 std::string demangle(const char* name);
 std::string hexDump(const void* buf, uint64_t bytes);
-std::string ipToString(uint32_t ip);
-uint32_t stringToIp(const char* ip);
 
 /**
  * This class is used to temporarily release lock in a safe fashion. Creating

@@ -66,9 +66,10 @@ DpdkDriver::uncork()
 
 /// See Driver::receivePackets()
 uint32_t
-DpdkDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
+DpdkDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[],
+                           IpAddress sourceAddresses[])
 {
-    return pImpl->receivePackets(maxPackets, receivedPackets);
+    return pImpl->receivePackets(maxPackets, receivedPackets, sourceAddresses);
 }
 /// See Driver::releasePackets()
 void
