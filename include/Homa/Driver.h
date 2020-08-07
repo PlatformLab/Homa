@@ -22,8 +22,49 @@
 
 namespace Homa {
 
-/// IPv4 address in host byte order.
-using IpAddress = uint32_t;
+/**
+ * A simple wrapper struct around an IP address in binary format.
+ *
+ * This struct is meant to provide some type-safety when manipulating IP
+ * addresses. In order to avoid any runtime overhead, this struct contains
+ * nothing more than the IP address, so it is trivially copyable.
+ */
+struct IpAddress final {
+    /// IPv4 address in host byte order.
+    uint32_t addr;
+
+    /**
+     * Unbox the IP address in binary format.
+     */
+    explicit operator uint32_t()
+    {
+        return addr;
+    }
+
+    /**
+     * Equality function for IpAddress, for use in std::unordered_maps etc.
+     */
+    bool operator==(const IpAddress& other) const
+    {
+        return addr == other.addr;
+    }
+
+    /**
+     * This class computes a hash of an IpAddress, so that IpAddress can be used
+     * as keys in unordered_maps.
+     */
+    struct Hasher {
+        /// Return a "hash" of the given IpAddress.
+        std::size_t operator()(const IpAddress& address) const
+        {
+            return std::hash<typeof(addr)>{}(address.addr);
+        }
+    };
+
+    static std::string toString(IpAddress address);
+    static IpAddress fromString(const char* addressStr);
+};
+static_assert(std::is_trivially_copyable<IpAddress>());
 
 /**
  * Represents a packet of data that can be send or is received over the network.
@@ -43,6 +84,7 @@ struct PacketSpec {
     /// Number of bytes in the payload.
     int32_t length;
 }  __attribute__((packed));
+static_assert(std::is_trivial<PacketSpec>());
 
 /**
  * Used by Homa::Transport to send and receive unreliable datagrams.  Provides
@@ -52,41 +94,8 @@ struct PacketSpec {
  */
 class Driver {
   public:
-    /**
-     * Represents a packet that can be send or is received over the network.
-     *
-     * The layout of this struct has two parts: the first part is essentially
-     * a copy of PacketSpec, while the second part contains members specific
-     * to our driver implementation.
-     *
-     * @sa Homa::PacketSpec
-     */
-    struct Packet final {
-        // === PacketSpec definitions ===
-        // The order and types of the following members must match those in
-        // PacketSpec precisely.
-
-        /// See Homa::PacketSpec::payload.
-        void* payload;
-
-        /// See Homa::PacketSpec::length
-        int32_t length;
-
-        // === Extended definitions ===
-        // The following members are specific to the driver framework bundled
-        // in this library. Therefore, these members must *NOT* appear in the
-        // core components of Homa transport; they are only used in a few
-        // places to facilitate the glue code between transport and driver.
-
-        /// Packet's source IpAddress. Only meaningful when this packet is an
-        /// incoming packet.
-        IpAddress sourceIp;
-    }  __attribute__((packed));
-
-    // Static checks to enforce the object layout compatibility between
-    // Driver::Packet and PacketSpec.
-    static_assert(offsetof(Packet, payload) == offsetof(PacketSpec, payload));
-    static_assert(offsetof(Packet, length) == offsetof(PacketSpec, length));
+    /// Import PacketSpec into the Driver namespace.
+    using Packet = PacketSpec;
 
     /**
      * Driver destructor.
@@ -164,6 +173,9 @@ class Driver {
      * this method.
      * @param[out] receivedPackets
      *      Received packets are appended to this array in order of arrival.
+     * @param[out] sourceAddresses
+     *      Source IP addresses of the received packets are appended to this
+     * array in order of arrival.
      *
      * @return
      *      Number of Packet objects being returned.
@@ -171,7 +183,8 @@ class Driver {
      * @sa Driver::releasePackets()
      */
     virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    Packet* receivedPackets[]) = 0;
+                                    Packet* receivedPackets[],
+                                    IpAddress sourceAddresses[]) = 0;
 
     /**
      * Release a collection of Packet objects back to the Driver. Every

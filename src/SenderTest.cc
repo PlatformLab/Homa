@@ -1391,8 +1391,8 @@ TEST_F(SenderTest, sendMessage_basic)
     // Check packet metadata
     Protocol::Packet::DataHeader* header =
         static_cast<Protocol::Packet::DataHeader*>(mockPacket.payload);
-    EXPECT_EQ(htobe16(sport), header->common.sport);
-    EXPECT_EQ(htobe16(dport), header->common.dport);
+    EXPECT_EQ(htobe16(sport), header->common.prefix.sport);
+    EXPECT_EQ(htobe16(dport), header->common.prefix.dport);
     EXPECT_EQ(id, header->common.messageId);
     EXPECT_EQ(420U, header->totalLength);
     EXPECT_EQ(policy.version, header->policyVersion);

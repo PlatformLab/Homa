@@ -37,6 +37,13 @@ using ::testing::NiceMock;
 using ::testing::Pointee;
 using ::testing::Return;
 
+/// Helper macro to construct an IpAddress from a numeric number.
+#define IP(x) \
+    IpAddress \
+    {         \
+        x     \
+    }
+
 class ReceiverTest : public ::testing::Test {
   public:
     ReceiverTest()
@@ -105,21 +112,21 @@ TEST_F(ReceiverTest, handleDataPacket)
     header->totalLength = totalMessageLength;
     header->policyVersion = policyVersion;
     header->unscheduledIndexLimit = 1;
-    mockPacket.sourceIp = IpAddress(22);
+    IpAddress sourceIp{22};
 
     // -------------------------------------------------------------------------
     // Receive packet[1]. New message.
     header->index = 1;
     mockPacket.length = HEADER_SIZE + 1000;
     EXPECT_CALL(mockPolicyManager,
-                signalNewMessage(Eq(mockPacket.sourceIp), Eq(policyVersion),
+                signalNewMessage(Eq(sourceIp), Eq(policyVersion),
                                  Eq(totalMessageLength)))
         .Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(0);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
+    receiver->handleDataPacket(&mockPacket, sourceIp);
     // ---------
 
     {
@@ -148,7 +155,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(1);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
+    receiver->handleDataPacket(&mockPacket, sourceIp);
     // ---------
 
     EXPECT_EQ(1U, message->numPackets);
@@ -162,7 +169,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(0);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
+    receiver->handleDataPacket(&mockPacket, sourceIp);
     // ---------
 
     EXPECT_EQ(2U, message->numPackets);
@@ -177,7 +184,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(0);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
+    receiver->handleDataPacket(&mockPacket, sourceIp);
     // ---------
 
     EXPECT_EQ(3U, message->numPackets);
@@ -192,7 +199,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(0);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
+    receiver->handleDataPacket(&mockPacket, sourceIp);
     // ---------
 
     EXPECT_EQ(4U, message->numPackets);
@@ -207,7 +214,7 @@ TEST_F(ReceiverTest, handleDataPacket)
         .Times(1);
 
     // TEST CALL
-    receiver->handleDataPacket(&mockPacket, mockPacket.sourceIp);
+    receiver->handleDataPacket(&mockPacket, sourceIp);
     // ---------
 
     Mock::VerifyAndClearExpectations(&mockDriver);
@@ -251,7 +258,7 @@ TEST_F(ReceiverTest, handleBusyPacket_unknown)
 TEST_F(ReceiverTest, handlePingPacket_basic)
 {
     Protocol::MessageId id(42, 32);
-    IpAddress mockAddress = 22;
+    IpAddress mockAddress{22};
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
         receiver, &mockDriver, 0, 20000, id, SocketAddress{mockAddress, 0}, 0);
     ASSERT_TRUE(message->scheduled);
@@ -264,7 +271,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
 
     char pingPayload[1028];
     Homa::Mock::MockDriver::MockPacket pingPacket{pingPayload};
-    pingPacket.sourceIp = mockAddress;
+    IpAddress sourceIp = mockAddress;
     Protocol::Packet::PingHeader* pingHeader =
         (Protocol::Packet::PingHeader*)pingPacket.payload;
     pingHeader->common.messageId = id;
@@ -277,7 +284,7 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
         .Times(1);
 
-    receiver->handlePingPacket(&pingPacket, pingPacket.sourceIp);
+    receiver->handlePingPacket(&pingPacket, sourceIp);
 
     EXPECT_EQ(11000U, message->messageTimeout.expirationCycleTime);
     EXPECT_EQ(0U, message->resendTimeout.expirationCycleTime);
@@ -296,8 +303,7 @@ TEST_F(ReceiverTest, handlePingPacket_unknown)
 
     char pingPayload[1028];
     Homa::Mock::MockDriver::MockPacket pingPacket{pingPayload};
-    IpAddress mockAddress = (IpAddress)22;
-    pingPacket.sourceIp = mockAddress;
+    IpAddress mockAddress{22};
     Protocol::Packet::PingHeader* pingHeader =
         (Protocol::Packet::PingHeader*)pingPacket.payload;
     pingHeader->common.messageId = id;
@@ -310,7 +316,7 @@ TEST_F(ReceiverTest, handlePingPacket_unknown)
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&pingPacket), Eq(1)))
         .Times(1);
 
-    receiver->handlePingPacket(&pingPacket, pingPacket.sourceIp);
+    receiver->handlePingPacket(&pingPacket, mockAddress);
 
     Protocol::Packet::UnknownHeader* header =
         (Protocol::Packet::UnknownHeader*)payload;
@@ -838,11 +844,11 @@ TEST_F(ReceiverTest, trySendGrants)
 {
     Receiver::Message* message[4];
     Receiver::ScheduledMessageInfo* info[4];
-    for (uint64_t i = 0; i < 4; ++i) {
+    for (uint32_t i = 0; i < 4; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         message[i] = receiver->messageAllocator.pool.construct(
             receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader),
-            10000 * (i + 1), id, SocketAddress{IpAddress(100 + i), 60001},
+            10000 * (i + 1), id, SocketAddress{IP(100 + i), 60001},
             10 * (i + 1));
         {
             SpinLock::Lock lock_scheduler(receiver->schedulerMutex);
@@ -970,7 +976,7 @@ TEST_F(ReceiverTest, schedule)
 
     receiver->schedule(message[0], lock);
 
-    EXPECT_EQ(&receiver->peerTable.at(22), info[0]->peer);
+    EXPECT_EQ(&receiver->peerTable.at(IP(22)), info[0]->peer);
     EXPECT_EQ(message[0], &info[0]->peer->scheduledMessages.front());
     EXPECT_EQ(info[0]->peer, &receiver->scheduledPeers.front());
 
@@ -982,7 +988,7 @@ TEST_F(ReceiverTest, schedule)
 
     receiver->schedule(message[1], lock);
 
-    EXPECT_EQ(&receiver->peerTable.at(33), info[1]->peer);
+    EXPECT_EQ(&receiver->peerTable.at(IP(33)), info[1]->peer);
     EXPECT_EQ(message[1], &info[1]->peer->scheduledMessages.front());
     EXPECT_EQ(info[1]->peer, &receiver->scheduledPeers.back());
 
@@ -994,7 +1000,7 @@ TEST_F(ReceiverTest, schedule)
 
     receiver->schedule(message[2], lock);
 
-    EXPECT_EQ(&receiver->peerTable.at(33), info[2]->peer);
+    EXPECT_EQ(&receiver->peerTable.at(IP(33)), info[2]->peer);
     EXPECT_EQ(message[2], &info[2]->peer->scheduledMessages.front());
     EXPECT_EQ(info[2]->peer, &receiver->scheduledPeers.front());
 
@@ -1006,7 +1012,7 @@ TEST_F(ReceiverTest, schedule)
 
     receiver->schedule(message[3], lock);
 
-    EXPECT_EQ(&receiver->peerTable.at(22), info[3]->peer);
+    EXPECT_EQ(&receiver->peerTable.at(IP(22)), info[3]->peer);
     EXPECT_EQ(message[3], &info[3]->peer->scheduledMessages.back());
     EXPECT_EQ(info[3]->peer, &receiver->scheduledPeers.back());
 }
@@ -1017,23 +1023,24 @@ TEST_F(ReceiverTest, unschedule)
     Receiver::ScheduledMessageInfo* info[5];
     SpinLock::Lock lock(receiver->schedulerMutex);
     int messageLength[5] = {10, 20, 30, 10, 20};
-    for (uint64_t i = 0; i < 5; ++i) {
+    for (uint32_t i = 0; i < 5; ++i) {
         Protocol::MessageId id = {42, 10 + i};
-        IpAddress source = IpAddress((i / 3) + 10);
+        IpAddress source = IP((i / 3) + 10);
         message[i] = receiver->messageAllocator.pool.construct(
             receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader),
             messageLength[i], id, SocketAddress{source, 60001}, 0);
         info[i] = &message[i]->scheduledMessageInfo;
         receiver->schedule(message[i], lock);
     }
+    auto& scheduledPeers = receiver->scheduledPeers;
 
-    ASSERT_EQ(IpAddress(10), message[0]->source.ip);
-    ASSERT_EQ(IpAddress(10), message[1]->source.ip);
-    ASSERT_EQ(IpAddress(10), message[2]->source.ip);
-    ASSERT_EQ(IpAddress(11), message[3]->source.ip);
-    ASSERT_EQ(IpAddress(11), message[4]->source.ip);
-    ASSERT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
-    ASSERT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+    ASSERT_EQ(IP(10), message[0]->source.ip);
+    ASSERT_EQ(IP(10), message[1]->source.ip);
+    ASSERT_EQ(IP(10), message[2]->source.ip);
+    ASSERT_EQ(IP(11), message[3]->source.ip);
+    ASSERT_EQ(IP(11), message[4]->source.ip);
+    ASSERT_EQ(&scheduledPeers.front(), &receiver->peerTable.at(IP(10)));
+    ASSERT_EQ(&scheduledPeers.back(), &receiver->peerTable.at(IP(11)));
 
     // <10>: [0](10) -> [1](20) -> [2](30)
     // <11>: [3](10) -> [4](20)
@@ -1051,10 +1058,10 @@ TEST_F(ReceiverTest, unschedule)
     receiver->unschedule(message[4], lock);
 
     EXPECT_EQ(nullptr, info[4]->peer);
-    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
-    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
-    EXPECT_EQ(3U, receiver->peerTable.at(10).scheduledMessages.size());
-    EXPECT_EQ(1U, receiver->peerTable.at(11).scheduledMessages.size());
+    EXPECT_EQ(&scheduledPeers.front(), &receiver->peerTable.at(IP(10)));
+    EXPECT_EQ(&scheduledPeers.back(), &receiver->peerTable.at(IP(11)));
+    EXPECT_EQ(3U, receiver->peerTable.at(IP(10)).scheduledMessages.size());
+    EXPECT_EQ(1U, receiver->peerTable.at(IP(11)).scheduledMessages.size());
 
     //--------------------------------------------------------------------------
     // Remove message[1]; peer in correct position.
@@ -1064,10 +1071,10 @@ TEST_F(ReceiverTest, unschedule)
     receiver->unschedule(message[1], lock);
 
     EXPECT_EQ(nullptr, info[1]->peer);
-    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
-    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
-    EXPECT_EQ(2U, receiver->peerTable.at(10).scheduledMessages.size());
-    EXPECT_EQ(1U, receiver->peerTable.at(11).scheduledMessages.size());
+    EXPECT_EQ(&scheduledPeers.front(), &receiver->peerTable.at(IP(10)));
+    EXPECT_EQ(&scheduledPeers.back(), &receiver->peerTable.at(IP(11)));
+    EXPECT_EQ(2U, receiver->peerTable.at(IP(10)).scheduledMessages.size());
+    EXPECT_EQ(1U, receiver->peerTable.at(IP(11)).scheduledMessages.size());
 
     //--------------------------------------------------------------------------
     // Remove message[0]; peer needs to be reordered.
@@ -1077,10 +1084,10 @@ TEST_F(ReceiverTest, unschedule)
     receiver->unschedule(message[0], lock);
 
     EXPECT_EQ(nullptr, info[0]->peer);
-    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(11));
-    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(10));
-    EXPECT_EQ(1U, receiver->peerTable.at(11).scheduledMessages.size());
-    EXPECT_EQ(1U, receiver->peerTable.at(10).scheduledMessages.size());
+    EXPECT_EQ(&scheduledPeers.front(), &receiver->peerTable.at(IP(11)));
+    EXPECT_EQ(&scheduledPeers.back(), &receiver->peerTable.at(IP(10)));
+    EXPECT_EQ(1U, receiver->peerTable.at(IP(11)).scheduledMessages.size());
+    EXPECT_EQ(1U, receiver->peerTable.at(IP(10)).scheduledMessages.size());
 
     //--------------------------------------------------------------------------
     // Remove message[3]; peer needs to be removed.
@@ -1089,10 +1096,10 @@ TEST_F(ReceiverTest, unschedule)
     receiver->unschedule(message[3], lock);
 
     EXPECT_EQ(nullptr, info[3]->peer);
-    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
-    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(10));
-    EXPECT_EQ(1U, receiver->peerTable.at(10).scheduledMessages.size());
-    EXPECT_EQ(0U, receiver->peerTable.at(11).scheduledMessages.size());
+    EXPECT_EQ(&scheduledPeers.front(), &receiver->peerTable.at(IP(10)));
+    EXPECT_EQ(&scheduledPeers.back(), &receiver->peerTable.at(IP(10)));
+    EXPECT_EQ(1U, receiver->peerTable.at(IP(10)).scheduledMessages.size());
+    EXPECT_EQ(0U, receiver->peerTable.at(IP(11)).scheduledMessages.size());
 }
 
 TEST_F(ReceiverTest, updateSchedule)
@@ -1101,10 +1108,10 @@ TEST_F(ReceiverTest, updateSchedule)
     // 11 : [20][30]
     SpinLock::Lock lock(receiver->schedulerMutex);
     Receiver::Message* other[3];
-    for (uint64_t i = 0; i < 3; ++i) {
+    for (uint32_t i = 0; i < 3; ++i) {
         Protocol::MessageId id = {42, 10 + i};
         int messageLength = 10 * (i + 1);
-        IpAddress source = IpAddress(((i + 1) / 2) + 10);
+        IpAddress source = IP(((i + 1) / 2) + 10);
         other[i] = receiver->messageAllocator.pool.construct(
             receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader),
             10 * (i + 1), id, SocketAddress{source, 60001}, 0);
@@ -1114,12 +1121,13 @@ TEST_F(ReceiverTest, updateSchedule)
         receiver, &mockDriver, sizeof(Protocol::Packet::DataHeader), 100,
         Protocol::MessageId(42, 1), SocketAddress{11, 60001}, 0);
     receiver->schedule(message, lock);
-    ASSERT_EQ(&receiver->peerTable.at(10), other[0]->scheduledMessageInfo.peer);
-    ASSERT_EQ(&receiver->peerTable.at(11), other[1]->scheduledMessageInfo.peer);
-    ASSERT_EQ(&receiver->peerTable.at(11), other[2]->scheduledMessageInfo.peer);
-    ASSERT_EQ(&receiver->peerTable.at(11), message->scheduledMessageInfo.peer);
-    ASSERT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(10));
-    ASSERT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+    auto& peerTable = receiver->peerTable;
+    ASSERT_EQ(&peerTable.at(IP(10)), other[0]->scheduledMessageInfo.peer);
+    ASSERT_EQ(&peerTable.at(IP(11)), other[1]->scheduledMessageInfo.peer);
+    ASSERT_EQ(&peerTable.at(IP(11)), other[2]->scheduledMessageInfo.peer);
+    ASSERT_EQ(&peerTable.at(IP(11)), message->scheduledMessageInfo.peer);
+    ASSERT_EQ(&receiver->scheduledPeers.front(), &peerTable.at(IP(10)));
+    ASSERT_EQ(&receiver->scheduledPeers.back(), &peerTable.at(IP(11)));
 
     //--------------------------------------------------------------------------
     // Move message up within peer.
@@ -1129,11 +1137,12 @@ TEST_F(ReceiverTest, updateSchedule)
 
     receiver->updateSchedule(message, lock);
 
-    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
+    auto& scheduledPeers = receiver->scheduledPeers;
+    EXPECT_EQ(&scheduledPeers.back(), &receiver->peerTable.at(IP(11)));
     Receiver::Peer* peer = &receiver->scheduledPeers.back();
     auto it = peer->scheduledMessages.begin();
     EXPECT_TRUE(
-        std::next(receiver->peerTable.at(11).scheduledMessages.begin()) ==
+        std::next(receiver->peerTable.at(IP(11)).scheduledMessages.begin()) ==
         message->scheduledMessageInfo.peer->scheduledMessages.get(
             &message->scheduledMessageInfo.scheduledMessageNode));
 
@@ -1145,8 +1154,8 @@ TEST_F(ReceiverTest, updateSchedule)
 
     receiver->updateSchedule(message, lock);
 
-    EXPECT_EQ(&receiver->scheduledPeers.back(), &receiver->peerTable.at(11));
-    EXPECT_EQ(receiver->peerTable.at(11).scheduledMessages.begin(),
+    EXPECT_EQ(&scheduledPeers.back(), &receiver->peerTable.at(IP(11)));
+    EXPECT_EQ(receiver->peerTable.at(IP(11)).scheduledMessages.begin(),
               message->scheduledMessageInfo.peer->scheduledMessages.get(
                   &message->scheduledMessageInfo.scheduledMessageNode));
 
@@ -1158,8 +1167,8 @@ TEST_F(ReceiverTest, updateSchedule)
 
     receiver->updateSchedule(message, lock);
 
-    EXPECT_EQ(&receiver->scheduledPeers.front(), &receiver->peerTable.at(11));
-    EXPECT_EQ(receiver->peerTable.at(11).scheduledMessages.begin(),
+    EXPECT_EQ(&scheduledPeers.front(), &receiver->peerTable.at(IP(11)));
+    EXPECT_EQ(receiver->peerTable.at(IP(11)).scheduledMessages.begin(),
               message->scheduledMessageInfo.peer->scheduledMessages.get(
                   &message->scheduledMessageInfo.scheduledMessageNode));
 }

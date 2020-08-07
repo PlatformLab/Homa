@@ -43,7 +43,8 @@ class MockDriver : public Driver {
                 (override));
     MOCK_METHOD(void, flushPackets, ());
     MOCK_METHOD(uint32_t, receivePackets,
-                (uint32_t maxPackets, Packet* receivedPackets[]), (override));
+                (uint32_t maxPackets, Packet* receivedPackets[],
+                IpAddress sourceAddresses[]), (override));
     MOCK_METHOD(void, releasePackets, (Packet* packets[], uint16_t numPackets),
                 (override));
     MOCK_METHOD(int, getHighestPacketPriority, (), (override));

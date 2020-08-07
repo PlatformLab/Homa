@@ -148,7 +148,8 @@ class DpdkDriver::Impl {
     void cork();
     void uncork();
     uint32_t receivePackets(uint32_t maxPackets,
-                            Driver::Packet* receivedPackets[]);
+                            Driver::Packet* receivedPackets[],
+                            IpAddress sourceAddresses[]);
     void releasePackets(Driver::Packet* packets[], uint16_t numPackets);
     int getHighestPacketPriority();
     uint32_t getMaxPayloadSize();
@@ -171,7 +172,7 @@ class DpdkDriver::Impl {
     uint16_t port;
 
     /// Address resolution table that translates IP addresses to MAC addresses.
-    std::unordered_map<IpAddress, MacAddress> arpTable;
+    std::unordered_map<IpAddress, MacAddress, IpAddress::Hasher> arpTable;
 
     /// Stores the IpAddress of the driver.
     IpAddress localIp;

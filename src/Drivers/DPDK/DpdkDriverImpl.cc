@@ -51,7 +51,8 @@ const char* default_eal_argv[] = {"homa", NULL};
  *      Memory location in the mbuf where the packet data should be stored.
  */
 DpdkDriver::Impl::Packet::Packet(struct rte_mbuf* mbuf, void* data)
-    : base {.payload = data, .length = 0, .sourceIp = 0}
+    : base {.payload = data,
+            .length = 0}
     , bufType(MBUF)
     , bufRef()
 {
@@ -65,7 +66,8 @@ DpdkDriver::Impl::Packet::Packet(struct rte_mbuf* mbuf, void* data)
  *      Overflow buffer that holds this packet.
  */
 DpdkDriver::Impl::Packet::Packet(OverflowBuffer* overflowBuf)
-    : base {.payload = overflowBuf->data, .length = 0, .sourceIp = 0}
+    : base {.payload = overflowBuf->data,
+            .length = 0}
     , bufType(OVERFLOW_BUF)
     , bufRef()
 {
@@ -275,7 +277,8 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet, IpAddress destination,
     vlanHdr->eth_proto = rte_cpu_to_be_16(EthPayloadType::HOMA);
 
     // Store our local IP address right before the payload.
-    *rte_pktmbuf_mtod_offset(mbuf, uint32_t*, PACKET_HDR_LEN - 4) = localIp;
+    *rte_pktmbuf_mtod_offset(mbuf, uint32_t*, PACKET_HDR_LEN - 4) =
+        (uint32_t)localIp;
 
     // In the normal case, we pre-allocate a pakcet's mbuf with enough
     // storage to hold the MAX_PAYLOAD_SIZE.  If the actual payload is
@@ -349,7 +352,8 @@ DpdkDriver::Impl::uncork()
 // See Driver::receivePackets()
 uint32_t
 DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
-                                 Driver::Packet* receivedPackets[])
+                                 Driver::Packet* receivedPackets[],
+                                 IpAddress sourceAddresses[])
 {
     uint32_t numPacketsReceived = 0;
 
@@ -433,9 +437,10 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
             }
         }
         packet->base.length = length;
-        packet->base.sourceIp = srcIp;
 
-        receivedPackets[numPacketsReceived++] = &packet->base;
+        receivedPackets[numPacketsReceived] = &packet->base;
+        sourceAddresses[numPacketsReceived] = {srcIp};
+        ++numPacketsReceived;
     }
 
     return numPacketsReceived;
@@ -540,7 +545,7 @@ DpdkDriver::Impl::_init()
         int cols = sscanf(line.c_str(), "%s 0x%x 0x%x %99s %99s %99s\n",
                 ip, &type, &flags, hwa, mask, dev);
         if (cols != 6) continue;
-        arpTable.emplace(Homa::Util::stringToIp(ip), hwa);
+        arpTable.emplace(IpAddress::fromString(ip), hwa);
     }
 
     // Use ioctl to obtain the IP and MAC addresses of the network interface.
@@ -564,7 +569,7 @@ DpdkDriver::Impl::_init()
         throw DriverInitFailure(HERE_STR,
             StringUtil::format("Failed to obtain IP address: %s", error));
     }
-    localIp = be32toh(((struct sockaddr_in*) &ifr.ifr_addr)->sin_addr.s_addr);
+    localIp = {be32toh(((struct sockaddr_in*) &ifr.ifr_addr)->sin_addr.s_addr)};
 
     if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
         char* error = strerror(errno);
@@ -586,7 +591,7 @@ DpdkDriver::Impl::_init()
         }
     }
     NOTICE("Using interface %s, ip %s, mac %s, port %u",
-        ifname.c_str(), Homa::Util::ipToString(localIp).c_str(),
+        ifname.c_str(), IpAddress::toString(localIp).c_str(),
         localMac.toString().c_str(), port);
 
     std::string poolName = StringUtil::format("homa_mbuf_pool_%u", port);

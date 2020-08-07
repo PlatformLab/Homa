@@ -56,19 +56,21 @@ static class FakeNetwork {
 
     /// Register the FakeNIC so it can receive packets.  Returns the newly
     /// registered FakeNIC's addressId.
-    uint64_t registerNIC(FakeNIC* nic)
+    uint32_t registerNIC(FakeNIC* nic)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        uint64_t addressId = nextAddressId.fetch_add(1);
-        network.insert({addressId, nic});
+        uint32_t addressId = nextAddressId.fetch_add(1);
+        IpAddress ipAddress{addressId};
+        network.insert({ipAddress, nic});
         return addressId;
     }
 
     /// Remove the FakeNIC from the network.
-    void deregisterNIC(uint64_t addressId)
+    void deregisterNIC(uint32_t addressId)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        network.erase(addressId);
+        IpAddress ipAddress{addressId};
+        network.erase(ipAddress);
     }
 
     /// Deliver the provide packet to the specified destination.
@@ -92,7 +94,7 @@ static class FakeNetwork {
         assert(nic != nullptr);
         std::lock_guard<std::mutex> lock_nic(nic->mutex, std::adopt_lock);
         FakePacket* dstPacket = new FakePacket(*packet);
-        dstPacket->base.sourceIp = src;
+        dstPacket->sourceIp = src;
         assert(priority < NUM_PRIORITIES);
         assert(priority >= 0);
         nic->priorityQueue.at(priority).push_back(dstPacket);
@@ -115,10 +117,10 @@ static class FakeNetwork {
     std::mutex mutex;
 
     /// Holds all the packets being sent through the fake network.
-    std::unordered_map<IpAddress, FakeNIC*> network;
+    std::unordered_map<IpAddress, FakeNIC*, IpAddress::Hasher> network;
 
     /// Identifier for the next FakeDriver that "connects" to the FakeNetwork.
-    std::atomic<uint64_t> nextAddressId;
+    std::atomic<uint32_t> nextAddressId;
 
     /// Rate at which packets should be dropped when sent over this network.
     double packetLossRate;
@@ -192,7 +194,7 @@ FakeDriver::allocPacket()
 void
 FakeDriver::sendPacket(Packet* packet, IpAddress destination, int priority)
 {
-    FakePacket* srcPacket = container_of(packet, FakePacket, base);
+    FakePacket* srcPacket = container_of(packet, &FakePacket::base);
     IpAddress srcAddress = getLocalAddress();
     IpAddress dstAddress = destination;
     fakeNetwork.sendPacket(srcPacket, priority, srcAddress, dstAddress);
@@ -203,7 +205,8 @@ FakeDriver::sendPacket(Packet* packet, IpAddress destination, int priority)
  * See Driver::receivePackets()
  */
 uint32_t
-FakeDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
+FakeDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[],
+                           IpAddress sourceAddresses[])
 {
     std::lock_guard<std::mutex> lock_nic(nic.mutex);
     uint32_t numReceived = 0;
@@ -212,6 +215,7 @@ FakeDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[])
             FakePacket* fakePacket = nic.priorityQueue.at(i).front();
             nic.priorityQueue.at(i).pop_front();
             receivedPackets[numReceived] = &fakePacket->base;
+            sourceAddresses[numReceived] = fakePacket->sourceIp;
             numReceived++;
         }
     }
@@ -225,7 +229,7 @@ void
 FakeDriver::releasePackets(Packet* packets[], uint16_t numPackets)
 {
     for (uint16_t i = 0; i < numPackets; ++i) {
-        delete container_of(packets[i], FakePacket, base);
+        delete container_of(packets[i], &FakePacket::base);
     }
 }
 
@@ -263,7 +267,7 @@ FakeDriver::getBandwidth()
 IpAddress
 FakeDriver::getLocalAddress()
 {
-    return localAddressId;
+    return IpAddress{localAddressId};
 }
 
 /**

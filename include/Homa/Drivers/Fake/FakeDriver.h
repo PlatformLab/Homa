@@ -58,14 +58,17 @@ struct FakePacket {
     /// Raw storage for this packets payload.
     char buf[MAX_PAYLOAD_SIZE];
 
+    /// Source IpAddress of the packet.
+    IpAddress sourceIp;
+
     /**
      * FakePacket constructor.
      */
     explicit FakePacket()
         : base{.payload = buf,
-               .length = 0,
-               .sourceIp = 0}
+               .length = 0}
         , buf()
+        , sourceIp()
     {}
 
     /**
@@ -73,9 +76,9 @@ struct FakePacket {
      */
     FakePacket(const FakePacket& other)
         : base{.payload = buf,
-               .length = other.base.length,
-               .sourceIp = 0}
+               .length = other.base.length}
         , buf()
+        , sourceIp()
     {
         memcpy(base.payload, other.base.payload, MAX_PAYLOAD_SIZE);
     }
@@ -111,7 +114,8 @@ class FakeDriver : public Driver {
     virtual Packet* allocPacket();
     virtual void sendPacket(Packet* packet, IpAddress destination, int priority);
     virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    Packet* receivedPackets[]);
+                                    Packet* receivedPackets[],
+                                    IpAddress sourceAddresses[]);
     virtual void releasePackets(Packet* packets[], uint16_t numPackets);
     virtual int getHighestPacketPriority();
     virtual uint32_t getMaxPayloadSize();
@@ -121,7 +125,7 @@ class FakeDriver : public Driver {
 
   private:
     /// Identifier for this driver on the fake network.
-    uint64_t localAddressId;
+    uint32_t localAddressId;
 
     /// Holds the incoming packets for this driver.
     FakeNIC nic;
