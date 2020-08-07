@@ -107,7 +107,8 @@ class Manager {
     /// The scheduled policy for the Transport that owns this Policy::Manager.
     Scheduled localScheduledPolicy;
     /// Collection of the known Policies for each peered Homa::Transport;
-    std::unordered_map<IpAddress, UnscheduledPolicy> peerPolicies;
+    std::unordered_map<IpAddress, UnscheduledPolicy, IpAddress::Hasher>
+        peerPolicies;
     /// Number of bytes that can be transmitted in one round-trip-time.
     const uint32_t RTT_BYTES;
     /// The highest network packet priority that the driver supports.

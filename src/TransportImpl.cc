@@ -98,10 +98,10 @@ TransportImpl::processPackets()
 
     const int MAX_BURST = 32;
     Driver::Packet* packets[MAX_BURST];
-    int numPackets = driver->receivePackets(MAX_BURST, packets);
+    IpAddress srcAddrs[MAX_BURST];
+    int numPackets = driver->receivePackets(MAX_BURST, packets, srcAddrs);
     for (int i = 0; i < numPackets; ++i) {
-        Driver::Packet* packet = packets[i];
-        processPacket(packet, packet->sourceIp);
+        processPacket(packets[i], srcAddrs[i]);
     }
 
     cycles = PerfUtils::Cycles::rdtsc() - cycles;
