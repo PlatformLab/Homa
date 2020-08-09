@@ -19,10 +19,12 @@
 
 namespace Homa {
 
-Transport*
-Transport::create(Driver* driver, uint64_t transportId)
+Homa::unique_ptr<Transport>
+Transport::create(Driver* driver, MailboxDir* mailboxDir, uint64_t transportId)
 {
-    return new Core::TransportImpl(driver, transportId);
+    Transport* transport =
+        new Core::TransportImpl(driver, mailboxDir, transportId);
+    return Homa::unique_ptr<Transport>(transport);
 }
 
 }  // namespace Homa

@@ -52,11 +52,11 @@ void setPacketLossRate(double lossRate);
  * @sa Driver::Packet
  */
 struct FakePacket {
-    /// C-style "inheritance"; used to maintain the base struct as a POD type.
-    Driver::Packet base;
-
     /// Raw storage for this packets payload.
     char buf[MAX_PAYLOAD_SIZE];
+
+    /// Number of bytes in the payload.
+    int length;
 
     /// Source IpAddress of the packet.
     IpAddress sourceIp;
@@ -65,8 +65,8 @@ struct FakePacket {
      * FakePacket constructor.
      */
     explicit FakePacket()
-        : base{.payload = buf, .length = 0}
-        , buf()
+        : buf()
+        , length()
         , sourceIp()
     {}
 
@@ -74,11 +74,21 @@ struct FakePacket {
      * Copy constructor.
      */
     FakePacket(const FakePacket& other)
-        : base{.payload = buf, .length = other.base.length}
-        , buf()
+        : buf()
+        , length(other.length)
         , sourceIp()
     {
-        memcpy(base.payload, other.base.payload, MAX_PAYLOAD_SIZE);
+        memcpy(buf, other.buf, MAX_PAYLOAD_SIZE);
+    }
+
+    /**
+     * Convert this FakePacket to a generic Driver packet representation.
+     */
+    Driver::Packet toPacket()
+    {
+        Driver::Packet packet = {
+            .descriptor = (uintptr_t)this, .payload = buf, .length = length};
+        return packet;
     }
 };
 
@@ -109,13 +119,13 @@ class FakeDriver : public Driver {
      */
     virtual ~FakeDriver();
 
-    virtual Packet* allocPacket();
+    virtual Packet allocPacket();
     virtual void sendPacket(Packet* packet, IpAddress destination,
                             int priority);
     virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    Packet* receivedPackets[],
+                                    Packet receivedPackets[],
                                     IpAddress sourceAddresses[]);
-    virtual void releasePackets(Packet* packets[], uint16_t numPackets);
+    virtual void releasePackets(Packet packets[], uint16_t numPackets);
     virtual int getHighestPacketPriority();
     virtual uint32_t getMaxPayloadSize();
     virtual uint32_t getBandwidth();

@@ -16,8 +16,8 @@
 #include <iostream>
 #include <vector>
 
-#include <Homa/Drivers/DPDK/DpdkDriver.h>
 #include <Cycles.h>
+#include <Homa/Drivers/DPDK/DpdkDriver.h>
 #include <TimeTrace.h>
 #include <docopt.h>
 
@@ -38,9 +38,9 @@ int
 main(int argc, char* argv[])
 {
     std::map<std::string, docopt::value> args =
-            docopt::docopt(USAGE, {argv + 1, argv + argc},
-                    true,                       // show help if requested
-                    "DPDK Driver Test");        // version string
+        docopt::docopt(USAGE, {argv + 1, argv + argc},
+                       true,                 // show help if requested
+                       "DPDK Driver Test");  // version string
 
     std::string iface = args["<iface>"].asString();
     bool isServer = args["--server"].asBool();
@@ -55,15 +55,15 @@ main(int argc, char* argv[])
         std::cout << Homa::IpAddress::toString(driver.getLocalAddress())
                   << std::endl;
         while (true) {
-            Homa::Driver::Packet* incoming[10];
+            Homa::Driver::Packet incoming[10];
             Homa::IpAddress srcAddrs[10];
             uint32_t receivedPackets;
             do {
                 receivedPackets = driver.receivePackets(10, incoming, srcAddrs);
             } while (receivedPackets == 0);
-            Homa::Driver::Packet* pong = driver.allocPacket();
-            pong->length = 100;
-            driver.sendPacket(pong, srcAddrs[0], 0);
+            Homa::Driver::Packet pong = driver.allocPacket();
+            pong.length = 100;
+            driver.sendPacket(&pong, srcAddrs[0], 0);
             driver.releasePackets(incoming, receivedPackets);
             driver.releasePackets(&pong, 1);
         }
@@ -74,15 +74,15 @@ main(int argc, char* argv[])
         for (int i = 0; i < 100000; ++i) {
             uint64_t start = PerfUtils::Cycles::rdtsc();
             PerfUtils::TimeTrace::record(start, "START");
-            Homa::Driver::Packet* ping = driver.allocPacket();
+            Homa::Driver::Packet ping = driver.allocPacket();
             PerfUtils::TimeTrace::record("allocPacket");
-            ping->length = 100;
+            ping.length = 100;
             PerfUtils::TimeTrace::record("set ping args");
-            driver.sendPacket(ping, server_ip, 0);
+            driver.sendPacket(&ping, server_ip, 0);
             PerfUtils::TimeTrace::record("sendPacket");
             driver.releasePackets(&ping, 1);
             PerfUtils::TimeTrace::record("releasePacket");
-            Homa::Driver::Packet* incoming[10];
+            Homa::Driver::Packet incoming[10];
             Homa::IpAddress srcAddrs[10];
             uint32_t receivedPackets;
             do {

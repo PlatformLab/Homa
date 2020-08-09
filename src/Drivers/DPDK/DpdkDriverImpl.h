@@ -107,15 +107,16 @@ struct OverflowBuffer {
 class DpdkDriver::Impl {
   public:
     /**
-     * Dpdk specific Packet object used to track a its lifetime and
+     * DPDK specific Packet object used to track a its lifetime and
      * contents.
      */
-    struct Packet {
-        explicit Packet(struct rte_mbuf* mbuf, void* data);
-        explicit Packet(OverflowBuffer* overflowBuf);
+    struct PacketBuf {
+        explicit PacketBuf(struct rte_mbuf* mbuf, void* data);
+        explicit PacketBuf(OverflowBuffer* overflowBuf);
+        Driver::Packet toPacket(int length);
 
-        /// C-style "inheritance"
-        Driver::Packet base;
+        /// Memory location where the packet data should be stored.
+        void* const payload;
 
         /// Used to indicate whether the packet is backed by an DPDK mbuf or a
         /// driver-level OverflowBuffer.
@@ -126,10 +127,6 @@ class DpdkDriver::Impl {
             struct rte_mbuf* mbuf;
             OverflowBuffer* overflowBuf;
         } bufRef;
-
-        /// The memory location of this packet's header. The header should be
-        /// PACKET_HDR_LEN in length.
-        void* header;
     };
 
     Impl(const char* ifname, const Config* const config = nullptr);
@@ -139,15 +136,15 @@ class DpdkDriver::Impl {
     virtual ~Impl();
 
     // Interface Methods
-    Driver::Packet* allocPacket();
+    Driver::Packet allocPacket();
     void sendPacket(Driver::Packet* packet, IpAddress destination,
                     int priority);
     void cork();
     void uncork();
     uint32_t receivePackets(uint32_t maxPackets,
-                            Driver::Packet* receivedPackets[],
+                            Driver::Packet receivedPackets[],
                             IpAddress sourceAddresses[]);
-    void releasePackets(Driver::Packet* packets[], uint16_t numPackets);
+    void releasePackets(Driver::Packet packets[], uint16_t numPackets);
     int getHighestPacketPriority();
     uint32_t getMaxPayloadSize();
     uint32_t getBandwidth();
@@ -157,7 +154,7 @@ class DpdkDriver::Impl {
   private:
     void _eal_init(int argc, char* argv[]);
     void _init();
-    Packet* _allocMbufPacket();
+    PacketBuf* _allocMbufPacket();
     static uint16_t txBurstCallback(uint16_t port_id, uint16_t queue,
                                     struct rte_mbuf* pkts[], uint16_t nb_pkts,
                                     void* user_param);
@@ -189,7 +186,7 @@ class DpdkDriver::Impl {
 
     /// Provides memory allocation for the DPDK specific implementation of a
     /// Driver Packet.
-    ObjectPool<Packet> packetPool;
+    ObjectPool<PacketBuf> packetPool;
 
     /// Provides memory allocation for packet storage when mbuf are running out.
     ObjectPool<OverflowBuffer> overflowBufferPool;
