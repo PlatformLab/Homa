@@ -38,7 +38,7 @@ DpdkDriver::DpdkDriver(const char* ifname, NoEalInit _,
 DpdkDriver::~DpdkDriver() = default;
 
 /// See Driver::allocPacket()
-Driver::Packet*
+Driver::Packet
 DpdkDriver::allocPacket()
 {
     return pImpl->allocPacket();
@@ -67,14 +67,14 @@ DpdkDriver::uncork()
 
 /// See Driver::receivePackets()
 uint32_t
-DpdkDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[],
+DpdkDriver::receivePackets(uint32_t maxPackets, Packet receivedPackets[],
                            IpAddress sourceAddresses[])
 {
     return pImpl->receivePackets(maxPackets, receivedPackets, sourceAddresses);
 }
 /// See Driver::releasePackets()
 void
-DpdkDriver::releasePackets(Packet* packets[], uint16_t numPackets)
+DpdkDriver::releasePackets(Packet packets[], uint16_t numPackets)
 {
     pImpl->releasePackets(packets, numPackets);
 }

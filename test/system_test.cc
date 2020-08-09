@@ -16,11 +16,11 @@
 #include <Homa/Debug.h>
 #include <Homa/Drivers/Fake/FakeDriver.h>
 #include <Homa/Homa.h>
-#include <unistd.h>
+#include <Homa/Utils/SimpleMailboxDir.h>
+#include <Homa/Utils/TransportPoller.h>
 
 #include <atomic>
 #include <iostream>
-#include <memory>
 #include <random>
 #include <string>
 #include <thread>
@@ -47,6 +47,7 @@ static const char USAGE[] = R"(Homa System Test.
 
 bool _PRINT_CLIENT_ = false;
 bool _PRINT_SERVER_ = false;
+static const uint16_t SERVER_PORT = 60001;
 
 struct MessageHeader {
     uint64_t id;
@@ -57,28 +58,33 @@ struct Node {
     explicit Node(uint64_t id)
         : id(id)
         , driver()
-        , transport(Homa::Transport::create(&driver, id))
+        , mailboxDir()
+        , transport(Homa::Transport::create(&driver, &mailboxDir, id))
         , thread()
         , run(false)
+        , serverSocket(transport->open(SERVER_PORT))
     {}
 
     const uint64_t id;
     Homa::Drivers::Fake::FakeDriver driver;
-    Homa::Transport* transport;
+    Homa::SimpleMailboxDir mailboxDir;
+    Homa::unique_ptr<Homa::Transport> transport;
     std::thread thread;
     std::atomic<bool> run;
+    Homa::unique_ptr<Homa::Socket> serverSocket;
 };
 
 void
 serverMain(Node* server, std::vector<Homa::IpAddress> addresses)
 {
+    Homa::TransportPoller poller(server->transport.get());
     while (true) {
         if (server->run.load() == false) {
             break;
         }
 
         Homa::unique_ptr<Homa::InMessage> message =
-            server->transport->receive();
+            server->serverSocket->receive(false);
 
         if (message) {
             MessageHeader header;
@@ -92,7 +98,7 @@ serverMain(Node* server, std::vector<Homa::IpAddress> addresses)
             }
             message->acknowledge();
         }
-        server->transport->poll();
+        poller.poll();
     }
 }
 
@@ -112,16 +118,18 @@ clientMain(int count, int size, std::vector<Homa::IpAddress> addresses)
     int numFailed = 0;
 
     Node client(1);
+    Homa::TransportPoller poller(client.transport.get());
+    Homa::unique_ptr<Homa::Socket> clientSocket = client.transport->open(0);
     for (int i = 0; i < count; ++i) {
         uint64_t id = nextId++;
         char payload[size];
-        for (int i = 0; i < size; ++i) {
-            payload[i] = randData(gen);
+        for (char& byte : payload) {
+            byte = randData(gen);
         }
 
         Homa::IpAddress destAddress = addresses[randAddr(gen)];
 
-        Homa::unique_ptr<Homa::OutMessage> message = client.transport->alloc(0);
+        Homa::unique_ptr<Homa::OutMessage> message = clientSocket->alloc();
         {
             MessageHeader header;
             header.id = id;
@@ -133,7 +141,7 @@ clientMain(int count, int size, std::vector<Homa::IpAddress> addresses)
                           << std::endl;
             }
         }
-        message->send(Homa::SocketAddress{destAddress, 60001});
+        message->send(Homa::SocketAddress{destAddress, SERVER_PORT});
 
         while (1) {
             Homa::OutMessage::Status status = message->getStatus();
@@ -143,7 +151,7 @@ clientMain(int count, int size, std::vector<Homa::IpAddress> addresses)
                 numFailed++;
                 break;
             }
-            client.transport->poll();
+            poller.poll();
         }
     }
     return numFailed;
@@ -193,16 +201,14 @@ main(int argc, char* argv[])
         servers.push_back(server);
     }
 
-    for (auto it = servers.begin(); it != servers.end(); ++it) {
-        Node* server = *it;
+    for (auto server : servers) {
         server->run = true;
         server->thread = std::move(std::thread(&serverMain, server, addresses));
     }
 
     int numFails = clientMain(numTests, numBytes, addresses);
 
-    for (auto it = servers.begin(); it != servers.end(); ++it) {
-        Node* server = *it;
+    for (auto server : servers) {
         server->run = false;
         server->thread.join();
         delete server;

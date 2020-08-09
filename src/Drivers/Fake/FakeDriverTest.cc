@@ -35,10 +35,9 @@ TEST(FakeDriverTest, constructor)
 
 TEST(FakeDriverTest, allocPacket)
 {
-    FakeDriver driver;
-    Driver::Packet* packet = driver.allocPacket();
     // allocPacket doesn't do much so we just need to make sure we can call it.
-    delete container_of(packet, &FakePacket::base);
+    FakeDriver driver;
+    Driver::Packet packet = driver.allocPacket();
 }
 
 TEST(FakeDriverTest, sendPackets)
@@ -46,7 +45,7 @@ TEST(FakeDriverTest, sendPackets)
     FakeDriver driver1;
     FakeDriver driver2;
 
-    Driver::Packet* packets[4];
+    Driver::Packet packets[4];
     IpAddress destinations[4];
     int prio[4];
     for (int i = 0; i < 4; ++i) {
@@ -65,7 +64,7 @@ TEST(FakeDriverTest, sendPackets)
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(7).size());
 
-    driver1.sendPacket(packets[0], destinations[0], prio[0]);
+    driver1.sendPacket(&packets[0], destinations[0], prio[0]);
 
     EXPECT_EQ(1U, driver2.nic.priorityQueue.at(0).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(1).size());
@@ -81,7 +80,7 @@ TEST(FakeDriverTest, sendPackets)
     }
 
     for (int i = 0; i < 4; ++i) {
-        driver1.sendPacket(packets[i], destinations[i], prio[i]);
+        driver1.sendPacket(&packets[i], destinations[i], prio[i]);
     }
 
     EXPECT_EQ(2U, driver2.nic.priorityQueue.at(0).size());
@@ -92,8 +91,6 @@ TEST(FakeDriverTest, sendPackets)
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(5).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(6).size());
     EXPECT_EQ(0U, driver2.nic.priorityQueue.at(7).size());
-
-    delete container_of(packets[2], &FakePacket::base);
 }
 
 TEST(FakeDriverTest, receivePackets)
@@ -101,7 +98,7 @@ TEST(FakeDriverTest, receivePackets)
     std::string addressStr("42");
     FakeDriver driver;
 
-    Driver::Packet* packets[4];
+    Driver::Packet packets[4];
     IpAddress srcAddrs[4];
 
     // 3 packets at priority 7

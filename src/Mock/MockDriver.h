@@ -31,22 +31,37 @@ namespace Mock {
 class MockDriver : public Driver {
   public:
     /**
-     * Used in unit tests to mock calls to Driver::Packet.
-     *
-     * @sa Driver::Packet.
+     * Used in unit tests to mock driver-specific packet buffers.
      */
-    using MockPacket = Driver::Packet;
+    struct PacketBuf {
+        /// External buffer which stores the packet data.
+        void* buffer;
 
-    MOCK_METHOD(Packet*, allocPacket, (), (override));
+        /**
+         * Convert this packet buffer to the generic Driver::Packet
+         * representation.
+         */
+        Driver::Packet toPacket(int length = 0)
+        {
+            Driver::Packet packet = {
+                .descriptor = (uintptr_t) this,
+                .payload = buffer,
+                .length = length
+            };
+            return packet;
+        }
+    };
+
+    MOCK_METHOD(Packet, allocPacket, (), (override));
     MOCK_METHOD(void, sendPacket,
                 (Packet * packet, IpAddress destination, int priority),
                 (override));
     MOCK_METHOD(void, flushPackets, ());
     MOCK_METHOD(uint32_t, receivePackets,
-                (uint32_t maxPackets, Packet* receivedPackets[],
+                (uint32_t maxPackets, Packet receivedPackets[],
                  IpAddress sourceAddresses[]),
                 (override));
-    MOCK_METHOD(void, releasePackets, (Packet * packets[], uint16_t numPackets),
+    MOCK_METHOD(void, releasePackets, (Packet packets[], uint16_t numPackets),
                 (override));
     MOCK_METHOD(int, getHighestPacketPriority, (), (override));
     MOCK_METHOD(uint32_t, getMaxPayloadSize, (), (override));

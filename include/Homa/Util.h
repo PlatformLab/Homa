@@ -21,14 +21,6 @@
 #include <cstdio>
 #include <string>
 
-/// Cast a member of a structure out to the containing structure.
-template <class P, class M>
-P*
-container_of(M* ptr, const M P::*member)
-{
-    return (P*)((char*)ptr - (size_t) & (reinterpret_cast<P*>(0)->*member));
-}
-
 namespace Homa {
 namespace Util {
 

@@ -21,7 +21,7 @@
 
 #include <array>
 #include <atomic>
-#include <unordered_map>
+#include <bitset>
 
 #include "Intrusive.h"
 #include "ObjectPool.h"
@@ -52,8 +52,9 @@ class Sender {
     virtual void handleGrantPacket(Driver::Packet* packet);
     virtual void handleUnknownPacket(Driver::Packet* packet);
     virtual void handleErrorPacket(Driver::Packet* packet);
-    virtual void poll();
     virtual uint64_t checkTimeouts();
+    virtual void registerCallbackSendReady(Callback func);
+    virtual bool trySend(uint64_t* waitUntil);
 
   private:
     /// Forward declarations
@@ -126,7 +127,7 @@ class Sender {
      * Sender::Message objects are contained in the Transport::Op but should
      * only be accessed by the Sender.
      */
-    class Message : public Homa::OutMessage {
+    class Message final : public Homa::OutMessage {
       public:
         /**
          * Construct an Message.
@@ -148,6 +149,7 @@ class Sender {
             // packets is not initialized to reduce the work done during
             // construction. See Message::occupied.
             , state(Status::NOT_STARTED)
+            , notifyEndState()
             , bucketNode(this)
             , messageTimeout(this)
             , pingTimeout(this)
@@ -160,16 +162,19 @@ class Sender {
         virtual Status getStatus() const;
         virtual size_t length() const;
         virtual void prepend(const void* source, size_t count);
+        virtual void registerCallbackEndState(Callback func);
         virtual void release();
         virtual void reserve(size_t count);
         virtual void send(SocketAddress destination,
                           Options options = Options::NONE);
 
       private:
+        void setStatus(Status newStatus);
+
         /// Define the maximum number of packets that a message can hold.
         static const size_t MAX_MESSAGE_PACKETS = 1024;
 
-        Driver::Packet* getPacket(size_t index) const;
+        Driver::Packet* getPacket(size_t index);
         Driver::Packet* getOrAllocPacket(size_t index);
 
         /// The Sender responsible for sending this message.
@@ -213,10 +218,13 @@ class Sender {
 
         /// Collection of Packet objects that make up this context's Message.
         /// These Packets will be released when this context is destroyed.
-        Driver::Packet* packets[MAX_MESSAGE_PACKETS];
+        Driver::Packet packets[MAX_MESSAGE_PACKETS];
 
         /// This message's current state.
         std::atomic<Status> state;
+
+        /// Callback function to invoke when _state_ reaches an end state.
+        Callback notifyEndState;
 
         /// Intrusive structure used by the Sender to hold on to this Message
         /// in one of the Sender's MessageBuckets.  Access to this structure
@@ -390,11 +398,11 @@ class Sender {
 
     void sendMessage(Sender::Message* message, SocketAddress destination,
                      Message::Options options = Message::Options::NONE);
+    void signalPacerThread(const SpinLock::Lock& lockHeld);
     void cancelMessage(Sender::Message* message);
     void dropMessage(Sender::Message* message);
     uint64_t checkMessageTimeouts();
     uint64_t checkPingTimeouts();
-    void trySend();
 
     /// Transport identifier.
     const uint64_t transportId;
@@ -412,24 +420,27 @@ class Sender {
     /// The maximum number of bytes that should be queued in the Driver.
     const uint32_t DRIVER_QUEUED_BYTE_LIMIT;
 
+    /// Rdtsc cycles for the Driver to drain one MB of data at line rate.
+    const uint32_t DRIVER_CYCLES_TO_DRAIN_1MB;
+
     /// Tracks all outbound messages being sent by the Sender.
     MessageBucketMap messageBuckets;
 
-    /// Protects the readyQueue.
+    /// Protects the sendQueue and sendReady.
     SpinLock queueMutex;
-
-    /// A list of outbound messages that have unsent packets.  Messages are kept
-    /// in order of priority.
-    Intrusive::List<Message> sendQueue;
-
-    /// True if the Sender is currently executing trySend(); false, otherwise.
-    /// Use to prevent concurrent trySend() calls from blocking on each other.
-    std::atomic_flag sending = ATOMIC_FLAG_INIT;
 
     /// Hint whether there are messages ready to be sent (i.e. there are granted
     /// messages in the sendQueue. Encoded into a single bool so that checking
     /// if there is work to do is more efficient.
-    std::atomic<bool> sendReady;
+    bool sendReady;
+
+    /// Callback function to be invoked when _sendReady_ flips from false to
+    /// true.
+    Callback notifySendReady;
+
+    /// A list of outbound messages that have unsent packets.  Messages are kept
+    /// in order of priority.
+    Intrusive::List<Message> sendQueue;
 
     /// Used to allocate Message objects.
     struct {

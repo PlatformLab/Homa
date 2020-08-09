@@ -18,6 +18,7 @@
 #include <Cycles.h>
 
 #include "Perf.h"
+#include "Tub.h"
 #include "Util.h"
 
 namespace Homa {
@@ -28,6 +29,8 @@ namespace Core {
  *
  * @param driver
  *      The driver used to send and receive packets.
+ * @param mailboxDir
+ *      The mailbox directory used to lookup message destination.
  * @param policyManager
  *      Provides information about the grant and network priority policies.
  * @param messageTimeoutCycles
@@ -37,15 +40,16 @@ namespace Core {
  *      Number of cycles of inactivity to wait between requesting retransmission
  *      of un-received parts of a message.
  */
-Receiver::Receiver(Driver* driver, Policy::Manager* policyManager,
+Receiver::Receiver(Driver* driver, MailboxDir* mailboxDir,
+                   Policy::Manager* policyManager,
                    uint64_t messageTimeoutCycles, uint64_t resendIntervalCycles)
     : driver(driver)
     , policyManager(policyManager)
+    , mailboxDir(mailboxDir)
     , messageBuckets(messageTimeoutCycles, resendIntervalCycles)
     , schedulerMutex()
     , scheduledPeers()
-    , receivedMessages()
-    , granting()
+    , dontNeedGrants()
     , messageAllocator()
 {}
 
@@ -57,8 +61,6 @@ Receiver::~Receiver()
     schedulerMutex.lock();
     scheduledPeers.clear();
     peerTable.clear();
-    receivedMessages.mutex.lock();
-    receivedMessages.queue.clear();
     for (auto it = messageBuckets.buckets.begin();
          it != messageBuckets.buckets.end(); ++it) {
         MessageBucket* bucket = *it;
@@ -94,8 +96,9 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
     Protocol::MessageId id = header->common.messageId;
 
     MessageBucket* bucket = messageBuckets.getBucket(id);
-    SpinLock::Lock lock_bucket(bucket->mutex);
-    Message* message = bucket->findMessage(id, lock_bucket);
+    Tub<SpinLock::Lock> lock_bucket;
+    lock_bucket.construct(bucket->mutex);
+    Message* message = bucket->findMessage(id, *lock_bucket);
     if (message == nullptr) {
         // New message
         int messageLength = header->totalLength;
@@ -143,6 +146,10 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
                 info->bytesRemaining -= packetDataBytes;
                 updateSchedule(message, lock_scheduler);
             }
+
+            // Non-duplicate DATA packets from scheduled messages can change
+            // the state of scheduledPeers; time to run trySendGrants() again
+            signalNeedGrants(lock_scheduler);
         }
 
         // Receiving a new packet means the message is still active so it
@@ -155,16 +162,23 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
             bucket->resendTimeouts.setTimeout(&message->resendTimeout);
         } else {
             // All message packets have been received.
-            message->state.store(Message::State::COMPLETED);
+            message->setState(Message::State::COMPLETED);
             bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
-            SpinLock::Lock lock_received_messages(receivedMessages.mutex);
-            receivedMessages.queue.push_back(&message->receivedMessageNode);
+            uint16_t dport = be16toh(header->common.prefix.dport);
+            Mailbox* mailbox = mailboxDir->open(dport);
+            if (mailbox) {
+                mailbox->deliver(message);
+                mailbox->close();
+            } else {
+                lock_bucket.destroy();
+                ERROR("Unable to deliver the message; message dropped");
+                dropMessage(message);
+            }
         }
     } else {
         // must be a duplicate packet; drop packet.
-        driver->releasePackets(&packet, 1);
+        driver->releasePackets(packet, 1);
     }
-    return;
 }
 
 /**
@@ -187,11 +201,11 @@ Receiver::handleBusyPacket(Driver::Packet* packet)
         // Sender has replied BUSY to our RESEND request; consider this message
         // still active.
         bucket->messageTimeouts.setTimeout(&message->messageTimeout);
-        if (message->state == Message::State::IN_PROGRESS) {
+        if (message->getState() == Message::State::IN_PROGRESS) {
             bucket->resendTimeouts.setTimeout(&message->resendTimeout);
         }
     }
-    driver->releasePackets(&packet, 1);
+    driver->releasePackets(packet, 1);
 }
 
 /**
@@ -245,41 +259,7 @@ Receiver::handlePingPacket(Driver::Packet* packet, IpAddress sourceIp)
         ControlPacket::send<Protocol::Packet::UnknownHeader>(driver, sourceIp,
                                                              id);
     }
-    driver->releasePackets(&packet, 1);
-}
-
-/**
- * Return a handle to a new received Message.
- *
- * The Transport should regularly call this method to insure incoming messages
- * are processed.
- *
- * @return
- *      A new Message which has been received, if available; otherwise, nullptr.
- *
- * @sa dropMessage()
- */
-Homa::InMessage*
-Receiver::receiveMessage()
-{
-    SpinLock::Lock lock_received_messages(receivedMessages.mutex);
-    Message* message = nullptr;
-    if (!receivedMessages.queue.empty()) {
-        message = &receivedMessages.queue.front();
-        receivedMessages.queue.pop_front();
-    }
-    return message;
-}
-
-/**
- * Allow the Receiver to make progress toward receiving incoming messages.
- *
- * This method must be called eagerly to ensure messages are received.
- */
-void
-Receiver::poll()
-{
-    trySendGrants();
+    driver->releasePackets(packet, 1);
 }
 
 /**
@@ -294,16 +274,13 @@ Receiver::poll()
 uint64_t
 Receiver::checkTimeouts()
 {
-    uint64_t nextTimeout;
-
     // Ping Timeout
-    nextTimeout = checkResendTimeouts();
+    uint64_t resendTimeout = checkResendTimeouts();
 
     // Message Timeout
     uint64_t messageTimeout = checkMessageTimeouts();
-    nextTimeout = nextTimeout < messageTimeout ? nextTimeout : messageTimeout;
 
-    return nextTimeout;
+    return std::min(resendTimeout, messageTimeout);
 }
 
 /**
@@ -356,7 +333,7 @@ Receiver::Message::acknowledge() const
 bool
 Receiver::Message::dropped() const
 {
-    return state.load() == State::DROPPED;
+    return getState() == State::DROPPED;
 }
 
 /**
@@ -398,7 +375,7 @@ Receiver::Message::get(size_t offset, void* destination, size_t count) const
     while (bytesCopied < _count) {
         uint32_t bytesToCopy =
             std::min(_count - bytesCopied, PACKET_DATA_LENGTH - packetOffset);
-        Driver::Packet* packet = getPacket(packetIndex);
+        const Driver::Packet* packet = getPacket(packetIndex);
         if (packet != nullptr) {
             char* source = static_cast<char*>(packet->payload);
             source += packetOffset + TRANSPORT_HEADER_LENGTH;
@@ -414,6 +391,15 @@ Receiver::Message::get(size_t offset, void* destination, size_t count) const
         packetOffset = 0;
     }
     return bytesCopied;
+}
+
+/**
+ * @copydoc Homa::InMessage::getSourceAddress()
+ */
+SocketAddress
+Receiver::Message::getSourceAddress() const
+{
+    return source;
 }
 
 /**
@@ -452,11 +438,11 @@ Receiver::Message::release()
  * @return
  *      Pointer to a Packet at the given index if it exists; nullptr otherwise.
  */
-Driver::Packet*
+const Driver::Packet*
 Receiver::Message::getPacket(size_t index) const
 {
     if (occupied.test(index)) {
-        return packets[index];
+        return &packets[index];
     }
     return nullptr;
 }
@@ -472,7 +458,7 @@ Receiver::Message::getPacket(size_t index) const
  *      The Packet's index in the array of packets that form the message.
  *      "packet index = "packet message offset" / PACKET_DATA_LENGTH
  * @param packet
- *      The packet pointer that should be stored.
+ *      The packet that should be stored.
  * @return
  *      True if the packet was stored; false if a packet already exists (the new
  *      packet is not stored).
@@ -483,10 +469,29 @@ Receiver::Message::setPacket(size_t index, Driver::Packet* packet)
     if (occupied.test(index)) {
         return false;
     }
-    packets[index] = packet;
+    packets[index] = *packet;
     occupied.set(index);
     numPackets++;
     return true;
+}
+
+/**
+ * Clear the atomic _dontNeedGrants_ flag to indicate that trySendGrants()
+ * needs to run again. This method is called when the state of active messages
+ * in Receiver::scheduledPeers might have changed.
+ *
+ * Note: we require the caller to hold the schedulerMutex during this call
+ * because it becomes much easier to reason about the interaction between
+ * the atomic flag and the mutex this way (and it's essentially free).
+ *
+ * @param lockHeld
+ *      Reminder to hold the Receiver::schedulerMutex during this call.
+ */
+void
+Receiver::signalNeedGrants(const SpinLock::Lock& lockHeld)
+{
+    (void)lockHeld;
+    dontNeedGrants.clear(std::memory_order_release);
 }
 
 /**
@@ -564,7 +569,7 @@ Receiver::checkMessageTimeouts()
             bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
             bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
 
-            if (message->state == Message::State::IN_PROGRESS) {
+            if (message->getState() == Message::State::IN_PROGRESS) {
                 // Message timed out before being fully received; drop the
                 // message.
 
@@ -587,7 +592,7 @@ Receiver::checkMessageTimeouts()
             } else {
                 // Message timed out but we already made it available to the
                 // Transport; let the Transport know.
-                message->state.store(Message::State::DROPPED);
+                message->setState(Message::State::DROPPED);
             }
         }
         globalNextTimeout = std::min(globalNextTimeout, nextTimeout);
@@ -629,7 +634,7 @@ Receiver::checkResendTimeouts()
             }
 
             // Found expired timeout.
-            assert(message->state == Message::State::IN_PROGRESS);
+            assert(message->getState() == Message::State::IN_PROGRESS);
             bucket->resendTimeouts.setTimeout(&message->resendTimeout);
 
             // This Receiver expected to have heard from the Sender within the
@@ -705,23 +710,30 @@ Receiver::checkResendTimeouts()
 
 /**
  * Send GRANTs to incoming Message according to the Receiver's policy.
+ *
+ * This method must be called eagerly to allow the Receiver to make progress
+ * toward receiving incoming messages.
+ *
+ * @return
+ *      True if the method has found some messages to grant; false, otherwise.
  */
-void
+bool
 Receiver::trySendGrants()
 {
     uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
-    bool idle = true;
 
-    // Skip scheduling if another poller is already working on it.
-    if (granting.test_and_set()) {
-        return;
+    // Fast path: skip if no message is waiting for grants
+    bool needGrants = !dontNeedGrants.test_and_set();
+    if (!needGrants) {
+        return false;
     }
 
+    /* It's possible to have a benign race-condition here when another thread
+     * acquires the schedulerMutex before us and sets _dontNeedGrants_ back to
+     * false via signalNeedGrants. As a result, _dontNeedGrants_ will stay false
+     * when the method returns although all messages have been granted.
+     */
     SpinLock::Lock lock(schedulerMutex);
-    if (scheduledPeers.empty()) {
-        granting.clear();
-        return;
-    }
 
     /* The overall goal is to grant up to policy.degreeOvercommitment number of
      * scheduled messages simultaneously.  Each of these messages should always
@@ -743,6 +755,7 @@ Receiver::trySendGrants()
 
     auto it = scheduledPeers.begin();
     int slot = 0;
+    bool foundWork = false;
     while (it != scheduledPeers.end() && slot < policy.degreeOvercommitment) {
         assert(!it->scheduledMessages.empty());
         Message* message = &it->scheduledMessages.front();
@@ -758,7 +771,6 @@ Receiver::trySendGrants()
         // Send a GRANT if there are too few bytes granted and unreceived.
         int receivedBytes = info->messageLength - info->bytesRemaining;
         if (info->bytesGranted - receivedBytes < policy.minScheduledBytes) {
-            idle = false;
             // Calculate new grant limit
             int newGrantLimit = std::min(
                 receivedBytes + policy.maxScheduledBytes, info->messageLength);
@@ -768,6 +780,7 @@ Receiver::trySendGrants()
             ControlPacket::send<Protocol::Packet::GrantHeader>(
                 driver, sourceIp, id,
                 Util::downCast<uint32_t>(info->bytesGranted), info->priority);
+            foundWork = true;
         }
 
         // Update the iterator first since calling unschedule() may cause the
@@ -782,14 +795,13 @@ Receiver::trySendGrants()
         ++slot;
     }
 
-    granting.clear();
-
     uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
-    if (!idle) {
+    if (foundWork) {
         Perf::counters.active_cycles.add(elapsed_cycles);
     } else {
         Perf::counters.idle_cycles.add(elapsed_cycles);
     }
+    return foundWork;
 }
 
 /**
@@ -872,6 +884,9 @@ Receiver::unschedule(Receiver::Message* message, const SpinLock::Lock& lock)
         Intrusive::deprioritize<Peer>(&scheduledPeers, &peer->scheduledPeerNode,
                                       comp);
     }
+
+    // scheduledPeers has been updated; time to run trySendGrants() again
+    signalNeedGrants(lock);
 }
 
 /**
