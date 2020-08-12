@@ -13,22 +13,25 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <iomanip>
 #include <iostream>
+#include <list>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
 
 #include "Cycles.h"
-#include "docopt.h"
-
 #include "Homa/Drivers/Util/QueueEstimator.h"
 #include "Intrusive.h"
+#include "docopt.h"
 
 static const char USAGE[] = R"(Performance Nano-Benchmark
 
@@ -61,6 +64,135 @@ struct TestInfo {
                               // test (can contain multiple lines but each line
                               // should be less than 72 characters long).
 };
+
+TestInfo atomicLoadTestInfo = {
+    "atomicLoad", "Read an std::atomic",
+    R"(Measure the cost of reading an std::atomic value.)"};
+double
+atomicLoadTest()
+{
+    int count = 1000000;
+    uint64_t temp;
+    std::atomic<uint64_t> val[count];
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        temp = val[i].load();
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
+TestInfo atomicStoreTestInfo = {
+    "atomicStore", "Write an std::atomic",
+    R"(Measure the cost of writing an std::atomic value.)"};
+double
+atomicStoreTest()
+{
+    int count = 1000000;
+    uint64_t temp = std::rand();
+    std::atomic<uint64_t> val[count];
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        val[i].store(temp);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
+TestInfo atomicStoreRelaxedTestInfo = {
+    "atomicStoreRelaxed", "Write an std::atomic (std::memory_order_relaxed)",
+    R"(Measure the cost of a relaxed atomic write.)"};
+double
+atomicStoreRelaxedTest()
+{
+    int count = 1000000;
+    uint64_t temp = std::rand();
+    std::atomic<uint64_t> val[count];
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        val[i].store(temp, std::memory_order_relaxed);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
+TestInfo atomicIncTestInfo = {
+    "atomicInc", "Increment an std::atomic",
+    R"(Measure the cost of incrementing an std::atomic value.)"};
+double
+atomicIncTest()
+{
+    int count = 1000000;
+    uint64_t temp = std::rand() % 100;
+    std::atomic<uint64_t> val[count];
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        val[i].fetch_add(temp);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
+TestInfo atomicIncRelaxedTestInfo = {
+    "atomicIncRelaxed", "Increment an std::atomic (std::memory_order_relaxed)",
+    R"(Measure the cost of a relaxed atomic incrementing.)"};
+double
+atomicIncRelaxedTest()
+{
+    int count = 1000000;
+    uint64_t temp = std::rand() % 100;
+    std::atomic<uint64_t> val[count];
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        val[i].fetch_add(temp, std::memory_order_relaxed);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
+TestInfo intReadWriteTestInfo = {
+    "intReadWrite", "Read and write a uint64_t",
+    R"(Measure the cost the baseline read/write.)"};
+double
+intReadWriteTest()
+{
+    int count = 1000000;
+    uint64_t temp = std::rand();
+    uint64_t val[count];
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        val[i] = temp;
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
+TestInfo branchTestInfo = {
+    "branchTest", "If-else statement",
+    R"(The cost of choosing a branch in an if-else statement)"};
+double
+branchTest()
+{
+    int count = 1000000;
+    uint64_t temp = std::rand();
+    uint64_t a[0xFF + 1];
+    uint64_t b[0xFF + 1];
+    for (int i = 0; i < 0xFF + 1; i++) {
+        a[i] = std::rand();
+        b[i] = std::rand();
+    }
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        int index = i & 0xFF;
+        if (a[index] < b[index]) {
+            b[index] = a[index];
+        } else {
+            a[index] = b[index];
+        }
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
 
 TestInfo listSearchTestInfo = {
     "listSearch", "Linear search an intrusive list",
@@ -194,6 +326,105 @@ mapNullInsertTest()
     return PerfUtils::Cycles::toSeconds(stop - start) / run;
 }
 
+TestInfo dequeConstructInfo = {
+    "dequeConstruct", "Construct an std::deque",
+    R"(Measure the cost of constructing (and destructing) an std::deque.)"};
+double
+dequeConstruct()
+{
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        std::deque<uint64_t> deque;
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
+}
+
+TestInfo dequePushPopTestInfo = {
+    "dequePushPop", "std::deque operations",
+    R"(Measure the cost of pushing/popping an element to/from an std::deque.)"};
+double
+dequePushPopTest()
+{
+    std::deque<uint64_t> deque;
+    for (int i = 0; i < 10000; ++i) {
+        deque.push_back(std::rand());
+    }
+
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        uint64_t temp = deque.front();
+        deque.pop_front();
+        deque.push_back(temp);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (2 * count);
+}
+
+TestInfo listConstructInfo = {
+    "listConstruct", "Construct an std::list",
+    R"(Measure the cost of constructing (and destructing) an std::list.)"};
+double
+listConstruct()
+{
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        std::list<uint64_t> list;
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
+}
+
+TestInfo listPushPopTestInfo = {
+    "listPushPop", "std::list operations",
+    R"(Measure the cost of pushing/popping an element to/from an std::list.)"};
+double
+listPushPopTest()
+{
+    std::list<uint64_t> list;
+    for (int i = 0; i < 10000; ++i) {
+        list.push_back(std::rand());
+    }
+
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        uint64_t temp = list.front();
+        list.pop_front();
+        list.push_back(temp);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (2 * count);
+}
+
+TestInfo heapTestInfo = {
+    "heap", "std heap operations",
+    R"(Measure the cost of pushing/popping an element to/from an std heap.)"};
+double
+heapTest()
+{
+    std::vector<uint64_t> heap;
+    for (uint64_t i = 0; i < 10000; ++i) {
+        heap.push_back(i);
+    }
+    std::make_heap(heap.begin(), heap.end(), std::greater<>{});
+
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        uint64_t temp = heap.front();
+        std::pop_heap(heap.begin(), heap.end(), std::greater<>{});
+        heap.pop_back();
+        heap.push_back(temp + 5000);
+        std::push_heap(heap.begin(), heap.end(), std::greater<>{});
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (2 * count);
+}
+
 TestInfo queueEstimatorTestInfo = {
     "queueEstimator", "Update a QueueEstimator",
     R"(Measure the cost of updating a Homa::Drivers::Util::QueueEstimator.)"};
@@ -244,6 +475,21 @@ rdhrcTest()
     return PerfUtils::Cycles::toSeconds(stop - start) / count;
 }
 
+TestInfo rdcscTestInfo = {
+    "rdcsc", "Read std::chrono::steady_clock",
+    R"(Measure the cost of reading the std::chrono::steady_clock.)"};
+double
+rdcscTest()
+{
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        auto timestamp = std::chrono::steady_clock::now();
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
 // The following struct and table define each performance test in terms of
 // function that implements the test and collection of string information about
 // the test like the test's string name.
@@ -255,13 +501,26 @@ struct TestCase {
                            // including the test's string name.
 };
 TestCase tests[] = {
+    {atomicLoadTest, &atomicLoadTestInfo},
+    {atomicStoreTest, &atomicStoreTestInfo},
+    {atomicStoreRelaxedTest, &atomicStoreRelaxedTestInfo},
+    {atomicIncTest, &atomicIncTestInfo},
+    {atomicIncRelaxedTest, &atomicIncRelaxedTestInfo},
+    {branchTest, &branchTestInfo},
+    {intReadWriteTest, &intReadWriteTestInfo},
     {listSearchTest, &listSearchTestInfo},
     {mapFindTest, &mapFindTestInfo},
     {mapLookupTest, &mapLookupTestInfo},
     {mapNullInsertTest, &mapNullInsertTestInfo},
+    {dequeConstruct, &dequeConstructInfo},
+    {dequePushPopTest, &dequePushPopTestInfo},
+    {listConstruct, &listConstructInfo},
+    {listPushPopTest, &listPushPopTestInfo},
+    {heapTest, &heapTestInfo},
     {queueEstimatorTest, &queueEstimatorTestInfo},
     {rdtscTest, &rdtscTestInfo},
     {rdhrcTest, &rdhrcTestInfo},
+    {rdcscTest, &rdcscTestInfo},
 };
 
 /**
