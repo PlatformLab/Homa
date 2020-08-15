@@ -43,7 +43,6 @@ class MockReceiver : public Core::Receiver {
                 (Driver::Packet * packet, IpAddress sourceIp), (override));
     MOCK_METHOD(Homa::InMessage*, receiveMessage, (), (override));
     MOCK_METHOD(void, poll, (), (override));
-    MOCK_METHOD(uint64_t, checkTimeouts, (), (override));
 };
 
 }  // namespace Mock

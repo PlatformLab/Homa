@@ -61,6 +61,16 @@ std::string demangle(const char* name);
 std::string hexDump(const void* buf, uint64_t bytes);
 
 /**
+ * Return true if the given number is a power of 2; false, otherwise.
+ */
+template <typename num_type>
+constexpr bool
+isPowerOfTwo(num_type n)
+{
+    return (n > 0) && ((n & (n - 1)) == 0);
+}
+
+/**
  * This class is used to temporarily release lock in a safe fashion. Creating
  * an object of this class will unlock its associated mutex; when the object
  * is deleted, the mutex will be locked again. The template class T must be
