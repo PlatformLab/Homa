@@ -55,6 +55,7 @@ Sender::Sender(uint64_t transportId, Driver* driver,
     , sendQueue()
     , sending()
     , sendReady(false)
+    , nextBucketIndex(0)
     , messageAllocator()
 {}
 
@@ -515,30 +516,7 @@ void
 Sender::poll()
 {
     trySend();
-}
-
-/**
- * Process any Sender timeouts that have expired.
- *
- * This method must be called periodically to ensure timely handling of
- * expired timeouts.
- *
- * @return
- *      The rdtsc cycle time when this method should be called again.
- */
-uint64_t
-Sender::checkTimeouts()
-{
-    uint64_t nextTimeout;
-
-    // Ping Timeout
-    nextTimeout = checkPingTimeouts();
-
-    // Message Timeout
-    uint64_t messageTimeout = checkMessageTimeouts();
-    nextTimeout = nextTimeout < messageTimeout ? nextTimeout : messageTimeout;
-
-    return nextTimeout;
+    checkTimeouts();
 }
 
 /**
@@ -887,112 +865,119 @@ Sender::dropMessage(Sender::Message* message)
 }
 
 /**
- * Process any outbound messages that have timed out due to lack of activity
- * from the Receiver.
+ * Process any outbound messages in a given bucket that have timed out due to
+ * lack of activity from the Receiver.
  *
  * Pulled out of checkTimeouts() for ease of testing.
  *
- * @return
- *      The rdtsc cycle time when this method should be called again.
+ * @param now
+ *      The rdtsc cycle that should be considered the "current" time.
+ * @param bucket
+ *      The bucket whose message timeouts should be checked.
  */
-uint64_t
-Sender::checkMessageTimeouts()
+void
+Sender::checkMessageTimeouts(uint64_t now, MessageBucket* bucket)
 {
-    uint64_t globalNextTimeout = UINT64_MAX;
-    assert(MessageBucketMap::NUM_BUCKETS > 0);
-    for (int i = 0; i < MessageBucketMap::NUM_BUCKETS; ++i) {
-        MessageBucket* bucket = messageBuckets.buckets.at(i);
-        uint64_t nextTimeout = 0;
-        while (true) {
-            SpinLock::Lock lock(bucket->mutex);
-            // No remaining timeouts.
-            if (bucket->messageTimeouts.list.empty()) {
-                nextTimeout = PerfUtils::Cycles::rdtsc() +
-                              bucket->messageTimeouts.timeoutIntervalCycles;
-                break;
-            }
-            Message* message = &bucket->messageTimeouts.list.front();
-            // No remaining expired timeouts.
-            if (!message->messageTimeout.hasElapsed()) {
-                nextTimeout = message->messageTimeout.expirationCycleTime;
-                break;
-            }
-            // Found expired timeout.
-            if (message->state != OutMessage::Status::COMPLETED) {
-                message->state.store(OutMessage::Status::FAILED);
-                // A sent NO_KEEP_ALIVE message should never reach this state
-                // since the shorter ping timeout should have already canceled
-                // the message timeout.
-                assert(
-                    !((message->state == OutMessage::Status::SENT) &&
-                      (message->options & OutMessage::Options::NO_KEEP_ALIVE)));
-            }
-            bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
-            bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
-        }
-        globalNextTimeout = std::min(globalNextTimeout, nextTimeout);
+    if (!bucket->messageTimeouts.anyElapsed(now)) {
+        return;
     }
-    return globalNextTimeout;
+
+    while (true) {
+        SpinLock::Lock lock(bucket->mutex);
+        // No remaining timeouts.
+        if (bucket->messageTimeouts.empty()) {
+            break;
+        }
+        Message* message = &bucket->messageTimeouts.front();
+        // No remaining expired timeouts.
+        if (!message->messageTimeout.hasElapsed(now)) {
+            break;
+        }
+        // Found expired timeout.
+        if (message->state != OutMessage::Status::COMPLETED) {
+            message->state.store(OutMessage::Status::FAILED);
+            // A sent NO_KEEP_ALIVE message should never reach this state
+            // since the shorter ping timeout should have already canceled
+            // the message timeout.
+            assert(!((message->state == OutMessage::Status::SENT) &&
+                     (message->options & OutMessage::Options::NO_KEEP_ALIVE)));
+        }
+        bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+        bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+    }
 }
 
 /**
- * Process any outbound messages that need to be pinged to ensure the
- * message is kept alive by the receiver.
+ * Process any outbound messages in a given bucket that need to be pinged to
+ * ensure the message is kept alive by the receiver.
  *
  * Pulled out of checkTimeouts() for ease of testing.
  *
- * @return
- *      The rdtsc cycle time when this method should be called again.
+ * @param now
+ *      The rdtsc cycle that should be considered the "current" time.
+ * @param bucket
+ *      The bucket whose ping timeouts should be checked.
  */
-uint64_t
-Sender::checkPingTimeouts()
+void
+Sender::checkPingTimeouts(uint64_t now, MessageBucket* bucket)
 {
-    uint64_t globalNextTimeout = UINT64_MAX;
-    assert(MessageBucketMap::NUM_BUCKETS > 0);
-    for (int i = 0; i < MessageBucketMap::NUM_BUCKETS; ++i) {
-        MessageBucket* bucket = messageBuckets.buckets.at(i);
-        uint64_t nextTimeout = 0;
-        while (true) {
-            SpinLock::Lock lock(bucket->mutex);
-            // No remaining timeouts.
-            if (bucket->pingTimeouts.list.empty()) {
-                nextTimeout = PerfUtils::Cycles::rdtsc() +
-                              bucket->pingTimeouts.timeoutIntervalCycles;
-                break;
-            }
-            Message* message = &bucket->pingTimeouts.list.front();
-            // No remaining expired timeouts.
-            if (!message->pingTimeout.hasElapsed()) {
-                nextTimeout = message->pingTimeout.expirationCycleTime;
-                break;
-            }
-            // Found expired timeout.
-            if (message->state == OutMessage::Status::COMPLETED ||
-                message->state == OutMessage::Status::FAILED) {
-                bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
-                continue;
-            } else if (message->options & OutMessage::Options::NO_KEEP_ALIVE &&
-                       message->state == OutMessage::Status::SENT) {
-                bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
-                bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
-                continue;
-            } else {
-                bucket->pingTimeouts.setTimeout(&message->pingTimeout);
-            }
-
-            // Have not heard from the Receiver in the last timeout period. Ping
-            // the receiver to ensure it still knows about this Message.
-            Perf::counters.tx_ping_pkts.add(1);
-            ControlPacket::send<Protocol::Packet::PingHeader>(
-                message->driver, message->destination, message->id);
-        }
-        globalNextTimeout = std::min(globalNextTimeout, nextTimeout);
+    if (!bucket->pingTimeouts.anyElapsed(now)) {
+        return;
     }
-    return globalNextTimeout;
+
+    while (true) {
+        SpinLock::Lock lock(bucket->mutex);
+        // No remaining timeouts.
+        if (bucket->pingTimeouts.empty()) {
+            break;
+        }
+        Message* message = &bucket->pingTimeouts.front();
+        // No remaining expired timeouts.
+        if (!message->pingTimeout.hasElapsed(now)) {
+            break;
+        }
+        // Found expired timeout.
+        if (message->state == OutMessage::Status::COMPLETED ||
+            message->state == OutMessage::Status::FAILED) {
+            bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+            continue;
+        } else if (message->options & OutMessage::Options::NO_KEEP_ALIVE &&
+                   message->state == OutMessage::Status::SENT) {
+            bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+            bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+            continue;
+        } else {
+            bucket->pingTimeouts.setTimeout(&message->pingTimeout);
+        }
+
+        // Have not heard from the Receiver in the last timeout period. Ping
+        // the receiver to ensure it still knows about this Message.
+        Perf::counters.tx_ping_pkts.add(1);
+        ControlPacket::send<Protocol::Packet::PingHeader>(
+            message->driver, message->destination, message->id);
+    }
+}
+
+/**
+ * Process any Sender timeouts that have expired.
+ *
+ * Pulled out of poll() for ease of testing.
+ */
+void
+Sender::checkTimeouts()
+{
+    uint index = nextBucketIndex.fetch_add(1, std::memory_order_relaxed) &
+                 MessageBucketMap::HASH_KEY_MASK;
+    MessageBucket* bucket = messageBuckets.buckets.at(index);
+    uint64_t now = PerfUtils::Cycles::rdtsc();
+    checkPingTimeouts(now, bucket);
+    checkMessageTimeouts(now, bucket);
 }
 
 /**
  * Send out packets for any messages with unscheduled/granted bytes.
+ *
+ * Pulled out of poll() for ease of testing.
  */
 void
 Sender::trySend()

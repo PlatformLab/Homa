@@ -18,6 +18,7 @@
 
 #include <Homa/Driver.h>
 #include <Homa/Homa.h>
+#include <Homa/Util.h>
 
 #include <atomic>
 #include <deque>
@@ -51,7 +52,6 @@ class Receiver {
     virtual void handlePingPacket(Driver::Packet* packet, Driver* driver);
     virtual Homa::InMessage* receiveMessage();
     virtual void poll();
-    virtual uint64_t checkTimeouts();
 
   private:
     // Forward declaration
@@ -334,6 +334,9 @@ class Receiver {
          */
         static const int NUM_BUCKETS = 256;
 
+        // Make sure the number of buckets is a power of 2.
+        static_assert(Util::isPowerOfTwo(NUM_BUCKETS));
+
         /**
          * Bit mask used to map from a hashed key to the bucket index.
          */
@@ -450,8 +453,9 @@ class Receiver {
     };
 
     void dropMessage(Receiver::Message* message);
-    uint64_t checkMessageTimeouts();
-    uint64_t checkResendTimeouts();
+    void checkMessageTimeouts(uint64_t now, MessageBucket* bucket);
+    void checkResendTimeouts(uint64_t now, MessageBucket* bucket);
+    void checkTimeouts();
     void trySendGrants();
     void schedule(Message* message, const SpinLock::Lock& lock);
     void unschedule(Message* message, const SpinLock::Lock& lock);
@@ -491,6 +495,12 @@ class Receiver {
     /// Used to prevent concurrent calls to trySendGrants() from blocking on
     /// each other.
     std::atomic_flag granting = ATOMIC_FLAG_INIT;
+
+    /// The index of the next bucket in the messageBuckets::buckets array to
+    /// process in the poll loop. The index is held in the lower order bits of
+    /// this variable; the higher order bits should be masked off using the
+    /// MessageBucketMap::HASH_KEY_MASK bit mask.
+    std::atomic<uint> nextBucketIndex;
 
     /// Used to allocate Message objects.
     struct {

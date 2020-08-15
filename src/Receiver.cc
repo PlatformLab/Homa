@@ -18,7 +18,6 @@
 #include <Cycles.h>
 
 #include "Perf.h"
-#include "Util.h"
 
 namespace Homa {
 namespace Core {
@@ -46,6 +45,7 @@ Receiver::Receiver(Driver* driver, Policy::Manager* policyManager,
     , scheduledPeers()
     , receivedMessages()
     , granting()
+    , nextBucketIndex(0)
     , messageAllocator()
 {}
 
@@ -279,30 +279,7 @@ void
 Receiver::poll()
 {
     trySendGrants();
-}
-
-/**
- * Process any Receiver timeouts that have expired.
- *
- * This method must be called periodically to ensure timely handling of
- * expired timeouts.
- *
- * @return
- *      The rdtsc cycle time when this method should be called again.
- */
-uint64_t
-Receiver::checkTimeouts()
-{
-    uint64_t nextTimeout;
-
-    // Ping Timeout
-    nextTimeout = checkResendTimeouts();
-
-    // Message Timeout
-    uint64_t messageTimeout = checkMessageTimeouts();
-    nextTimeout = nextTimeout < messageTimeout ? nextTimeout : messageTimeout;
-
-    return nextTimeout;
+    checkTimeouts();
 }
 
 /**
@@ -527,71 +504,68 @@ Receiver::dropMessage(Receiver::Message* message)
  * Process any inbound messages that have timed out due to lack of activity from
  * the Sender.
  *
+ *
  * Pulled out of checkTimeouts() for ease of testing.
  *
- * @return
- *      The rdtsc cycle time when this method should be called again.
+ * @param now
+ *      The rdtsc cycle that should be considered the "current" time.
+ * @param bucket
+ *      The bucket whose message timeouts should be checked.
  */
-uint64_t
-Receiver::checkMessageTimeouts()
+void
+Receiver::checkMessageTimeouts(uint64_t now, MessageBucket* bucket)
 {
-    uint64_t globalNextTimeout = UINT64_MAX;
-    for (int i = 0; i < MessageBucketMap::NUM_BUCKETS; ++i) {
-        MessageBucket* bucket = messageBuckets.buckets.at(i);
-        uint64_t nextTimeout = 0;
-        while (true) {
-            SpinLock::Lock lock_bucket(bucket->mutex);
-
-            // No remaining timeouts.
-            if (bucket->messageTimeouts.list.empty()) {
-                nextTimeout = PerfUtils::Cycles::rdtsc() +
-                              bucket->messageTimeouts.timeoutIntervalCycles;
-                break;
-            }
-
-            Message* message = &bucket->messageTimeouts.list.front();
-
-            // No remaining expired timeouts.
-            if (!message->messageTimeout.hasElapsed()) {
-                nextTimeout = message->messageTimeout.expirationCycleTime;
-                break;
-            }
-
-            // Found expired timeout.
-
-            // Cancel timeouts
-            bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
-            bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
-
-            if (message->state == Message::State::IN_PROGRESS) {
-                // Message timed out before being fully received; drop the
-                // message.
-
-                // Unschedule the message
-                if (message->scheduled) {
-                    // Unschedule the message if it is still scheduled (i.e.
-                    // still linked to a scheduled peer).
-                    SpinLock::Lock lock_scheduler(schedulerMutex);
-                    ScheduledMessageInfo* info = &message->scheduledMessageInfo;
-                    if (info->peer != nullptr) {
-                        unschedule(message, lock_scheduler);
-                    }
-                }
-
-                bucket->messages.remove(&message->bucketNode);
-                {
-                    SpinLock::Lock lock_allocator(messageAllocator.mutex);
-                    messageAllocator.pool.destroy(message);
-                }
-            } else {
-                // Message timed out but we already made it available to the
-                // Transport; let the Transport know.
-                message->state.store(Message::State::DROPPED);
-            }
-        }
-        globalNextTimeout = std::min(globalNextTimeout, nextTimeout);
+    if (!bucket->messageTimeouts.anyElapsed(now)) {
+        return;
     }
-    return globalNextTimeout;
+
+    while (true) {
+        SpinLock::Lock lock_bucket(bucket->mutex);
+
+        // No remaining timeouts.
+        if (bucket->messageTimeouts.empty()) {
+            break;
+        }
+
+        Message* message = &bucket->messageTimeouts.front();
+
+        // No remaining expired timeouts.
+        if (!message->messageTimeout.hasElapsed(now)) {
+            break;
+        }
+
+        // Found expired timeout.
+
+        // Cancel timeouts
+        bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+        bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
+
+        if (message->state == Message::State::IN_PROGRESS) {
+            // Message timed out before being fully received; drop the
+            // message.
+
+            // Unschedule the message
+            if (message->scheduled) {
+                // Unschedule the message if it is still scheduled (i.e.
+                // still linked to a scheduled peer).
+                SpinLock::Lock lock_scheduler(schedulerMutex);
+                ScheduledMessageInfo* info = &message->scheduledMessageInfo;
+                if (info->peer != nullptr) {
+                    unschedule(message, lock_scheduler);
+                }
+            }
+
+            bucket->messages.remove(&message->bucketNode);
+            {
+                SpinLock::Lock lock_allocator(messageAllocator.mutex);
+                messageAllocator.pool.destroy(message);
+            }
+        } else {
+            // Message timed out but we already made it available to the
+            // Transport; let the Transport know.
+            message->state.store(Message::State::DROPPED);
+        }
+    }
 }
 
 /**
@@ -599,107 +573,118 @@ Receiver::checkMessageTimeouts()
  *
  * Pulled out of checkTimeouts() for ease of testing.
  *
- * @return
- *      The rdtsc cycle time when this method should be called again.
+ * @param now
+ *      The rdtsc cycle that should be considered the "current" time.
+ * @param bucket
+ *      The bucket whose resend timeouts should be checked.
  */
-uint64_t
-Receiver::checkResendTimeouts()
+void
+Receiver::checkResendTimeouts(uint64_t now, MessageBucket* bucket)
 {
-    uint64_t globalNextTimeout = UINT64_MAX;
-    for (int i = 0; i < MessageBucketMap::NUM_BUCKETS; ++i) {
-        MessageBucket* bucket = messageBuckets.buckets.at(i);
-        uint64_t nextTimeout = 0;
-        while (true) {
-            SpinLock::Lock lock_bucket(bucket->mutex);
+    if (!bucket->resendTimeouts.anyElapsed(now)) {
+        return;
+    }
 
-            // No remaining timeouts.
-            if (bucket->resendTimeouts.list.empty()) {
-                nextTimeout = PerfUtils::Cycles::rdtsc() +
-                              bucket->resendTimeouts.timeoutIntervalCycles;
-                break;
-            }
+    while (true) {
+        SpinLock::Lock lock_bucket(bucket->mutex);
 
-            Message* message = &bucket->resendTimeouts.list.front();
+        // No remaining timeouts.
+        if (bucket->resendTimeouts.empty()) {
+            break;
+        }
 
-            // No remaining expired timeouts.
-            if (!message->resendTimeout.hasElapsed()) {
-                nextTimeout = message->resendTimeout.expirationCycleTime;
-                break;
-            }
+        Message* message = &bucket->resendTimeouts.front();
 
-            // Found expired timeout.
-            assert(message->state == Message::State::IN_PROGRESS);
-            bucket->resendTimeouts.setTimeout(&message->resendTimeout);
+        // No remaining expired timeouts.
+        if (!message->resendTimeout.hasElapsed(now)) {
+            break;
+        }
 
-            // This Receiver expected to have heard from the Sender within the
-            // last timeout period but it didn't.  Request a resend of granted
-            // packets in case DATA packets got lost.
-            int index = 0;
-            int num = 0;
-            int grantIndexLimit = message->numUnscheduledPackets;
+        // Found expired timeout.
+        assert(message->state == Message::State::IN_PROGRESS);
+        bucket->resendTimeouts.setTimeout(&message->resendTimeout);
 
-            if (message->scheduled) {
-                SpinLock::Lock lock_scheduler(schedulerMutex);
-                ScheduledMessageInfo* info = &message->scheduledMessageInfo;
-                int receivedBytes = info->messageLength - info->bytesRemaining;
-                if (receivedBytes >= info->bytesGranted) {
-                    // Sender is blocked on this Receiver; all granted packets
-                    // have already been received.  No need to check for resend.
-                    continue;
-                } else if (grantIndexLimit * message->PACKET_DATA_LENGTH <
-                           info->bytesGranted) {
-                    grantIndexLimit =
-                        (info->bytesGranted + message->PACKET_DATA_LENGTH - 1) /
-                        message->PACKET_DATA_LENGTH;
-                }
-            }
+        // This Receiver expected to have heard from the Sender within the
+        // last timeout period but it didn't.  Request a resend of granted
+        // packets in case DATA packets got lost.
+        int index = 0;
+        int num = 0;
+        int grantIndexLimit = message->numUnscheduledPackets;
 
-            for (int i = 0; i < grantIndexLimit; ++i) {
-                if (message->getPacket(i) == nullptr) {
-                    // Unreceived packet
-                    if (num == 0) {
-                        // First unreceived packet
-                        index = i;
-                    }
-                    ++num;
-                } else {
-                    // Received packet
-                    if (num != 0) {
-                        // Send out the range of packets found so far.
-                        //
-                        // The RESEND also includes the current granted priority
-                        // so that it can act as a GRANT in case a GRANT was
-                        // lost.  If this message hasn't been scheduled (i.e. no
-                        // grants have been sent) then the priority will hold
-                        // the default value; this is ok since the Sender will
-                        // ignore the priority field for resends of purely
-                        // unscheduled packets (see
-                        // Sender::handleResendPacket()).
-                        SpinLock::Lock lock_scheduler(schedulerMutex);
-                        Perf::counters.tx_resend_pkts.add(1);
-                        ControlPacket::send<Protocol::Packet::ResendHeader>(
-                            message->driver, message->source, message->id,
-                            Util::downCast<uint16_t>(index),
-                            Util::downCast<uint16_t>(num),
-                            message->scheduledMessageInfo.priority);
-                        num = 0;
-                    }
-                }
-            }
-            if (num != 0) {
-                // Send out the last range of packets found.
-                SpinLock::Lock lock_scheduler(schedulerMutex);
-                Perf::counters.tx_resend_pkts.add(1);
-                ControlPacket::send<Protocol::Packet::ResendHeader>(
-                    message->driver, message->source, message->id,
-                    Util::downCast<uint16_t>(index),
-                    Util::downCast<uint16_t>(num),
-                    message->scheduledMessageInfo.priority);
+        if (message->scheduled) {
+            SpinLock::Lock lock_scheduler(schedulerMutex);
+            ScheduledMessageInfo* info = &message->scheduledMessageInfo;
+            int receivedBytes = info->messageLength - info->bytesRemaining;
+            if (receivedBytes >= info->bytesGranted) {
+                // Sender is blocked on this Receiver; all granted packets
+                // have already been received.  No need to check for resend.
+                continue;
+            } else if (grantIndexLimit * message->PACKET_DATA_LENGTH <
+                       info->bytesGranted) {
+                grantIndexLimit =
+                    (info->bytesGranted + message->PACKET_DATA_LENGTH - 1) /
+                    message->PACKET_DATA_LENGTH;
             }
         }
-        globalNextTimeout = std::min(globalNextTimeout, nextTimeout);
+
+        for (int i = 0; i < grantIndexLimit; ++i) {
+            if (message->getPacket(i) == nullptr) {
+                // Unreceived packet
+                if (num == 0) {
+                    // First unreceived packet
+                    index = i;
+                }
+                ++num;
+            } else {
+                // Received packet
+                if (num != 0) {
+                    // Send out the range of packets found so far.
+                    //
+                    // The RESEND also includes the current granted priority
+                    // so that it can act as a GRANT in case a GRANT was
+                    // lost.  If this message hasn't been scheduled (i.e. no
+                    // grants have been sent) then the priority will hold
+                    // the default value; this is ok since the Sender will
+                    // ignore the priority field for resends of purely
+                    // unscheduled packets (see
+                    // Sender::handleResendPacket()).
+                    SpinLock::Lock lock_scheduler(schedulerMutex);
+                    Perf::counters.tx_resend_pkts.add(1);
+                    ControlPacket::send<Protocol::Packet::ResendHeader>(
+                        message->driver, message->source, message->id,
+                        Util::downCast<uint16_t>(index),
+                        Util::downCast<uint16_t>(num),
+                        message->scheduledMessageInfo.priority);
+                    num = 0;
+                }
+            }
+        }
+        if (num != 0) {
+            // Send out the last range of packets found.
+            SpinLock::Lock lock_scheduler(schedulerMutex);
+            Perf::counters.tx_resend_pkts.add(1);
+            ControlPacket::send<Protocol::Packet::ResendHeader>(
+                message->driver, message->source, message->id,
+                Util::downCast<uint16_t>(index), Util::downCast<uint16_t>(num),
+                message->scheduledMessageInfo.priority);
+        }
     }
-    return globalNextTimeout;
+}
+
+/**
+ * Process any Receiver timeouts that have expired.
+ *
+ * Pulled out of poll() for ease of testing.
+ */
+void
+Receiver::checkTimeouts()
+{
+    uint index = nextBucketIndex.fetch_add(1, std::memory_order_relaxed) &
+                 MessageBucketMap::HASH_KEY_MASK;
+    MessageBucket* bucket = messageBuckets.buckets.at(index);
+    uint64_t now = PerfUtils::Cycles::rdtsc();
+    checkResendTimeouts(now, bucket);
+    checkMessageTimeouts(now, bucket);
 }
 
 /**

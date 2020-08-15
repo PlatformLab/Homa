@@ -44,7 +44,6 @@ class MockReceiver : public Core::Receiver {
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD0(receiveMessage, Homa::InMessage*());
     MOCK_METHOD0(poll, void());
-    MOCK_METHOD0(checkTimeouts, uint64_t());
 };
 
 }  // namespace Mock

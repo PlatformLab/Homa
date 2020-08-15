@@ -18,6 +18,7 @@
 
 #include <Homa/Driver.h>
 #include <Homa/Homa.h>
+#include <Homa/Util.h>
 
 #include <array>
 #include <atomic>
@@ -53,7 +54,6 @@ class Sender {
     virtual void handleUnknownPacket(Driver::Packet* packet, Driver* driver);
     virtual void handleErrorPacket(Driver::Packet* packet, Driver* driver);
     virtual void poll();
-    virtual uint64_t checkTimeouts();
 
   private:
     /// Forward declarations
@@ -312,6 +312,9 @@ class Sender {
          */
         static const int NUM_BUCKETS = 256;
 
+        // Make sure the number of buckets is a power of 2.
+        static_assert(Util::isPowerOfTwo(NUM_BUCKETS));
+
         /**
          * Bit mask used to map from a hashed key to the bucket index.
          */
@@ -388,8 +391,9 @@ class Sender {
                      Message::Options options = Message::Options::NONE);
     void cancelMessage(Sender::Message* message);
     void dropMessage(Sender::Message* message);
-    uint64_t checkMessageTimeouts();
-    uint64_t checkPingTimeouts();
+    void checkMessageTimeouts(uint64_t now, MessageBucket* bucket);
+    void checkPingTimeouts(uint64_t now, MessageBucket* bucket);
+    void checkTimeouts();
     void trySend();
 
     /// Transport identifier.
@@ -426,6 +430,12 @@ class Sender {
     /// messages in the sendQueue. Encoded into a single bool so that checking
     /// if there is work to do is more efficient.
     std::atomic<bool> sendReady;
+
+    /// The index of the next bucket in the messageBuckets::buckets array to
+    /// process in the poll loop. The index is held in the lower order bits of
+    /// this variable; the higher order bits should be masked off using the
+    /// MessageBucketMap::HASH_KEY_MASK bit mask.
+    std::atomic<uint> nextBucketIndex;
 
     /// Used to allocate Message objects.
     struct {

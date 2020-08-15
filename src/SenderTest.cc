@@ -1038,28 +1038,6 @@ TEST_F(SenderTest, poll)
     sender->poll();
 }
 
-TEST_F(SenderTest, checkTimeouts)
-{
-    Sender::Message message(sender, &mockDriver);
-    Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
-    bucket->pingTimeouts.setTimeout(&message.pingTimeout);
-    bucket->messageTimeouts.setTimeout(&message.messageTimeout);
-
-    message.pingTimeout.expirationCycleTime = 10010;
-    message.messageTimeout.expirationCycleTime = 10020;
-
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    EXPECT_EQ(10010U, sender->checkTimeouts());
-
-    message.pingTimeout.expirationCycleTime = 10030;
-
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    EXPECT_EQ(10020U, sender->checkTimeouts());
-
-    bucket->pingTimeouts.cancelTimeout(&message.pingTimeout);
-    bucket->messageTimeouts.cancelTimeout(&message.messageTimeout);
-}
-
 TEST_F(SenderTest, Message_destructor)
 {
     const int MAX_RAW_PACKET_LENGTH = 2000;
@@ -1513,14 +1491,12 @@ TEST_F(SenderTest, dropMessage)
     EXPECT_EQ(0U, sender->messageAllocator.pool.outstandingObjects);
 }
 
-TEST_F(SenderTest, checkMessageTimeouts_basic)
+TEST_F(SenderTest, checkMessageTimeouts)
 {
     Sender::Message* message[4];
+    Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
     for (uint64_t i = 0; i < 4; ++i) {
-        Protocol::MessageId id = {42, 10 + i};
         message[i] = dynamic_cast<Sender::Message*>(sender->allocMessage());
-        SenderTest::addMessage(sender, id, message[i]);
-        Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
         bucket->messageTimeouts.setTimeout(&message[i]->messageTimeout);
         bucket->pingTimeouts.setTimeout(&message[i]->pingTimeout);
     }
@@ -1538,11 +1514,12 @@ TEST_F(SenderTest, checkMessageTimeouts_basic)
     message[3]->messageTimeout.expirationCycleTime = 10001;
     message[3]->state = Homa::OutMessage::Status::SENT;
 
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+    bucket->messageTimeouts.nextTimeout = 9998;
 
-    uint64_t nextTimeout = sender->checkMessageTimeouts();
+    sender->checkMessageTimeouts(10000, bucket);
 
-    EXPECT_EQ(message[3]->messageTimeout.expirationCycleTime, nextTimeout);
+    EXPECT_EQ(message[3]->messageTimeout.expirationCycleTime,
+              bucket->messageTimeouts.nextTimeout.load());
     // Message[0]: Normal timeout: IN_PROGRESS
     EXPECT_EQ(nullptr, message[0]->messageTimeout.node.list);
     EXPECT_EQ(nullptr, message[0]->pingTimeout.node.list);
@@ -1556,34 +1533,18 @@ TEST_F(SenderTest, checkMessageTimeouts_basic)
     EXPECT_EQ(nullptr, message[2]->pingTimeout.node.list);
     EXPECT_EQ(Homa::OutMessage::Status::COMPLETED, message[2]->getStatus());
     // Message[3]: No timeout
-    EXPECT_EQ(
-        &sender->messageBuckets.getBucket(message[3]->id)->messageTimeouts.list,
-        message[3]->messageTimeout.node.list);
-    EXPECT_EQ(
-        &sender->messageBuckets.getBucket(message[3]->id)->pingTimeouts.list,
-        message[3]->pingTimeout.node.list);
+    EXPECT_EQ(&bucket->messageTimeouts.list,
+              message[3]->messageTimeout.node.list);
+    EXPECT_EQ(&bucket->pingTimeouts.list, message[3]->pingTimeout.node.list);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message[3]->getStatus());
 }
 
-TEST_F(SenderTest, checkMessageTimeouts_empty)
-{
-    for (int i = 0; i < Sender::MessageBucketMap::NUM_BUCKETS; ++i) {
-        Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(i);
-        EXPECT_TRUE(bucket->messageTimeouts.list.empty());
-    }
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    uint64_t nextTimeout = sender->checkMessageTimeouts();
-    EXPECT_EQ(10000 + messageTimeoutCycles, nextTimeout);
-}
-
-TEST_F(SenderTest, checkPingTimeouts_basic)
+TEST_F(SenderTest, checkPingTimeouts)
 {
     Sender::Message* message[5];
+    Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
     for (uint64_t i = 0; i < 5; ++i) {
-        Protocol::MessageId id = {42, 10 + i};
         message[i] = dynamic_cast<Sender::Message*>(sender->allocMessage());
-        SenderTest::addMessage(sender, id, message[i]);
-        Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
         bucket->pingTimeouts.setTimeout(&message[i]->pingTimeout);
     }
 
@@ -1603,16 +1564,17 @@ TEST_F(SenderTest, checkPingTimeouts_basic)
     // Message[4]: No timeout
     message[4]->pingTimeout.expirationCycleTime = 10001;
 
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
+    bucket->pingTimeouts.nextTimeout = 9997;
 
     EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(&mockPacket));
     EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket))).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
         .Times(1);
 
-    uint64_t nextTimeout = sender->checkPingTimeouts();
+    sender->checkPingTimeouts(10000, bucket);
 
-    EXPECT_EQ(message[4]->pingTimeout.expirationCycleTime, nextTimeout);
+    EXPECT_EQ(message[4]->pingTimeout.expirationCycleTime,
+              bucket->pingTimeouts.nextTimeout.load());
     // Message[0]: Normal timeout: COMPLETED
     EXPECT_EQ(nullptr, message[0]->pingTimeout.node.list);
     // Message[1]: Normal timeout: FAILED
@@ -1629,16 +1591,15 @@ TEST_F(SenderTest, checkPingTimeouts_basic)
     EXPECT_EQ(10001, message[4]->pingTimeout.expirationCycleTime);
 }
 
-TEST_F(SenderTest, checkPingTimeouts_empty)
+TEST_F(SenderTest, checkTimeouts)
 {
-    for (int i = 0; i < Sender::MessageBucketMap::NUM_BUCKETS; ++i) {
-        Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(i);
-        EXPECT_TRUE(bucket->pingTimeouts.list.empty());
-    }
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    sender->checkPingTimeouts();
-    uint64_t nextTimeout = sender->checkPingTimeouts();
-    EXPECT_EQ(10000 + pingIntervalCycles, nextTimeout);
+    Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
+
+    EXPECT_EQ(0, sender->nextBucketIndex.load());
+
+    sender->checkTimeouts();
+
+    EXPECT_EQ(1, sender->nextBucketIndex.load());
 }
 
 TEST_F(SenderTest, trySend_basic)

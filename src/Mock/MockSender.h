@@ -49,7 +49,6 @@ class MockSender : public Core::Sender {
     MOCK_METHOD2(handleErrorPacket,
                  void(Driver::Packet* packet, Driver* driver));
     MOCK_METHOD0(poll, void());
-    MOCK_METHOD0(checkTimeouts, uint64_t());
 };
 
 }  // namespace Mock
