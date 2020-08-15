@@ -353,30 +353,6 @@ TEST_F(ReceiverTest, poll)
     receiver->poll();
 }
 
-TEST_F(ReceiverTest, checkTimeouts)
-{
-    Receiver::Message message(receiver, &mockDriver, 0, 0,
-                              Protocol::MessageId(0, 0),
-                              SocketAddress{0, 60001}, 0);
-    Receiver::MessageBucket* bucket = receiver->messageBuckets.buckets.at(0);
-    bucket->resendTimeouts.setTimeout(&message.resendTimeout);
-    bucket->messageTimeouts.setTimeout(&message.messageTimeout);
-
-    message.resendTimeout.expirationCycleTime = 10010;
-    message.messageTimeout.expirationCycleTime = 10020;
-
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    EXPECT_EQ(10010U, receiver->checkTimeouts());
-
-    message.resendTimeout.expirationCycleTime = 10030;
-
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    EXPECT_EQ(10020U, receiver->checkTimeouts());
-
-    bucket->resendTimeouts.cancelTimeout(&message.resendTimeout);
-    bucket->messageTimeouts.cancelTimeout(&message.messageTimeout);
-}
-
 TEST_F(ReceiverTest, Message_destructor_basic)
 {
     Protocol::MessageId id = {42, 32};
@@ -694,7 +670,7 @@ TEST_F(ReceiverTest, dropMessage)
     EXPECT_TRUE(bucket->resendTimeouts.list.empty());
 }
 
-TEST_F(ReceiverTest, checkMessageTimeouts_basic)
+TEST_F(ReceiverTest, checkMessageTimeouts)
 {
     void* op[3];
     Receiver::Message* message[3];
@@ -726,14 +702,17 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     // Message[2]: No timeout
     message[2]->messageTimeout.expirationCycleTime = 10001;
 
+    bucket->messageTimeouts.nextTimeout = 9998;
+
     ASSERT_EQ(10000U, PerfUtils::Cycles::rdtsc());
     ASSERT_TRUE(message[0]->messageTimeout.hasElapsed());
     ASSERT_TRUE(message[1]->messageTimeout.hasElapsed());
     ASSERT_FALSE(message[2]->messageTimeout.hasElapsed());
 
-    uint64_t nextTimeout = receiver->checkMessageTimeouts();
+    receiver->checkMessageTimeouts(10000, bucket);
 
-    EXPECT_EQ(message[2]->messageTimeout.expirationCycleTime, nextTimeout);
+    EXPECT_EQ(message[2]->messageTimeout.expirationCycleTime,
+              bucket->messageTimeouts.nextTimeout.load());
 
     // Message[0]: Normal timeout: IN_PROGRESS
     EXPECT_EQ(nullptr, message[0]->messageTimeout.node.list);
@@ -758,19 +737,7 @@ TEST_F(ReceiverTest, checkMessageTimeouts_basic)
     EXPECT_EQ(2U, receiver->messageAllocator.pool.outstandingObjects);
 }
 
-TEST_F(ReceiverTest, checkMessageTimeouts_empty)
-{
-    for (int i = 0; i < Receiver::MessageBucketMap::NUM_BUCKETS; ++i) {
-        Receiver::MessageBucket* bucket =
-            receiver->messageBuckets.buckets.at(i);
-        EXPECT_TRUE(bucket->messageTimeouts.list.empty());
-    }
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    uint64_t nextTimeout = receiver->checkMessageTimeouts();
-    EXPECT_EQ(10000 + messageTimeoutCycles, nextTimeout);
-}
-
-TEST_F(ReceiverTest, checkResendTimeouts_basic)
+TEST_F(ReceiverTest, checkResendTimeouts)
 {
     Receiver::Message* message[3];
     Receiver::MessageBucket* bucket = receiver->messageBuckets.buckets.at(0);
@@ -809,6 +776,8 @@ TEST_F(ReceiverTest, checkResendTimeouts_basic)
     ASSERT_EQ(Receiver::Message::State::IN_PROGRESS, message[2]->state);
     message[2]->resendTimeout.expirationCycleTime = 10001;
 
+    bucket->resendTimeouts.nextTimeout = 9999;
+
     EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
 
     char buf1[1024];
@@ -831,9 +800,10 @@ TEST_F(ReceiverTest, checkResendTimeouts_basic)
         .Times(1);
 
     // TEST CALL
-    uint64_t nextTimeout = receiver->checkResendTimeouts();
+    receiver->checkResendTimeouts(10000, bucket);
 
-    EXPECT_EQ(message[2]->resendTimeout.expirationCycleTime, nextTimeout);
+    EXPECT_EQ(message[2]->resendTimeout.expirationCycleTime,
+              bucket->resendTimeouts.nextTimeout.load());
 
     // Message[0]: Normal timeout: resends
     EXPECT_EQ(10100, message[0]->resendTimeout.expirationCycleTime);
@@ -859,16 +829,15 @@ TEST_F(ReceiverTest, checkResendTimeouts_basic)
     EXPECT_EQ(10001, message[2]->resendTimeout.expirationCycleTime);
 }
 
-TEST_F(ReceiverTest, checkResendTimeouts_empty)
+TEST_F(ReceiverTest, checkTimeouts)
 {
-    for (int i = 0; i < Receiver::MessageBucketMap::NUM_BUCKETS; ++i) {
-        Receiver::MessageBucket* bucket =
-            receiver->messageBuckets.buckets.at(i);
-        EXPECT_TRUE(bucket->resendTimeouts.list.empty());
-    }
-    EXPECT_EQ(10000U, PerfUtils::Cycles::rdtsc());
-    uint64_t nextTimeout = receiver->checkResendTimeouts();
-    EXPECT_EQ(10000 + resendIntervalCycles, nextTimeout);
+    Receiver::MessageBucket* bucket = receiver->messageBuckets.buckets.at(0);
+
+    EXPECT_EQ(0, receiver->nextBucketIndex.load());
+
+    receiver->checkTimeouts();
+
+    EXPECT_EQ(1, receiver->nextBucketIndex.load());
 }
 
 TEST_F(ReceiverTest, trySendGrants)

@@ -73,16 +73,6 @@ TransportImpl::poll()
     // Allow sender and receiver to make incremental progress.
     sender->poll();
     receiver->poll();
-
-    if (PerfUtils::Cycles::rdtsc() >= nextTimeoutCycles.load()) {
-        uint64_t requestedTimeoutCycles;
-        requestedTimeoutCycles = sender->checkTimeouts();
-        nextTimeoutCycles.store(requestedTimeoutCycles);
-        requestedTimeoutCycles = receiver->checkTimeouts();
-        if (nextTimeoutCycles.load() > requestedTimeoutCycles) {
-            nextTimeoutCycles.store(requestedTimeoutCycles);
-        }
-    }
 }
 
 /**

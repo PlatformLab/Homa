@@ -14,7 +14,6 @@
  */
 
 #include <Homa/Util.h>
-
 #include <gtest/gtest.h>
 
 namespace Homa {
@@ -31,6 +30,12 @@ TEST(UtilTest, downCast)
     long int l = 64;
     c = Util::downCast<char, long int>(l);
     EXPECT_EQ(64, c);
+}
+
+TEST(UtilTest, isPowerOfTwo)
+{
+    EXPECT_TRUE(Util::isPowerOfTwo(4));
+    EXPECT_FALSE(Util::isPowerOfTwo(3));
 }
 
 }  // namespace Homa
