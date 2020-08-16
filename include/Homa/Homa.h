@@ -136,15 +136,17 @@ class OutMessage {
      * Options with which an OutMessage can be sent.
      */
     enum Options {
-        NONE = 0,           //< Default send behavior.
-        NO_RETRY = 1 << 0,  //< Message will not be resent if recoverable send
-                            //< failure occurs; provides at-most-once delivery
-                            //< of messages.
-        NO_KEEP_ALIVE = 1 << 1,  //< Once the Message has been sent, Homa will
-                                 //< not automatically ping the Message's
-                                 //< receiver to ensure the receiver is still
-                                 //< alive and the Message will not "timeout"
-                                 //< due to receiver inactivity.
+        /// Default send behavior.
+        NONE = 0,
+
+        /// Message will not be resent if recoverable send failure occurs;
+        /// provides at-most-once delivery of messages.
+        NO_RETRY = 1 << 0,
+
+        /// Once the Message has been sent, Homa will not automatically ping the
+        /// Message's receiver to ensure the receiver is still alive and the
+        /// Message will not "timeout" due to receiver inactivity.
+        NO_KEEP_ALIVE = 1 << 1,
     };
 
     /**
