@@ -150,6 +150,24 @@ atomicIncRelaxedTest()
     return PerfUtils::Cycles::toSeconds(stop - start) / count;
 }
 
+TestInfo atomicIncUnsafeTestInfo = {
+    "atomicIncUnsafe", "Increment an std::atomic using read-modify-write",
+    R"(Measure the cost of a thread unsafe increment of an std::atomic.)"};
+double
+atomicIncUnsafeTest()
+{
+    int count = 1000000;
+    uint64_t temp = std::rand() % 100;
+    std::atomic<uint64_t> val[count];
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        val[i].store(val[i].load(std::memory_order_relaxed) + temp,
+                     std::memory_order_relaxed);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
 TestInfo intReadWriteTestInfo = {
     "intReadWrite", "Read and write a uint64_t",
     R"(Measure the cost the baseline read/write.)"};
@@ -506,6 +524,7 @@ TestCase tests[] = {
     {atomicStoreRelaxedTest, &atomicStoreRelaxedTestInfo},
     {atomicIncTest, &atomicIncTestInfo},
     {atomicIncRelaxedTest, &atomicIncRelaxedTestInfo},
+    {atomicIncUnsafeTest, &atomicIncUnsafeTestInfo},
     {branchTest, &branchTestInfo},
     {intReadWriteTest, &intReadWriteTestInfo},
     {listSearchTest, &listSearchTestInfo},
