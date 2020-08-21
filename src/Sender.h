@@ -140,6 +140,7 @@ class Sender {
             , id(0, 0)
             , destination()
             , options(Options::NONE)
+            , held(true)
             , start(0)
             , messageLength(0)
             , numPackets(0)
@@ -193,6 +194,11 @@ class Sender {
 
         /// Contains flags for any requested optional send behavior.
         Options options;
+
+        /// True if a pointer to this message is accessible by the application
+        /// (e.g. the message has been allocated via allocMessage() but has not
+        /// been release via dropMessage()); false, otherwise.
+        bool held;
 
         /// First byte where data is or will go if empty.
         int start;

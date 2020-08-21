@@ -407,6 +407,18 @@ Sender::handleUnknownPacket(Driver::Packet* packet, Driver* driver)
             Perf::counters.tx_bytes.add(dataPacket->length);
             driver->sendPacket(dataPacket);
             message->state.store(OutMessage::Status::SENT);
+            // This message must be still be held by the application since the
+            // message still exists (it would have been removed when dropped
+            // because single packet messages are never IN_PROGRESS). Assuming
+            // the message is still held, we can skip the auto removal of SENT
+            // and !held messages.
+            assert(message->held);
+            if (message->options & OutMessage::Options::NO_KEEP_ALIVE) {
+                // No timeouts need to be checked after sending the message when
+                // the NO_KEEP_ALIVE option is enabled.
+                bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+                bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+            }
         } else {
             // Otherwise, queue the message to be sent in SRPT order.
             SpinLock::Lock lock_queue(queueMutex);
@@ -799,6 +811,16 @@ Sender::sendMessage(Sender::Message* message, Driver::Address destination,
         Perf::counters.tx_bytes.add(packet->length);
         driver->sendPacket(packet);
         message->state.store(OutMessage::Status::SENT);
+        // By definition, this message must be still be held by the application
+        // the send() call is since the progress. Assuming the message is still
+        // held, we can skip the auto removal of SENT and !held messages.
+        assert(message->held);
+        if (message->options & OutMessage::Options::NO_KEEP_ALIVE) {
+            // No timeouts need to be checked after sending the message when
+            // the NO_KEEP_ALIVE option is enabled.
+            bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+            bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+        }
     } else {
         // Otherwise, queue the message to be sent in SRPT order.
         SpinLock::Lock lock_queue(queueMutex);
@@ -845,7 +867,6 @@ Sender::cancelMessage(Sender::Message* message)
                 sendQueue.remove(&info->sendQueueNode);
             }
         }
-        bucket->messages.remove(&message->bucketNode);
         message->state.store(OutMessage::Status::CANCELED);
     }
 }
@@ -859,9 +880,21 @@ Sender::cancelMessage(Sender::Message* message)
 void
 Sender::dropMessage(Sender::Message* message)
 {
-    cancelMessage(message);
-    SpinLock::Lock lock_allocator(messageAllocator.mutex);
-    messageAllocator.pool.destroy(message);
+    Protocol::MessageId msgId = message->id;
+    MessageBucket* bucket = messageBuckets.getBucket(msgId);
+    SpinLock::Lock lock(bucket->mutex);
+    message->held = false;
+    if (message->state != OutMessage::Status::IN_PROGRESS) {
+        // Ok to delete immediately since we don't have to wait for the message
+        // to be sent.
+        bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+        bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+        bucket->messages.remove(&message->bucketNode);
+        SpinLock::Lock lock_allocator(messageAllocator.mutex);
+        messageAllocator.pool.destroy(message);
+    } else {
+        // Defer deletion and wait for the message to be SENT.
+    }
 }
 
 /**
@@ -896,11 +929,6 @@ Sender::checkMessageTimeouts(uint64_t now, MessageBucket* bucket)
         // Found expired timeout.
         if (message->state != OutMessage::Status::COMPLETED) {
             message->state.store(OutMessage::Status::FAILED);
-            // A sent NO_KEEP_ALIVE message should never reach this state
-            // since the shorter ping timeout should have already canceled
-            // the message timeout.
-            assert(!((message->state == OutMessage::Status::SENT) &&
-                     (message->options & OutMessage::Options::NO_KEEP_ALIVE)));
         }
         bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
         bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
@@ -1002,6 +1030,8 @@ Sender::trySend()
      */
     SpinLock::UniqueLock lock_queue(queueMutex);
     uint32_t queuedBytesEstimate = driver->getQueuedBytes();
+    std::array<Protocol::MessageId, 32> sentMessageIds;
+    std::size_t messagesSent = 0;
     // Optimistically assume we will finish sending every granted packet this
     // round; we will set again sendReady if it turns out we don't finish.
     sendReady = false;
@@ -1040,8 +1070,19 @@ Sender::trySend()
         }
         if (info->packetsSent >= info->packets->numPackets) {
             // We have finished sending the message.
+            sentMessageIds[messagesSent++] = info->id;
             message.state.store(OutMessage::Status::SENT);
             it = sendQueue.remove(it);
+            if (messagesSent >= sentMessageIds.size()) {
+                // We've reached the maximum number of sent messages we can
+                // track. If this happens frequently, the size of sentMessageIds
+                // should be increased.
+                NOTICE(
+                    "Max sent messages per poll reached; the limit should be "
+                    "increased if this occurs frequently");
+                sendReady = true;
+                break;
+            }
         } else if (info->packetsSent >= info->packetsGranted) {
             // We have sent every granted packet.
             ++it;
@@ -1052,8 +1093,36 @@ Sender::trySend()
             break;
         }
     }
-
     sending.clear();
+
+    // Unlock the queueMutex to process any SENT messages to ensure any bucket
+    // mutex is always acquired before the send queueMutex.
+    lock_queue.unlock();
+    for (std::size_t i = 0; i < messagesSent; ++i) {
+        Protocol::MessageId msgId = sentMessageIds[i];
+        MessageBucket* bucket = messageBuckets.getBucket(msgId);
+        SpinLock::Lock lock(bucket->mutex);
+        Message* message = bucket->findMessage(msgId, lock);
+        if (message == nullptr) {
+            // Message must have already been deleted.
+            continue;
+        }
+
+        if (!message->held) {
+            // Ok to delete now that the message has been sent.
+            bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+            bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+            bucket->messages.remove(&message->bucketNode);
+            SpinLock::Lock lock_allocator(messageAllocator.mutex);
+            messageAllocator.pool.destroy(message);
+        } else if (message->options & OutMessage::Options::NO_KEEP_ALIVE) {
+            // No timeouts need to be checked after sending the message when
+            // the NO_KEEP_ALIVE option is enabled.
+            bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
+            bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+        }
+    }
+
     uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
     if (!idle) {
         Perf::counters.active_cycles.add(elapsed_cycles);
