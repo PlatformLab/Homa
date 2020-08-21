@@ -757,6 +757,49 @@ TEST_F(SenderTest, handleUnknownPacket_singlePacketMessage)
     EXPECT_FALSE(sender->sendReady.load());
 }
 
+TEST_F(SenderTest, handleUnknownPacket_NO_KEEP_ALIVE)
+{
+    Protocol::MessageId id = {42, 1};
+    SocketAddress destination = {22, 60001};
+    Core::Policy::Unscheduled policyNew = {2, 3000, 2};
+
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage(0));
+    Homa::Mock::MockDriver::MockPacket dataPacket{payload};
+    Protocol::Packet::DataHeader* dataHeader =
+        static_cast<Protocol::Packet::DataHeader*>(dataPacket.payload);
+    setMessagePacket(message, 0, &dataPacket);
+    message->destination = destination;
+    message->messageLength = 500;
+    message->state.store(Homa::OutMessage::Status::SENT);
+    message->options = OutMessage::Options::NO_KEEP_ALIVE;
+    SenderTest::addMessage(sender, id, message);
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+    bucket->messageTimeouts.setTimeout(&message->messageTimeout);
+    bucket->pingTimeouts.setTimeout(&message->pingTimeout);
+    EXPECT_FALSE(bucket->messageTimeouts.empty());
+    EXPECT_FALSE(bucket->pingTimeouts.empty());
+
+    Protocol::Packet::UnknownHeader* header =
+        static_cast<Protocol::Packet::UnknownHeader*>(mockPacket.payload);
+    header->common.messageId = id;
+
+    EXPECT_CALL(
+        mockPolicyManager,
+        getUnscheduledPolicy(Eq(destination.ip), Eq(message->messageLength)))
+        .WillOnce(Return(policyNew));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&dataPacket), Eq(destination.ip), _))
+        .Times(1);
+    EXPECT_CALL(mockDriver, releasePackets(Pointee(&mockPacket), Eq(1)))
+        .Times(1);
+
+    sender->handleUnknownPacket(&mockPacket);
+
+    EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
+    EXPECT_TRUE(bucket->messageTimeouts.empty());
+    EXPECT_TRUE(bucket->pingTimeouts.empty());
+}
+
 TEST_F(SenderTest, handleUnknownPacket_NO_RETRY)
 {
     Protocol::MessageId id = {42, 1};
@@ -1427,6 +1470,37 @@ TEST_F(SenderTest, sendMessage_multipacket)
     EXPECT_TRUE(sender->sendReady.load());
 }
 
+TEST_F(SenderTest, sendMessage_NO_KEEP_ALIVE)
+{
+    Protocol::MessageId id = {sender->transportId,
+                              sender->nextMessageSequenceNumber};
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage(0));
+    Sender::MessageBucket* bucket = sender->messageBuckets.getBucket(id);
+
+    setMessagePacket(message, 0, &mockPacket);
+    message->messageLength = 420;
+    mockPacket.length =
+        message->messageLength + message->TRANSPORT_HEADER_LENGTH;
+    SocketAddress destination = {22, 60001};
+    Core::Policy::Unscheduled policy = {1, 3000, 2};
+
+    EXPECT_CALL(mockPolicyManager,
+                getUnscheduledPolicy(Eq(destination.ip), Eq(420)))
+        .WillOnce(Return(policy));
+    EXPECT_CALL(mockDriver, sendPacket(Eq(&mockPacket), Eq(destination.ip), _))
+        .Times(1);
+
+    sender->sendMessage(message, destination,
+                        Sender::Message::Options::NO_KEEP_ALIVE);
+
+    EXPECT_EQ(Sender::Message::Options::NO_KEEP_ALIVE, message->options);
+    EXPECT_TRUE(bucket->messages.contains(&message->bucketNode));
+    EXPECT_TRUE(bucket->messageTimeouts.empty());
+    EXPECT_TRUE(bucket->pingTimeouts.empty());
+    EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
+}
+
 TEST_F(SenderTest, sendMessage_missingPacket)
 {
     Protocol::MessageId id = {sender->transportId,
@@ -1490,18 +1564,33 @@ TEST_F(SenderTest, cancelMessage)
     EXPECT_TRUE(bucket->pingTimeouts.list.empty());
     EXPECT_TRUE(sender->sendQueue.empty());
     EXPECT_EQ(Homa::OutMessage::Status::CANCELED, message->state.load());
-    EXPECT_FALSE(bucket->messages.contains(&message->bucketNode));
 }
 
-TEST_F(SenderTest, dropMessage)
+TEST_F(SenderTest, dropMessage_basic)
 {
     Sender::Message* message =
         dynamic_cast<Sender::Message*>(sender->allocMessage(0));
     EXPECT_EQ(1U, sender->messageAllocator.pool.outstandingObjects);
+    EXPECT_TRUE(message->held);
+    EXPECT_EQ(OutMessage::Status::NOT_STARTED, message->state);
 
     sender->dropMessage(message);
 
     EXPECT_EQ(0U, sender->messageAllocator.pool.outstandingObjects);
+}
+
+TEST_F(SenderTest, dropMessage_IN_PROGRESS)
+{
+    Sender::Message* message =
+        dynamic_cast<Sender::Message*>(sender->allocMessage(0));
+    message->state = OutMessage::Status::IN_PROGRESS;
+    EXPECT_EQ(1U, sender->messageAllocator.pool.outstandingObjects);
+    EXPECT_TRUE(message->held);
+
+    sender->dropMessage(message);
+
+    EXPECT_EQ(1U, sender->messageAllocator.pool.outstandingObjects);
+    EXPECT_FALSE(message->held);
 }
 
 TEST_F(SenderTest, checkMessageTimeouts)
@@ -1633,6 +1722,7 @@ TEST_F(SenderTest, trySend_basic)
         info->unsentBytes += PACKET_DATA_SIZE;
     }
     message->state = Homa::OutMessage::Status::IN_PROGRESS;
+    message->held = false;
     sender->sendReady = true;
     EXPECT_EQ(5U, message->numPackets);
     EXPECT_EQ(3U, info->packetsGranted);
@@ -1640,6 +1730,7 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_EQ(5 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+    EXPECT_EQ(1U, sender->messageAllocator.pool.outstandingObjects);
 
     // 3 granted packets; 2 will send; queue limit reached.
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[0]), _, _));
@@ -1652,6 +1743,7 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_EQ(3 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+    EXPECT_EQ(1U, sender->messageAllocator.pool.outstandingObjects);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // 1 packet to be sent; grant limit reached.
@@ -1664,6 +1756,7 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_EQ(2 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+    EXPECT_EQ(1U, sender->messageAllocator.pool.outstandingObjects);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // No additional grants; spurious ready hint.
@@ -1677,6 +1770,7 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_EQ(2 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info->sendQueueNode));
+    EXPECT_EQ(1U, sender->messageAllocator.pool.outstandingObjects);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // 2 more granted packets; will finish.
@@ -1692,6 +1786,7 @@ TEST_F(SenderTest, trySend_basic)
     EXPECT_EQ(0 * PACKET_DATA_SIZE, info->unsentBytes);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message->state);
     EXPECT_FALSE(sender->sendQueue.contains(&info->sendQueueNode));
+    EXPECT_EQ(0U, sender->messageAllocator.pool.outstandingObjects);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     for (int i = 0; i < 5; ++i) {
@@ -1701,14 +1796,17 @@ TEST_F(SenderTest, trySend_basic)
 
 TEST_F(SenderTest, trySend_multipleMessages)
 {
+    Protocol::MessageId id[3];
     Sender::Message* message[3];
     Sender::QueuedMessageInfo* info[3];
+    Sender::MessageBucket* bucket[3];
     Homa::Mock::MockDriver::MockPacket* packet[3];
     for (uint64_t i = 0; i < 3; ++i) {
-        Protocol::MessageId id = {22, 10 + i};
+        id[i] = {22, 10 + i};
         message[i] = dynamic_cast<Sender::Message*>(sender->allocMessage(0));
         info[i] = &message[i]->queuedMessageInfo;
-        SenderTest::addMessage(sender, id, message[i], true, 1);
+        SenderTest::addMessage(sender, id[i], message[i], true, 1);
+        bucket[i] = sender->messageBuckets.getBucket(id[i]);
         packet[i] = new Homa::Mock::MockDriver::MockPacket{payload};
         packet[i]->length = sender->driver->getMaxPayloadSize() / 4;
         setMessagePacket(message[i], 0, packet[i]);
@@ -1718,9 +1816,10 @@ TEST_F(SenderTest, trySend_multipleMessages)
     }
     sender->sendReady = true;
 
-    // Message 0: Will finish
+    // Message 0: Will finish, !held
     EXPECT_EQ(1, info[0]->packetsGranted);
     info[0]->packetsSent = 0;
+    message[0]->held = false;
 
     // Message 1: Will reach grant limit
     EXPECT_EQ(1, info[1]->packetsGranted);
@@ -1728,9 +1827,10 @@ TEST_F(SenderTest, trySend_multipleMessages)
     setMessagePacket(message[1], 1, nullptr);
     EXPECT_EQ(2, message[1]->numPackets);
 
-    // Message 2: Will finish
+    // Message 2: Will finish, NO_KEEP_ALIVE
     EXPECT_EQ(1, info[2]->packetsGranted);
     info[2]->packetsSent = 0;
+    message[2]->options = OutMessage::Options::NO_KEEP_ALIVE;
 
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[0]), _, _));
     EXPECT_CALL(mockDriver, sendPacket(Eq(packet[1]), _, _));
@@ -1741,12 +1841,18 @@ TEST_F(SenderTest, trySend_multipleMessages)
     EXPECT_EQ(1U, info[0]->packetsSent);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message[0]->state);
     EXPECT_FALSE(sender->sendQueue.contains(&info[0]->sendQueueNode));
+    EXPECT_EQ(nullptr,
+              bucket[0]->findMessage(id[0], SpinLock::Lock(bucket[0]->mutex)));
     EXPECT_EQ(1U, info[1]->packetsSent);
     EXPECT_NE(Homa::OutMessage::Status::SENT, message[1]->state);
     EXPECT_TRUE(sender->sendQueue.contains(&info[1]->sendQueueNode));
     EXPECT_EQ(1U, info[2]->packetsSent);
     EXPECT_EQ(Homa::OutMessage::Status::SENT, message[2]->state);
     EXPECT_FALSE(sender->sendQueue.contains(&info[2]->sendQueueNode));
+    EXPECT_FALSE(bucket[2]->messageTimeouts.list.contains(
+        &message[2]->messageTimeout.node));
+    EXPECT_FALSE(
+        bucket[2]->pingTimeouts.list.contains(&message[2]->pingTimeout.node));
 }
 
 TEST_F(SenderTest, trySend_alreadyRunning)

@@ -42,6 +42,9 @@ struct MessageId {
     uint64_t sequence;     ///< Sequence number for this message (unique for
                            ///< transportId, monotonically increasing).
 
+    /// MessageId default constructor.
+    MessageId() = default;
+
     /// MessageId constructor.
     MessageId(uint64_t transportId, uint64_t sequence)
         : transportId(transportId)
