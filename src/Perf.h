@@ -29,7 +29,7 @@ namespace Perf {
  */
 struct Counters {
     /**
-     * Wrapper class for individual counter entires to
+     * Wrapper class for individual counter entries.
      */
     template <typename T>
     struct Stat : private std::atomic<T> {
@@ -43,8 +43,10 @@ struct Counters {
 
         /**
          * Add the value of another Stat to this Stat.
+         *
+         * This method is thread-safe.
          */
-        void add(const Stat<T>& other)
+        inline void add(const Stat<T>& other)
         {
             this->fetch_add(other.load(std::memory_order_relaxed),
                             std::memory_order_relaxed);
@@ -52,16 +54,21 @@ struct Counters {
 
         /**
          * Add the given value to this Stat.
+         *
+         * This method is not thread-safe.
          */
-        void add(T val)
+        inline void add(T val)
         {
-            this->fetch_add(val, std::memory_order_relaxed);
+            this->store(this->load(std::memory_order_relaxed) + val,
+                        std::memory_order_relaxed);
         }
 
         /**
          * Return the stat value.
+         *
+         * This method is thread-safe.
          */
-        T get() const
+        inline T get() const
         {
             return this->load(std::memory_order_relaxed);
         }
