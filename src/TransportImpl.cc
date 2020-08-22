@@ -67,12 +67,16 @@ TransportImpl::~TransportImpl() = default;
 void
 TransportImpl::poll()
 {
+    Perf::Timer timer;
+
     // Receive and dispatch incoming packets.
     processPackets();
 
     // Allow sender and receiver to make incremental progress.
     sender->poll();
     receiver->poll();
+
+    Perf::counters.total_cycles.add(timer.split());
 }
 
 /**
@@ -84,10 +88,7 @@ void
 TransportImpl::processPackets()
 {
     // Keep track of time spent doing active processing versus idle.
-    Perf::Timer activityTimer;
-    activityTimer.split();
-    uint64_t activeTime = 0;
-    uint64_t idleTime = 0;
+    Perf::Timer timer;
 
     const int MAX_BURST = 32;
     Driver::Packet* packets[MAX_BURST];
@@ -133,12 +134,8 @@ TransportImpl::processPackets()
                 sender->handleErrorPacket(packet, driver);
                 break;
         }
-        activeTime += activityTimer.split();
+        Perf::counters.active_cycles.add(timer.split());
     }
-    idleTime += activityTimer.split();
-
-    Perf::counters.active_cycles.add(activeTime);
-    Perf::counters.idle_cycles.add(idleTime);
 }
 
 }  // namespace Core

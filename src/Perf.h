@@ -78,8 +78,8 @@ struct Counters {
      * Default constructor.
      */
     Counters()
-        : active_cycles(0)
-        , idle_cycles(0)
+        : total_cycles(0)
+        , active_cycles(0)
         , tx_bytes(0)
         , rx_bytes(0)
         , tx_data_pkts(0)
@@ -110,8 +110,8 @@ struct Counters {
      */
     void add(const Counters* other)
     {
+        total_cycles.add(other->total_cycles);
         active_cycles.add(other->active_cycles);
-        idle_cycles.add(other->idle_cycles);
         tx_bytes.add(other->tx_bytes);
         rx_bytes.add(other->rx_bytes);
         tx_data_pkts.add(other->tx_data_pkts);
@@ -138,7 +138,7 @@ struct Counters {
     void dumpStats(Stats* stats)
     {
         stats->active_cycles = active_cycles.get();
-        stats->idle_cycles = idle_cycles.get();
+        stats->idle_cycles = total_cycles.get() - active_cycles.get();
         stats->tx_bytes = tx_bytes.get();
         stats->rx_bytes = rx_bytes.get();
         stats->tx_data_pkts = tx_data_pkts.get();
@@ -159,11 +159,11 @@ struct Counters {
         stats->rx_error_pkts = rx_error_pkts.get();
     }
 
+    /// CPU time spent running the Homa poll loop in cycles.
+    Stat<uint64_t> total_cycles;
+
     /// CPU time spent actively processing Homa messages in cycles.
     Stat<uint64_t> active_cycles;
-
-    /// CPU time spent running Homa with no work to do in cycles.
-    Stat<uint64_t> idle_cycles;
 
     /// Number of bytes sent by the transport.
     Stat<uint64_t> tx_bytes;
@@ -240,10 +240,10 @@ extern thread_local ThreadCounters counters;
 class Timer {
   public:
     /**
-     * Construct a new uninitialized Timer.
+     * Construct a new Timer.
      */
     Timer()
-        : split_tsc(0)
+        : split_tsc(PerfUtils::Cycles::rdtsc())
     {}
 
     /**

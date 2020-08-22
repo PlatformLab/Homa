@@ -1010,8 +1010,9 @@ Sender::checkTimeouts()
 void
 Sender::trySend()
 {
-    uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
+    Perf::Timer timer;
     bool idle = true;
+
     // Skip when there are no messages to send.
     if (!sendReady) {
         return;
@@ -1123,11 +1124,8 @@ Sender::trySend()
         }
     }
 
-    uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
     if (!idle) {
-        Perf::counters.active_cycles.add(elapsed_cycles);
-    } else {
-        Perf::counters.idle_cycles.add(elapsed_cycles);
+        Perf::counters.active_cycles.add(timer.split());
     }
 }
 
