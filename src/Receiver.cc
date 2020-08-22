@@ -694,8 +694,7 @@ Receiver::checkTimeouts()
 void
 Receiver::trySendGrants()
 {
-    uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
-    bool idle = true;
+    Perf::Timer timer;
 
     // Skip scheduling if another poller is already working on it.
     if (granting.test_and_set()) {
@@ -743,7 +742,6 @@ Receiver::trySendGrants()
         // Send a GRANT if there are too few bytes granted and unreceived.
         int receivedBytes = info->messageLength - info->bytesRemaining;
         if (info->bytesGranted - receivedBytes < policy.minScheduledBytes) {
-            idle = false;
             // Calculate new grant limit
             int newGrantLimit = std::min(
                 receivedBytes + policy.maxScheduledBytes, info->messageLength);
@@ -753,6 +751,7 @@ Receiver::trySendGrants()
             ControlPacket::send<Protocol::Packet::GrantHeader>(
                 driver, sourceIp, id,
                 Util::downCast<uint32_t>(info->bytesGranted), info->priority);
+            Perf::counters.active_cycles.add(timer.split());
         }
 
         // Update the iterator first since calling unschedule() may cause the
@@ -762,19 +761,13 @@ Receiver::trySendGrants()
         if (info->messageLength <= info->bytesGranted) {
             // All packets granted, unschedule the message.
             unschedule(message, lock);
+            Perf::counters.active_cycles.add(timer.split());
         }
 
         ++slot;
     }
 
     granting.clear();
-
-    uint64_t elapsed_cycles = PerfUtils::Cycles::rdtsc() - start_tsc;
-    if (!idle) {
-        Perf::counters.active_cycles.add(elapsed_cycles);
-    } else {
-        Perf::counters.idle_cycles.add(elapsed_cycles);
-    }
 }
 
 /**
