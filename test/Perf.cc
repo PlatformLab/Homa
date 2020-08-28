@@ -31,6 +31,7 @@
 #include "Cycles.h"
 #include "Homa/Drivers/Util/QueueEstimator.h"
 #include "Intrusive.h"
+#include "ObjectPool.h"
 #include "docopt.h"
 
 static const char USAGE[] = R"(Performance Nano-Benchmark
@@ -186,7 +187,7 @@ intReadWriteTest()
 }
 
 TestInfo branchTestInfo = {
-    "branchTest", "If-else statement",
+    "branch", "If-else statement",
     R"(The cost of choosing a branch in an if-else statement)"};
 double
 branchTest()
@@ -210,6 +211,70 @@ branchTest()
     }
     uint64_t stop = PerfUtils::Cycles::rdtscp();
     return PerfUtils::Cycles::toSeconds(stop - start) / count;
+}
+
+TestInfo defaultAllocatorTestInfo = {
+    "defaultAllocator", "Test new and delete of a simple structure",
+    R"(Measure the cost of allocation and deallocation using new and delete.)"};
+double
+defaultAllocatorTest()
+{
+    struct Foo {
+        Foo()
+            : i()
+            , buf()
+        {}
+
+        uint64_t i;
+        char buf[100];
+    };
+    Foo* foo[0xFFFF + 1];
+    for (int i = 0; i < 0xFFFF + 1; ++i) {
+        foo[i] = new Foo;
+    }
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        delete foo[i & 0xFFFF];
+        foo[i & 0xFFFF] = new Foo;
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < 0xFFFF + 1; ++i) {
+        delete foo[i];
+    }
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
+}
+
+TestInfo objectPoolTestInfo = {
+    "objectPool", "Test ObjectPool allocation of a simple structure",
+    R"(Measure the cost of allocation and deallocation using an ObjectPool.)"};
+double
+objectPoolTest()
+{
+    struct Foo {
+        Foo()
+            : i()
+            , buf()
+        {}
+        uint64_t i;
+        char buf[100];
+    };
+    Homa::ObjectPool<Foo> pool;
+    Foo* foo[0xFFFF + 1];
+    for (int i = 0; i < 0xFFFF + 1; ++i) {
+        foo[i] = pool.construct();
+    }
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        pool.destroy(foo[i & 0xFFFF]);
+        foo[i & 0xFFFF] = pool.construct();
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < 0xFFFF + 1; ++i) {
+        pool.destroy(foo[i]);
+    }
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
 }
 
 TestInfo listSearchTestInfo = {
@@ -381,6 +446,75 @@ dequePushPopTest()
     return PerfUtils::Cycles::toSeconds(stop - start) / (2 * count);
 }
 
+TestInfo vectorConstructInfo = {
+    "vectorConstruct", "Construct an std::vector",
+    R"(Measure the cost of constructing (and destructing) an std::vector.)"};
+double
+vectorConstruct()
+{
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        std::vector<uint64_t> vector;
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
+}
+
+TestInfo vectorReserveTestInfo = {
+    "vectorReserve", "Reserve capacity in an std::vector",
+    R"(Measure the cost of reserving capacity an std::vector.)"};
+double
+vectorReserveTest()
+{
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        std::vector<uint64_t> vector;
+        vector.reserve(32);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
+}
+
+TestInfo vectorPushTestInfo = {
+    "vectorPush", "std::vector push",
+    R"(Measure the cost of pushing a new element to an std::vector.)"};
+double
+vectorPushTest()
+{
+    std::vector<uint64_t> vector;
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        vector.push_back(i);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
+}
+
+TestInfo vectorPushPopTestInfo = {
+    "vectorPushPop", "std::vector operations",
+    R"(Measure the cost of pushing/popping an element to/from an std::vector.)"};
+double
+vectorPushPopTest()
+{
+    std::vector<uint64_t> vector;
+    for (int i = 0; i < 10000; ++i) {
+        vector.push_back(std::rand());
+    }
+
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        uint64_t temp = vector.back();
+        vector.pop_back();
+        vector.push_back(temp);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (2 * count);
+}
+
 TestInfo listConstructInfo = {
     "listConstruct", "Construct an std::list",
     R"(Measure the cost of constructing (and destructing) an std::list.)"};
@@ -391,6 +525,22 @@ listConstruct()
     uint64_t start = PerfUtils::Cycles::rdtscp();
     for (int i = 0; i < count; i++) {
         std::list<uint64_t> list;
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
+}
+
+TestInfo listPushTestInfo = {
+    "listPush", "std::list push",
+    R"(Measure the cost of pushing a new element to an std::list.)"};
+double
+listPushTest()
+{
+    std::list<uint64_t> list;
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        list.push_back(i);
     }
     uint64_t stop = PerfUtils::Cycles::rdtscp();
     return PerfUtils::Cycles::toSeconds(stop - start) / (count);
@@ -415,6 +565,64 @@ listPushPopTest()
         list.push_back(temp);
     }
     uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (2 * count);
+}
+
+TestInfo ilistConstructInfo = {
+    "ilistConstruct", "Construct an Intrusive::list",
+    R"(Measure the cost of constructing (and destructing) an Intrusive::list.)"};
+double
+ilistConstruct()
+{
+    struct Foo {
+        Foo()
+            : node(this)
+        {}
+
+        Homa::Core::Intrusive::List<Foo>::Node node;
+    };
+
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        Homa::Core::Intrusive::List<Foo> list;
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    return PerfUtils::Cycles::toSeconds(stop - start) / (count);
+}
+
+TestInfo ilistPushPopTestInfo = {
+    "ilistPushPop", "Intrusive::list operations",
+    R"(Measure the cost of pushing/popping an element to/from an Intrusive::list.)"};
+double
+ilistPushPopTest()
+{
+    struct Foo {
+        Foo()
+            : node(this)
+        {}
+
+        Homa::Core::Intrusive::List<Foo>::Node node;
+    };
+
+    Homa::Core::Intrusive::List<Foo> list;
+    for (int i = 0; i < 10000; ++i) {
+        Foo* foo = new Foo;
+        list.push_back(&foo->node);
+    }
+    int count = 1000000;
+    uint64_t start = PerfUtils::Cycles::rdtscp();
+    for (int i = 0; i < count; i++) {
+        Foo* foo = &list.front();
+        list.pop_front();
+        list.push_front(&foo->node);
+    }
+    uint64_t stop = PerfUtils::Cycles::rdtscp();
+    while (!list.empty()) {
+        Foo* foo = &list.front();
+        list.pop_front();
+        delete foo;
+    }
     return PerfUtils::Cycles::toSeconds(stop - start) / (2 * count);
 }
 
@@ -527,14 +735,23 @@ TestCase tests[] = {
     {atomicIncUnsafeTest, &atomicIncUnsafeTestInfo},
     {branchTest, &branchTestInfo},
     {intReadWriteTest, &intReadWriteTestInfo},
+    {defaultAllocatorTest, &defaultAllocatorTestInfo},
+    {objectPoolTest, &objectPoolTestInfo},
     {listSearchTest, &listSearchTestInfo},
     {mapFindTest, &mapFindTestInfo},
     {mapLookupTest, &mapLookupTestInfo},
     {mapNullInsertTest, &mapNullInsertTestInfo},
     {dequeConstruct, &dequeConstructInfo},
     {dequePushPopTest, &dequePushPopTestInfo},
+    {vectorConstruct, &vectorConstructInfo},
+    {vectorReserveTest, &vectorReserveTestInfo},
+    {vectorPushTest, &vectorPushTestInfo},
+    {vectorPushPopTest, &vectorPushPopTestInfo},
     {listConstruct, &listConstructInfo},
+    {listPushTest, &listPushTestInfo},
     {listPushPopTest, &listPushPopTestInfo},
+    {ilistConstruct, &ilistConstructInfo},
+    {ilistPushPopTest, &ilistPushPopTestInfo},
     {heapTest, &heapTestInfo},
     {queueEstimatorTest, &queueEstimatorTestInfo},
     {rdtscTest, &rdtscTestInfo},
