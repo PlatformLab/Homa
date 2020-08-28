@@ -1031,8 +1031,8 @@ Sender::trySend()
      */
     SpinLock::UniqueLock lock_queue(queueMutex);
     uint32_t queuedBytesEstimate = driver->getQueuedBytes();
-    std::array<Protocol::MessageId, 32> sentMessageIds;
-    std::size_t messagesSent = 0;
+    std::vector<Protocol::MessageId> sentMessageIds;
+    sentMessageIds.reserve(32);
     // Optimistically assume we will finish sending every granted packet this
     // round; we will set again sendReady if it turns out we don't finish.
     sendReady = false;
@@ -1071,19 +1071,9 @@ Sender::trySend()
         }
         if (info->packetsSent >= info->packets->numPackets) {
             // We have finished sending the message.
-            sentMessageIds[messagesSent++] = info->id;
+            sentMessageIds.push_back(info->id);
             message.state.store(OutMessage::Status::SENT);
             it = sendQueue.remove(it);
-            if (messagesSent >= sentMessageIds.size()) {
-                // We've reached the maximum number of sent messages we can
-                // track. If this happens frequently, the size of sentMessageIds
-                // should be increased.
-                NOTICE(
-                    "Max sent messages per poll reached; the limit should be "
-                    "increased if this occurs frequently");
-                sendReady = true;
-                break;
-            }
         } else if (info->packetsSent >= info->packetsGranted) {
             // We have sent every granted packet.
             ++it;
@@ -1099,8 +1089,7 @@ Sender::trySend()
     // Unlock the queueMutex to process any SENT messages to ensure any bucket
     // mutex is always acquired before the send queueMutex.
     lock_queue.unlock();
-    for (std::size_t i = 0; i < messagesSent; ++i) {
-        Protocol::MessageId msgId = sentMessageIds[i];
+    for (Protocol::MessageId& msgId : sentMessageIds) {
         MessageBucket* bucket = messageBuckets.getBucket(msgId);
         SpinLock::Lock lock(bucket->mutex);
         Message* message = bucket->findMessage(msgId, lock);
