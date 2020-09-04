@@ -157,7 +157,6 @@ class DpdkDriver::Impl {
   private:
     void _eal_init(int argc, char* argv[]);
     void _init();
-    Packet* _allocMbufPacket();
     static uint16_t txBurstCallback(uint16_t port_id, uint16_t queue,
                                     struct rte_mbuf* pkts[], uint16_t nb_pkts,
                                     void* user_param);
@@ -193,6 +192,9 @@ class DpdkDriver::Impl {
 
     /// Provides memory allocation for packet storage when mbuf are running out.
     ObjectPool<OverflowBuffer> overflowBufferPool;
+
+    /// The number of mbufs that have been given out to callers in Packets.
+    uint64_t mbufsOutstanding;
 
     /// Holds packet buffers that are dequeued from the NIC's HW queues
     /// via DPDK.
