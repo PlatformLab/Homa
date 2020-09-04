@@ -978,6 +978,16 @@ Sender::checkPingTimeouts(uint64_t now, MessageBucket* bucket)
             bucket->pingTimeouts.setTimeout(&message->pingTimeout);
         }
 
+        // Check if sender still has packets to send
+        if (message->state.load() == OutMessage::Status::IN_PROGRESS) {
+            SpinLock::Lock lock_queue(queueMutex);
+            QueuedMessageInfo* info = &message->queuedMessageInfo;
+            if (info->packetsSent < info->packetsGranted) {
+                // Sender is blocked on itself, no need to send ping
+                continue;
+            }
+        }
+
         // Have not heard from the Receiver in the last timeout period. Ping
         // the receiver to ensure it still knows about this Message.
         Perf::counters.tx_ping_pkts.add(1);
