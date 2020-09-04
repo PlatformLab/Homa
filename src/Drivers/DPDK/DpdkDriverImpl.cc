@@ -192,9 +192,32 @@ DpdkDriver::Impl::addressToWireFormat(const Driver::Address address,
 DpdkDriver::Impl::Packet*
 DpdkDriver::Impl::allocPacket()
 {
-    DpdkDriver::Impl::Packet* packet = _allocMbufPacket();
-    if (unlikely(packet == nullptr)) {
-        SpinLock::Lock lock(packetLock);
+    DpdkDriver::Impl::Packet* packet = nullptr;
+    SpinLock::Lock lock(packetLock);
+    static const int MBUF_ALLOC_LIMIT = NB_MBUF - NB_MBUF_RESERVED;
+    if (mbufsOutstanding < MBUF_ALLOC_LIMIT) {
+        struct rte_mbuf* mbuf = rte_pktmbuf_alloc(mbufPool);
+        if (unlikely(NULL == mbuf)) {
+            uint32_t numMbufsAvail = rte_mempool_avail_count(mbufPool);
+            uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
+            NOTICE(
+                "Failed to allocate an mbuf packet buffer; "
+                "%u mbufs available, %u mbufs in use",
+                numMbufsAvail, numMbufsInUse);
+        } else {
+            char* buf = rte_pktmbuf_append(
+                mbuf, Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN +
+                                                     MAX_PAYLOAD_SIZE));
+            if (unlikely(NULL == buf)) {
+                NOTICE("rte_pktmbuf_append call failed; dropping packet");
+                rte_pktmbuf_free(mbuf);
+            } else {
+                packet = packetPool.construct(mbuf, buf + PACKET_HDR_LEN);
+                mbufsOutstanding++;
+            }
+        }
+    }
+    if (packet == nullptr) {
         OverflowBuffer* buf = overflowBufferPool.construct();
         packet = packetPool.construct(buf);
         NOTICE("OverflowBuffer used.");
@@ -398,6 +421,7 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
         {
             SpinLock::Lock lock(packetLock);
             packet = packetPool.construct(m, payload);
+            mbufsOutstanding++;
         }
         packet->address = MacAddress(ethHdr->s_addr.addr_bytes).toAddress();
         packet->length = length;
@@ -418,6 +442,7 @@ DpdkDriver::Impl::releasePackets(Driver::Packet* packets[], uint16_t numPackets)
             static_cast<DpdkDriver::Impl::Packet*>(packets[i]);
         if (likely(packet->bufType == DpdkDriver::Impl::Packet::MBUF)) {
             rte_pktmbuf_free(packet->bufRef.mbuf);
+            mbufsOutstanding--;
         } else {
             overflowBufferPool.destroy(packet->bufRef.overflowBuf);
         }
@@ -642,57 +667,6 @@ DpdkDriver::Impl::_init()
 
     NOTICE("DpdkDriver address: %s, bandwidth: %d Mbits/sec, MTU: %u",
            localMac.toString().c_str(), bandwidthMbps.load(), mtu);
-}
-
-/**
- * Helper function to try to allocation a new Dpdk Packet backed by an mbuf.
- *
- * @return
- *      The newly allocated Dpdk Packet; nullptr if the mbuf allocation
- * failed.
- */
-DpdkDriver::Impl::Packet*
-DpdkDriver::Impl::_allocMbufPacket()
-{
-    DpdkDriver::Impl::Packet* packet = nullptr;
-    uint32_t numMbufsAvail = rte_mempool_avail_count(mbufPool);
-    if (unlikely(numMbufsAvail <= NB_MBUF_RESERVED)) {
-        uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
-        NOTICE(
-            "Driver is running low on mbuf packet buffers; "
-            "%u mbufs available, %u mbufs in use",
-            numMbufsAvail, numMbufsInUse);
-        return nullptr;
-    }
-
-    struct rte_mbuf* mbuf = rte_pktmbuf_alloc(mbufPool);
-
-    if (unlikely(NULL == mbuf)) {
-        uint32_t numMbufsAvail = rte_mempool_avail_count(mbufPool);
-        uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
-        NOTICE(
-            "Failed to allocate an mbuf packet buffer; "
-            "%u mbufs available, %u mbufs in use",
-            numMbufsAvail, numMbufsInUse);
-        return nullptr;
-    }
-
-    char* buf = rte_pktmbuf_append(
-        mbuf,
-        Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN + MAX_PAYLOAD_SIZE));
-
-    if (unlikely(NULL == buf)) {
-        NOTICE("rte_pktmbuf_append call failed; dropping packet");
-        rte_pktmbuf_free(mbuf);
-        return nullptr;
-    }
-
-    // Perform packet operations with the lock held.
-    {
-        SpinLock::Lock _(packetLock);
-        packet = packetPool.construct(mbuf, buf + PACKET_HDR_LEN);
-    }
-    return packet;
 }
 
 /**
