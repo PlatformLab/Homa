@@ -1591,6 +1591,7 @@ TEST_F(SenderTest, checkMessageTimeouts)
     // Message[0]: Normal timeout: IN_PROGRESS
     message[0]->messageTimeout.expirationCycleTime = 9998;
     message[0]->state = Homa::OutMessage::Status::IN_PROGRESS;
+    sender->sendQueue.push_front(&message[0]->queuedMessageInfo.sendQueueNode);
     // Message[1]: Normal timeout: SENT
     message[1]->messageTimeout.expirationCycleTime = 9999;
     message[1]->state = Homa::OutMessage::Status::SENT;
@@ -1611,6 +1612,7 @@ TEST_F(SenderTest, checkMessageTimeouts)
     EXPECT_EQ(nullptr, message[0]->messageTimeout.node.list);
     EXPECT_EQ(nullptr, message[0]->pingTimeout.node.list);
     EXPECT_EQ(Homa::OutMessage::Status::FAILED, message[0]->getStatus());
+    EXPECT_TRUE(sender->sendQueue.empty());
     // Message[1]: Normal timeout: SENT
     EXPECT_EQ(nullptr, message[1]->messageTimeout.node.list);
     EXPECT_EQ(nullptr, message[1]->pingTimeout.node.list);

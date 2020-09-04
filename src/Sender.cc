@@ -928,6 +928,16 @@ Sender::checkMessageTimeouts(uint64_t now, MessageBucket* bucket)
         }
         // Found expired timeout.
         if (message->state != OutMessage::Status::COMPLETED) {
+            if (message->state == OutMessage::Status::IN_PROGRESS) {
+                // Check to see if the message needs to be dequeued.
+                SpinLock::Lock lock_queue(queueMutex);
+                // Recheck state with lock in case it change right before this.
+                if (message->state == OutMessage::Status::IN_PROGRESS) {
+                    QueuedMessageInfo* info = &message->queuedMessageInfo;
+                    assert(sendQueue.contains(&info->sendQueueNode));
+                    sendQueue.remove(&info->sendQueueNode);
+                }
+            }
             message->state.store(OutMessage::Status::FAILED);
         }
         bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
