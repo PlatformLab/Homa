@@ -38,6 +38,27 @@ struct Stats {
     /// CPU time spent running Homa with no work to do in cycles.
     uint64_t idle_cycles;
 
+    /// Number of InMessages that have been allocated by the Transport.
+    uint64_t allocated_rx_messages;
+
+    /// Number of InMessages that have been received by the Transport.
+    uint64_t received_rx_messages;
+
+    /// Number of InMessages delivered to the application.
+    uint64_t delivered_rx_messages;
+
+    /// Number of InMessages released back to the Transport for destruction.
+    uint64_t destroyed_rx_messages;
+
+    /// Number of OutMessages allocated for the application.
+    uint64_t allocated_tx_messages;
+
+    /// Number of OutMessages released back to the transport.
+    uint64_t released_tx_messages;
+
+    /// Number of OutMessages destroyed.
+    uint64_t destroyed_tx_messages;
+
     /// Number of bytes sent by the transport.
     uint64_t tx_bytes;
 
