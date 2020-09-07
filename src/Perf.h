@@ -80,6 +80,13 @@ struct Counters {
     Counters()
         : total_cycles(0)
         , active_cycles(0)
+        , allocated_rx_messages(0)
+        , received_rx_messages(0)
+        , delivered_rx_messages(0)
+        , destroyed_rx_messages(0)
+        , allocated_tx_messages(0)
+        , released_tx_messages(0)
+        , destroyed_tx_messages(0)
         , tx_bytes(0)
         , rx_bytes(0)
         , tx_data_pkts(0)
@@ -112,6 +119,13 @@ struct Counters {
     {
         total_cycles.add(other->total_cycles);
         active_cycles.add(other->active_cycles);
+        allocated_rx_messages.add(other->allocated_rx_messages);
+        received_rx_messages.add(other->received_rx_messages);
+        delivered_rx_messages.add(other->delivered_rx_messages);
+        destroyed_rx_messages.add(other->destroyed_rx_messages);
+        allocated_tx_messages.add(other->allocated_tx_messages);
+        released_tx_messages.add(other->released_tx_messages);
+        destroyed_tx_messages.add(other->destroyed_tx_messages);
         tx_bytes.add(other->tx_bytes);
         rx_bytes.add(other->rx_bytes);
         tx_data_pkts.add(other->tx_data_pkts);
@@ -139,6 +153,13 @@ struct Counters {
     {
         stats->active_cycles = active_cycles.get();
         stats->idle_cycles = total_cycles.get() - active_cycles.get();
+        stats->allocated_rx_messages = allocated_rx_messages.get();
+        stats->received_rx_messages = received_rx_messages.get();
+        stats->delivered_rx_messages = delivered_rx_messages.get();
+        stats->destroyed_rx_messages = destroyed_rx_messages.get();
+        stats->allocated_tx_messages = allocated_tx_messages.get();
+        stats->released_tx_messages = released_tx_messages.get();
+        stats->destroyed_tx_messages = destroyed_tx_messages.get();
         stats->tx_bytes = tx_bytes.get();
         stats->rx_bytes = rx_bytes.get();
         stats->tx_data_pkts = tx_data_pkts.get();
@@ -164,6 +185,27 @@ struct Counters {
 
     /// CPU time spent actively processing Homa messages in cycles.
     Stat<uint64_t> active_cycles;
+
+    /// Number of InMessages that have been allocated by the Transport.
+    Stat<uint64_t> allocated_rx_messages;
+
+    /// Number of InMessages that have been received by the Transport.
+    Stat<uint64_t> received_rx_messages;
+
+    /// Number of InMessages delivered to the application.
+    Stat<uint64_t> delivered_rx_messages;
+
+    /// Number of InMessages released back to the Transport for destruction.
+    Stat<uint64_t> destroyed_rx_messages;
+
+    /// Number of OutMessages allocated for the application.
+    Stat<uint64_t> allocated_tx_messages;
+
+    /// Number of OutMessages released back to the transport.
+    Stat<uint64_t> released_tx_messages;
+
+    /// Number of OutMessages destroyed.
+    Stat<uint64_t> destroyed_tx_messages;
 
     /// Number of bytes sent by the transport.
     Stat<uint64_t> tx_bytes;
