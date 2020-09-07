@@ -107,6 +107,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
             message = messageAllocator.pool.construct(
                 this, driver, dataHeaderLength, messageLength, id, srcAddress,
                 numUnscheduledPackets);
+            Perf::counters.allocated_rx_messages.add(1);
         }
 
         bucket->messages.push_back(&message->bucketNode);
@@ -159,6 +160,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
             bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
             SpinLock::Lock lock_received_messages(receivedMessages.mutex);
             receivedMessages.queue.push_back(&message->receivedMessageNode);
+            Perf::counters.received_rx_messages.add(1);
         }
     } else {
         // must be a duplicate packet; drop packet.
@@ -267,6 +269,7 @@ Receiver::receiveMessage()
     if (!receivedMessages.queue.empty()) {
         message = &receivedMessages.queue.front();
         receivedMessages.queue.pop_front();
+        Perf::counters.delivered_rx_messages.add(1);
     }
     return message;
 }
@@ -497,6 +500,7 @@ Receiver::dropMessage(Receiver::Message* message)
         {
             SpinLock::Lock lock_allocator(messageAllocator.mutex);
             messageAllocator.pool.destroy(message);
+            Perf::counters.destroyed_rx_messages.add(1);
         }
     }
 }

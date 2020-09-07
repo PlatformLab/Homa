@@ -71,6 +71,7 @@ Homa::OutMessage*
 Sender::allocMessage(uint16_t sourcePort)
 {
     SpinLock::Lock lock_allocator(messageAllocator.mutex);
+    Perf::counters.allocated_tx_messages.add(1);
     return messageAllocator.pool.construct(this, sourcePort);
 }
 
@@ -868,6 +869,7 @@ Sender::dropMessage(Sender::Message* message)
     MessageBucket* bucket = messageBuckets.getBucket(msgId);
     SpinLock::Lock lock(bucket->mutex);
     message->held = false;
+    Perf::counters.released_tx_messages.add(1);
     if (message->state != OutMessage::Status::IN_PROGRESS) {
         // Ok to delete immediately since we don't have to wait for the message
         // to be sent.
@@ -876,6 +878,7 @@ Sender::dropMessage(Sender::Message* message)
         bucket->messages.remove(&message->bucketNode);
         SpinLock::Lock lock_allocator(messageAllocator.mutex);
         messageAllocator.pool.destroy(message);
+        Perf::counters.destroyed_tx_messages.add(1);
     } else {
         // Defer deletion and wait for the message to be SENT.
     }
@@ -1108,6 +1111,7 @@ Sender::trySend()
             bucket->messages.remove(&message->bucketNode);
             SpinLock::Lock lock_allocator(messageAllocator.mutex);
             messageAllocator.pool.destroy(message);
+            Perf::counters.destroyed_tx_messages.add(1);
         } else if (message->options & OutMessage::Options::NO_KEEP_ALIVE) {
             // No timeouts need to be checked after sending the message when
             // the NO_KEEP_ALIVE option is enabled.
