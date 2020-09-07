@@ -187,8 +187,8 @@ DpdkDriver::Impl::allocPacket()
             uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
             NOTICE(
                 "Failed to allocate an mbuf packet buffer; "
-                "%u mbufs available, %u mbufs in use",
-                numMbufsAvail, numMbufsInUse);
+                "%u mbufs available, %u mbufs in use, %u mbufs held by app",
+                numMbufsAvail, numMbufsInUse, mbufsOutstanding);
         } else {
             char* buf = rte_pktmbuf_append(
                 mbuf, Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN +
@@ -298,10 +298,14 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet, IpAddress destination,
         struct rte_mbuf* mbuf_clone = rte_pktmbuf_clone(mbuf, mbufPool);
         if (unlikely(mbuf_clone == NULL)) {
             WARNING("Failed to clone packet for loopback; dropping packet");
+            return;
         }
         int ret = rte_ring_enqueue(loopbackRing, mbuf_clone);
         if (unlikely(ret != 0)) {
-            WARNING("rte_ring_enqueue returned %d; packet may be lost?", ret);
+            WARNING(
+                "rte_ring_enqueue returned %d with %u packets queued; "
+                "packet may be lost?",
+                ret, rte_ring_count(loopbackRing));
             rte_pktmbuf_free(mbuf_clone);
         }
         return;
@@ -421,8 +425,15 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
         DpdkDriver::Impl::Packet* packet = nullptr;
         {
             SpinLock::Lock lock(packetLock);
-            packet = packetPool.construct(m, payload);
-            mbufsOutstanding++;
+            static const int MBUF_ALLOC_LIMIT = NB_MBUF - NB_MBUF_RESERVED;
+            if (mbufsOutstanding < MBUF_ALLOC_LIMIT) {
+                packet = packetPool.construct(m, payload);
+                mbufsOutstanding++;
+            } else {
+                OverflowBuffer* buf = overflowBufferPool.construct();
+                rte_memcpy(payload, buf->data, length);
+                packet = packetPool.construct(buf);
+            }
         }
         packet->base.length = length;
 
@@ -656,14 +667,6 @@ DpdkDriver::Impl::_init()
                           "Cannot allocate buffer for tx on port %u", port));
     }
     rte_eth_tx_buffer_init(tx.buffer, MAX_PKT_BURST);
-    ret = rte_eth_tx_buffer_set_err_callback(tx.buffer, txBurstErrorCallback,
-                                             &tx.stats);
-    if (ret < 0) {
-        throw DriverInitFailure(
-            HERE_STR,
-            StringUtil::format(
-                "Cannot set error callback for tx buffer on port %u", port));
-    }
 
     // get the current MTU.
     ret = rte_eth_dev_get_mtu(port, &mtu);
@@ -722,7 +725,8 @@ DpdkDriver::Impl::_init()
 
     // create an in-memory ring, used as a software loopback in order to
     // handle packets that are addressed to the localhost.
-    loopbackRing = rte_ring_create(ringName.c_str(), 4096, SOCKET_ID_ANY, 0);
+    loopbackRing =
+        rte_ring_create(ringName.c_str(), NB_LOOPBACK_SLOTS, SOCKET_ID_ANY, 0);
     if (NULL == loopbackRing) {
         throw DriverInitFailure(
             HERE_STR, StringUtil::format("Failed to allocate loopback ring: %s",
@@ -770,24 +774,6 @@ DpdkDriver::Impl::txBurstCallback(uint16_t port_id, uint16_t queue,
     stats->bufferedBytes -= bytesToSend;
     stats->queueEstimator.signalBytesSent(bytesToSend);
     return nb_pkts;
-}
-
-/**
- * Called to process the packets cannot be sent.
- */
-void
-DpdkDriver::Impl::txBurstErrorCallback(struct rte_mbuf* pkts[], uint16_t unsent,
-                                       void* userdata)
-{
-    uint64_t bytesDropped = 0;
-    for (int i = 0; i < unsent; ++i) {
-        bytesDropped += rte_pktmbuf_pkt_len(pkts[i]);
-        rte_pktmbuf_free(pkts[i]);
-    }
-    Tx::Stats* stats = static_cast<Tx::Stats*>(userdata);
-    SpinLock::Lock lock(stats->mutex);
-    assert(bytesDropped <= stats->bufferedBytes);
-    stats->bufferedBytes -= bytesDropped;
 }
 
 }  // namespace DPDK
