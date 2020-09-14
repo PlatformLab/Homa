@@ -362,26 +362,26 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
     if (maxPackets > MAX_PACKETS_AT_ONCE) {
         maxPackets = MAX_PACKETS_AT_ONCE;
     }
+    uint32_t maxLoopbackPkts = maxPackets / 2;
+
     struct rte_mbuf* mPkts[MAX_PACKETS_AT_ONCE];
 
     // attempt to dequeue a batch of received packets from the NIC
     // as well as from the loopback ring.
-    uint32_t incomingPkts = 0;
     uint32_t loopbackPkts = 0;
+    uint32_t incomingPkts = 0;
     {
         SpinLock::Lock lock(rx.mutex);
 
-        incomingPkts = rte_eth_rx_burst(
-            port, 0, mPkts, Homa::Util::downCast<uint16_t>(maxPackets));
-
         loopbackPkts = rte_ring_count(loopbackRing);
-        if (incomingPkts + loopbackPkts > maxPackets) {
-            loopbackPkts = maxPackets - incomingPkts;
-        }
+        loopbackPkts = std::min(loopbackPkts, maxLoopbackPkts);
         for (uint32_t i = 0; i < loopbackPkts; i++) {
-            rte_ring_dequeue(loopbackRing, reinterpret_cast<void**>(
-                                               &mPkts[incomingPkts + i]));
+            rte_ring_dequeue(loopbackRing, reinterpret_cast<void**>(&mPkts[i]));
         }
+
+        incomingPkts = rte_eth_rx_burst(
+            port, 0, &(mPkts[loopbackPkts]),
+            Homa::Util::downCast<uint16_t>(maxPackets - loopbackPkts));
     }
     uint32_t totalPkts = incomingPkts + loopbackPkts;
 
