@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, Stanford University
+/* Copyright (c) 2019-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -37,10 +37,10 @@ class MockReceiver : public Core::Receiver {
     {}
 
     MOCK_METHOD(void, handleDataPacket,
-                (Driver::Packet* packet, IpAddress sourceIp), (override));
-    MOCK_METHOD(void, handleBusyPacket, (Driver::Packet* packet), (override));
+                (Driver::Packet * packet, IpAddress sourceIp), (override));
+    MOCK_METHOD(void, handleBusyPacket, (Driver::Packet * packet), (override));
     MOCK_METHOD(void, handlePingPacket,
-                (Driver::Packet* packet, IpAddress sourceIp), (override));
+                (Driver::Packet * packet, IpAddress sourceIp), (override));
     MOCK_METHOD(Homa::InMessage*, receiveMessage, (), (override));
     MOCK_METHOD(void, poll, (), (override));
     MOCK_METHOD(uint64_t, checkTimeouts, (), (override));

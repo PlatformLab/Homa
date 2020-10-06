@@ -103,17 +103,15 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
         {
             SpinLock::Lock lock_allocator(messageAllocator.mutex);
             SocketAddress srcAddress = {
-                .ip = sourceIp,
-                .port = be16toh(header->common.prefix.sport)
-            };
+                .ip = sourceIp, .port = be16toh(header->common.prefix.sport)};
             message = messageAllocator.pool.construct(
-                this, driver, dataHeaderLength, messageLength, id,
-                srcAddress, numUnscheduledPackets);
+                this, driver, dataHeaderLength, messageLength, id, srcAddress,
+                numUnscheduledPackets);
         }
 
         bucket->messages.push_back(&message->bucketNode);
-        policyManager->signalNewMessage(message->source.ip,
-                header->policyVersion, header->totalLength);
+        policyManager->signalNewMessage(
+            message->source.ip, header->policyVersion, header->totalLength);
 
         if (message->scheduled) {
             // Message needs to be scheduled.
@@ -244,8 +242,8 @@ Receiver::handlePingPacket(Driver::Packet* packet, IpAddress sourceIp)
         // We are here because we have no knowledge of the message the Sender is
         // asking about.  Reply UNKNOWN so the Sender can react accordingly.
         Perf::counters.tx_unknown_pkts.add(1);
-        ControlPacket::send<Protocol::Packet::UnknownHeader>(
-            driver, sourceIp, id);
+        ControlPacket::send<Protocol::Packet::UnknownHeader>(driver, sourceIp,
+                                                             id);
     }
     driver->releasePackets(&packet, 1);
 }
