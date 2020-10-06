@@ -391,7 +391,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet)
             Perf::counters.tx_data_pkts.add(1);
             Perf::counters.tx_bytes.add(dataPacket->length);
             driver->sendPacket(dataPacket, message->destination.ip,
-                    policy.priority);
+                               policy.priority);
             message->state.store(OutMessage::Status::SENT);
         } else {
             // Otherwise, queue the message to be sent in SRPT order.
@@ -401,7 +401,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet)
             // was first queued.
             assert(info->id == message->id);
             assert(!memcmp(&info->destination, &message->destination,
-                    sizeof(info->destination)));
+                           sizeof(info->destination)));
             assert(info->packets == message);
             // Some values need to be updated
             info->unsentBytes = message->messageLength;

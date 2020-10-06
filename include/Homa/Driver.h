@@ -83,7 +83,7 @@ struct PacketSpec {
 
     /// Number of bytes in the payload.
     int32_t length;
-}  __attribute__((packed));
+} __attribute__((packed));
 static_assert(std::is_trivial<PacketSpec>());
 
 /**
@@ -140,7 +140,7 @@ class Driver {
      *      getHighestPacketPriority().
      */
     virtual void sendPacket(Packet* packet, IpAddress destination,
-            int priority) = 0;
+                            int priority) = 0;
 
     /**
      * Request that the Driver enter the "corked" mode where outbound packets
@@ -170,12 +170,12 @@ class Driver {
      *
      * @param maxPackets
      *      The maximum number of Packet objects that should be returned by
-     * this method.
+     *      this method.
      * @param[out] receivedPackets
      *      Received packets are appended to this array in order of arrival.
      * @param[out] sourceAddresses
      *      Source IP addresses of the received packets are appended to this
-     * array in order of arrival.
+     *      array in order of arrival.
      *
      * @return
      *      Number of Packet objects being returned.

@@ -65,8 +65,7 @@ struct FakePacket {
      * FakePacket constructor.
      */
     explicit FakePacket()
-        : base{.payload = buf,
-               .length = 0}
+        : base{.payload = buf, .length = 0}
         , buf()
         , sourceIp()
     {}
@@ -75,8 +74,7 @@ struct FakePacket {
      * Copy constructor.
      */
     FakePacket(const FakePacket& other)
-        : base{.payload = buf,
-               .length = other.base.length}
+        : base{.payload = buf, .length = other.base.length}
         , buf()
         , sourceIp()
     {
@@ -112,7 +110,8 @@ class FakeDriver : public Driver {
     virtual ~FakeDriver();
 
     virtual Packet* allocPacket();
-    virtual void sendPacket(Packet* packet, IpAddress destination, int priority);
+    virtual void sendPacket(Packet* packet, IpAddress destination,
+                            int priority);
     virtual uint32_t receivePackets(uint32_t maxPackets,
                                     Packet* receivedPackets[],
                                     IpAddress sourceAddresses[]);

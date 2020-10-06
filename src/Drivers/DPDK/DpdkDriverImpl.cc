@@ -17,19 +17,19 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <fstream>
-#include <sys/ioctl.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
+#include <fstream>
 
 #include "DpdkDriverImpl.h"
 
 #include <rte_malloc.h>
 
 #include "CodeLocation.h"
-#include "StringUtil.h"
 #include "Homa/Util.h"
+#include "StringUtil.h"
 
 namespace Homa {
 
@@ -51,8 +51,7 @@ const char* default_eal_argv[] = {"homa", NULL};
  *      Memory location in the mbuf where the packet data should be stored.
  */
 DpdkDriver::Impl::Packet::Packet(struct rte_mbuf* mbuf, void* data)
-    : base {.payload = data,
-            .length = 0}
+    : base{.payload = data, .length = 0}
     , bufType(MBUF)
     , bufRef()
 {
@@ -66,8 +65,7 @@ DpdkDriver::Impl::Packet::Packet(struct rte_mbuf* mbuf, void* data)
  *      Overflow buffer that holds this packet.
  */
 DpdkDriver::Impl::Packet::Packet(OverflowBuffer* overflowBuf)
-    : base {.payload = overflowBuf->data,
-            .length = 0}
+    : base{.payload = overflowBuf->data, .length = 0}
     , bufType(OVERFLOW_BUF)
     , bufRef()
 {
@@ -212,7 +210,8 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet, IpAddress destination,
                 numMbufsAvail, numMbufsInUse);
             return;
         }
-        char* buf = rte_pktmbuf_append(mbuf,
+        char* buf = rte_pktmbuf_append(
+            mbuf,
             Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN + pkt->base.length));
         if (unlikely(NULL == buf)) {
             WARNING("rte_pktmbuf_append call failed; dropping packet");
@@ -506,9 +505,10 @@ DpdkDriver::Impl::_init()
         char mask[100];
         char dev[100];
         int type, flags;
-        int cols = sscanf(line.c_str(), "%s 0x%x 0x%x %99s %99s %99s\n",
-                ip, &type, &flags, hwa, mask, dev);
-        if (cols != 6) continue;
+        int cols = sscanf(line.c_str(), "%s 0x%x 0x%x %99s %99s %99s\n", ip,
+                          &type, &flags, hwa, mask, dev);
+        if (cols != 6)
+            continue;
         arpTable.emplace(IpAddress::fromString(ip), hwa);
     }
 
@@ -517,28 +517,32 @@ DpdkDriver::Impl::_init()
     ifname.copy(ifr.ifr_name, ifname.length());
     ifr.ifr_name[ifname.length() + 1] = 0;
     if (ifname.length() >= sizeof(ifr.ifr_name)) {
-        throw DriverInitFailure(HERE_STR,
+        throw DriverInitFailure(
+            HERE_STR,
             StringUtil::format("Interface name %s too long", ifname.c_str()));
     }
 
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd == -1) {
-        throw DriverInitFailure(HERE_STR,
+        throw DriverInitFailure(
+            HERE_STR,
             StringUtil::format("Failed to create socket: %s", strerror(errno)));
     }
 
     if (ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
         char* error = strerror(errno);
         close(fd);
-        throw DriverInitFailure(HERE_STR,
+        throw DriverInitFailure(
+            HERE_STR,
             StringUtil::format("Failed to obtain IP address: %s", error));
     }
-    localIp = {be32toh(((struct sockaddr_in*) &ifr.ifr_addr)->sin_addr.s_addr)};
+    localIp = {be32toh(((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr.s_addr)};
 
     if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
         char* error = strerror(errno);
         close(fd);
-        throw DriverInitFailure(HERE_STR,
+        throw DriverInitFailure(
+            HERE_STR,
             StringUtil::format("Failed to obtain MAC address: %s", error));
     }
     close(fd);
@@ -546,7 +550,8 @@ DpdkDriver::Impl::_init()
 
     // Iterate over ethernet devices to locate the port identifier.
     int p;
-    RTE_ETH_FOREACH_DEV(p) {
+    RTE_ETH_FOREACH_DEV(p)
+    {
         struct ether_addr mac;
         rte_eth_macaddr_get(p, &mac);
         if (MacAddress(mac.addr_bytes) == localMac) {
@@ -554,9 +559,9 @@ DpdkDriver::Impl::_init()
             break;
         }
     }
-    NOTICE("Using interface %s, ip %s, mac %s, port %u",
-        ifname.c_str(), IpAddress::toString(localIp).c_str(),
-        localMac.toString().c_str(), port);
+    NOTICE("Using interface %s, ip %s, mac %s, port %u", ifname.c_str(),
+           IpAddress::toString(localIp).c_str(), localMac.toString().c_str(),
+           port);
 
     std::string poolName = StringUtil::format("homa_mbuf_pool_%u", port);
     std::string ringName = StringUtil::format("homa_loopback_ring_%u", port);

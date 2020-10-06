@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, Stanford University
+/* Copyright (c) 2019-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -38,12 +38,13 @@ class MockSender : public Core::Sender {
     {}
 
     MOCK_METHOD(Homa::OutMessage*, allocMessage, (uint16_t sport), (override));
-    MOCK_METHOD(void, handleDonePacket, (Driver::Packet* packet), (override));
-    MOCK_METHOD(void, handleGrantPacket, (Driver::Packet* packet), (override));
-    MOCK_METHOD(void, handleResendPacket, (Driver::Packet* packet), (override));
-    MOCK_METHOD(void, handleUnknownPacket, (Driver::Packet* packet),
+    MOCK_METHOD(void, handleDonePacket, (Driver::Packet * packet), (override));
+    MOCK_METHOD(void, handleGrantPacket, (Driver::Packet * packet), (override));
+    MOCK_METHOD(void, handleResendPacket, (Driver::Packet * packet),
                 (override));
-    MOCK_METHOD(void, handleErrorPacket, (Driver::Packet* packet), (override));
+    MOCK_METHOD(void, handleUnknownPacket, (Driver::Packet * packet),
+                (override));
+    MOCK_METHOD(void, handleErrorPacket, (Driver::Packet * packet), (override));
     MOCK_METHOD(void, poll, (), (override));
     MOCK_METHOD(uint64_t, checkTimeouts, (), (override));
 };

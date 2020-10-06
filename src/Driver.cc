@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, Stanford University
+/* Copyright (c) 2018-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -23,8 +23,8 @@ std::string
 IpAddress::toString(IpAddress address)
 {
     uint32_t ip = address.addr;
-    return StringUtil::format("%d.%d.%d.%d",
-        (ip >> 24) & 0xff, (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff);
+    return StringUtil::format("%d.%d.%d.%d", (ip >> 24) & 0xff,
+                              (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff);
 }
 
 IpAddress
