@@ -116,8 +116,9 @@ enum Opcode {
  * protocol version before interpreting the rest of the packet.
  */
 struct HeaderPrefix {
-    uint16_t sport, dport;///< Transport layer (L4) source and destination ports
-                          ///< in network byte order; only used by DataHeader.
+    uint16_t sport,
+        dport;        ///< Transport layer (L4) source and destination ports
+                      ///< in network byte order; only used by DataHeader.
     uint8_t version;  ///< The version of the protocol being used by this
                       ///< packet.
 

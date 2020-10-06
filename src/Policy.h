@@ -77,8 +77,7 @@ class Manager {
     virtual Scheduled getScheduledPolicy();
     virtual Unscheduled getUnscheduledPolicy(const IpAddress destination,
                                              const uint32_t messageLength);
-    virtual void signalNewMessage(const IpAddress source,
-                                  uint8_t policyVersion,
+    virtual void signalNewMessage(const IpAddress source, uint8_t policyVersion,
                                   uint32_t messageLength);
     virtual void poll();
 
