@@ -15,8 +15,6 @@
 
 #include "Perf.h"
 
-#include <PerfUtils/Cycles.h>
-
 #include <mutex>
 #include <unordered_set>
 

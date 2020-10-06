@@ -17,7 +17,7 @@
 #define HOMA_PERF_H
 
 #include <Homa/Perf.h>
-#include <PerfUtils/Cycles.h>
+#include <Cycles.h>
 
 #include <atomic>
 
