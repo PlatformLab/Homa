@@ -353,6 +353,17 @@ TEST_F(ReceiverTest, poll)
     receiver->poll();
 }
 
+TEST_F(ReceiverTest, checkTimeouts)
+{
+    Receiver::MessageBucket* bucket = receiver->messageBuckets.buckets.at(0);
+
+    EXPECT_EQ(0, receiver->nextBucketIndex.load());
+
+    receiver->checkTimeouts();
+
+    EXPECT_EQ(1, receiver->nextBucketIndex.load());
+}
+
 TEST_F(ReceiverTest, Message_destructor_basic)
 {
     Protocol::MessageId id = {42, 32};
@@ -827,17 +838,6 @@ TEST_F(ReceiverTest, checkResendTimeouts)
 
     // Message[2]: No timeout
     EXPECT_EQ(10001, message[2]->resendTimeout.expirationCycleTime);
-}
-
-TEST_F(ReceiverTest, checkTimeouts)
-{
-    Receiver::MessageBucket* bucket = receiver->messageBuckets.buckets.at(0);
-
-    EXPECT_EQ(0, receiver->nextBucketIndex.load());
-
-    receiver->checkTimeouts();
-
-    EXPECT_EQ(1, receiver->nextBucketIndex.load());
 }
 
 TEST_F(ReceiverTest, trySendGrants)
