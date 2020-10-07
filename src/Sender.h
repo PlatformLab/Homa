@@ -54,6 +54,7 @@ class Sender {
     virtual void handleUnknownPacket(Driver::Packet* packet);
     virtual void handleErrorPacket(Driver::Packet* packet);
     virtual void poll();
+    virtual void checkTimeouts();
 
   private:
     /// Forward declarations
@@ -403,7 +404,6 @@ class Sender {
     void dropMessage(Sender::Message* message);
     void checkMessageTimeouts(uint64_t now, MessageBucket* bucket);
     void checkPingTimeouts(uint64_t now, MessageBucket* bucket);
-    void checkTimeouts();
     void trySend();
 
     /// Transport identifier.
