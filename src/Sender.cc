@@ -518,6 +518,22 @@ Sender::poll()
 }
 
 /**
+ * Make incremental progress processing expired Sender timeouts.
+ *
+ * Pulled out of poll() for ease of testing.
+ */
+void
+Sender::checkTimeouts()
+{
+    uint index = nextBucketIndex.fetch_add(1, std::memory_order_relaxed) &
+                 MessageBucketMap::HASH_KEY_MASK;
+    MessageBucket* bucket = messageBuckets.buckets.at(index);
+    uint64_t now = PerfUtils::Cycles::rdtsc();
+    checkPingTimeouts(now, bucket);
+    checkMessageTimeouts(now, bucket);
+}
+
+/**
  * Destruct a Message. Will release all contained Packet objects.
  */
 Sender::Message::~Message()
@@ -991,22 +1007,6 @@ Sender::checkPingTimeouts(uint64_t now, MessageBucket* bucket)
         ControlPacket::send<Protocol::Packet::PingHeader>(
             message->driver, message->destination.ip, message->id);
     }
-}
-
-/**
- * Process any Sender timeouts that have expired.
- *
- * Pulled out of poll() for ease of testing.
- */
-void
-Sender::checkTimeouts()
-{
-    uint index = nextBucketIndex.fetch_add(1, std::memory_order_relaxed) &
-                 MessageBucketMap::HASH_KEY_MASK;
-    MessageBucket* bucket = messageBuckets.buckets.at(index);
-    uint64_t now = PerfUtils::Cycles::rdtsc();
-    checkPingTimeouts(now, bucket);
-    checkMessageTimeouts(now, bucket);
 }
 
 /**
