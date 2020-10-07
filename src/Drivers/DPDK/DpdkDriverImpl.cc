@@ -17,15 +17,15 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <net/if.h>
-#include <netinet/in.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-#include <fstream>
-
 #include "DpdkDriverImpl.h"
 
+#include <net/if.h>
+#include <netinet/in.h>
 #include <rte_malloc.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#include <fstream>
 
 #include "CodeLocation.h"
 #include "Homa/Util.h"
@@ -97,6 +97,7 @@ DpdkDriver::Impl::Impl(const char* ifname, int argc, char* argv[],
     , packetLock()
     , packetPool()
     , overflowBufferPool()
+    , mbufsOutstanding(0)
     , mbufPool(nullptr)
     , loopbackRing(nullptr)
     , rx()
