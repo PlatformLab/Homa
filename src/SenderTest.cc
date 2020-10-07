@@ -1087,6 +1087,17 @@ TEST_F(SenderTest, poll)
     sender->poll();
 }
 
+TEST_F(SenderTest, checkTimeouts)
+{
+    Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
+
+    EXPECT_EQ(0, sender->nextBucketIndex.load());
+
+    sender->checkTimeouts();
+
+    EXPECT_EQ(1, sender->nextBucketIndex.load());
+}
+
 TEST_F(SenderTest, Message_destructor)
 {
     const int MAX_RAW_PACKET_LENGTH = 2000;
@@ -1700,17 +1711,6 @@ TEST_F(SenderTest, checkPingTimeouts)
     EXPECT_EQ(message[4]->id, header->messageId);
     // Message[5]: No timeout
     EXPECT_EQ(10001, message[5]->pingTimeout.expirationCycleTime);
-}
-
-TEST_F(SenderTest, checkTimeouts)
-{
-    Sender::MessageBucket* bucket = sender->messageBuckets.buckets.at(0);
-
-    EXPECT_EQ(0, sender->nextBucketIndex.load());
-
-    sender->checkTimeouts();
-
-    EXPECT_EQ(1, sender->nextBucketIndex.load());
 }
 
 TEST_F(SenderTest, trySend_basic)
