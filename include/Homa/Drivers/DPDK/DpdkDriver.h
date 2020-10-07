@@ -119,7 +119,7 @@ class DpdkDriver : public Driver {
     virtual ~DpdkDriver();
 
     /// See Driver::allocPacket()
-    virtual Packet* allocPacket();
+    virtual Packet allocPacket();
 
     /// See Driver::sendPacket()
     virtual void sendPacket(Packet* packet, IpAddress destination,
@@ -133,11 +133,11 @@ class DpdkDriver : public Driver {
 
     /// See Driver::receivePackets()
     virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    Packet* receivedPackets[],
+                                    Packet receivedPackets[],
                                     IpAddress sourceAddresses[]);
 
     /// See Driver::releasePackets()
-    virtual void releasePackets(Packet* packets[], uint16_t numPackets);
+    virtual void releasePackets(Packet packets[], uint16_t numPackets);
 
     /// See Driver::getHighestPacketPriority()
     virtual int getHighestPacketPriority();

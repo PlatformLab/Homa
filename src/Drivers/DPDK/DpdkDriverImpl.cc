@@ -43,33 +43,46 @@ const int default_eal_argc = 1;
 const char* default_eal_argv[] = {"homa", NULL};
 
 /**
- * Construct a DPDK Packet backed by a DPDK mbuf.
+ * Construct a DPDK PacketBuf backed by a DPDK mbuf.
  *
  * @param mbuf
  *      Pointer to the DPDK mbuf that holds this packet.
  * @param data
  *      Memory location in the mbuf where the packet data should be stored.
  */
-DpdkDriver::Impl::Packet::Packet(struct rte_mbuf* mbuf, void* data)
-    : base{.payload = data, .length = 0}
+DpdkDriver::Impl::PacketBuf::PacketBuf(struct rte_mbuf* mbuf, void* data)
+    : payload(data)
     , bufType(MBUF)
-    , bufRef()
-{
-    bufRef.mbuf = mbuf;
-}
+    , bufRef{.mbuf = mbuf}
+{}
 
 /**
- * Construct a DPDK Packet backed by an OverflowBuffer.
+ * Construct a DPDK PacketBuf backed by an OverflowBuffer.
  *
  * @param overflowBuf
  *      Overflow buffer that holds this packet.
  */
-DpdkDriver::Impl::Packet::Packet(OverflowBuffer* overflowBuf)
-    : base{.payload = overflowBuf->data, .length = 0}
+DpdkDriver::Impl::PacketBuf::PacketBuf(OverflowBuffer* overflowBuf)
+    : payload(overflowBuf->data)
     , bufType(OVERFLOW_BUF)
-    , bufRef()
+    , bufRef{.overflowBuf = overflowBuf}
+{}
+
+/**
+ * Convert this DPDK PacketBuf into the generic Driver::Packet representation.
+ *
+ * @param length
+ *      Number of bytes used in the payload buffer.
+ */
+Driver::Packet
+DpdkDriver::Impl::PacketBuf::toPacket(int length)
 {
-    bufRef.overflowBuf = overflowBuf;
+    Driver::Packet packet = {
+        .descriptor = (uintptr_t) this,
+        .payload = payload,
+        .length = length
+    };
+    return packet;
 }
 
 /**
@@ -174,17 +187,17 @@ DpdkDriver::Impl::~Impl()
 }
 
 // See Driver::allocPacket()
-Driver::Packet*
+Driver::Packet
 DpdkDriver::Impl::allocPacket()
 {
-    DpdkDriver::Impl::Packet* packet = _allocMbufPacket();
-    if (unlikely(packet == nullptr)) {
+    PacketBuf* packetBuf = _allocMbufPacket();
+    if (unlikely(packetBuf == nullptr)) {
         SpinLock::Lock lock(packetLock);
         OverflowBuffer* buf = overflowBufferPool.construct();
-        packet = packetPool.construct(buf);
+        packetBuf = packetPool.construct(buf);
         NOTICE("OverflowBuffer used.");
     }
-    return &packet->base;
+    return packetBuf->toPacket(0);
 }
 
 // See Driver::sendPacket()
@@ -192,15 +205,13 @@ void
 DpdkDriver::Impl::sendPacket(Driver::Packet* packet, IpAddress destination,
                              int priority)
 {
-    ;
-    DpdkDriver::Impl::Packet* pkt =
-        container_of(packet, DpdkDriver::Impl::Packet, base);
-    struct rte_mbuf* mbuf = nullptr;
+    auto* packetBuf = (PacketBuf*) packet->descriptor;
     // If the packet is held in an Overflow buffer, we need to copy it out
     // into a new mbuf.
-    if (unlikely(pkt->bufType == DpdkDriver::Impl::Packet::OVERFLOW_BUF)) {
+    struct rte_mbuf* mbuf = nullptr;
+    if (unlikely(packetBuf->bufType == PacketBuf::OVERFLOW_BUF)) {
         mbuf = rte_pktmbuf_alloc(mbufPool);
-        if (unlikely(NULL == mbuf)) {
+        if (unlikely(nullptr == mbuf)) {
             uint32_t numMbufsAvail = rte_mempool_avail_count(mbufPool);
             uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
             WARNING(
@@ -212,16 +223,16 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet, IpAddress destination,
         }
         char* buf = rte_pktmbuf_append(
             mbuf,
-            Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN + pkt->base.length));
+            Homa::Util::downCast<uint16_t>(PACKET_HDR_LEN + packet->length));
         if (unlikely(NULL == buf)) {
             WARNING("rte_pktmbuf_append call failed; dropping packet");
             rte_pktmbuf_free(mbuf);
             return;
         }
         char* data = buf + PACKET_HDR_LEN;
-        rte_memcpy(data, pkt->base.payload, pkt->base.length);
+        rte_memcpy(data, packetBuf->payload, packet->length);
     } else {
-        mbuf = pkt->bufRef.mbuf;
+        mbuf = packetBuf->bufRef.mbuf;
 
         // If the mbuf is still transmitting from a previous call to send,
         // we don't want to modify the buffer when the send is occuring.
@@ -259,7 +270,7 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet, IpAddress destination,
     // In the normal case, we pre-allocate a pakcet's mbuf with enough
     // storage to hold the MAX_PAYLOAD_SIZE.  If the actual payload is
     // smaller, trim the mbuf to size to avoid sending unecessary bits.
-    uint32_t actualLength = PACKET_HDR_LEN + pkt->base.length;
+    uint32_t actualLength = PACKET_HDR_LEN + packet->length;
     uint32_t mbufDataLength = rte_pktmbuf_pkt_len(mbuf);
     if (actualLength < mbufDataLength) {
         if (rte_pktmbuf_trim(mbuf, mbufDataLength - actualLength) < 0) {
@@ -286,7 +297,7 @@ DpdkDriver::Impl::sendPacket(Driver::Packet* packet, IpAddress destination,
 
     // If the packet is held in an mbuf, retain access to it so that the
     // processing of sending the mbuf won't free it.
-    if (likely(pkt->bufType == DpdkDriver::Impl::Packet::MBUF)) {
+    if (likely(packetBuf->bufType == PacketBuf::MBUF)) {
         rte_pktmbuf_refcnt_update(mbuf, 1);
     }
 
@@ -324,7 +335,7 @@ DpdkDriver::Impl::uncork()
 // See Driver::receivePackets()
 uint32_t
 DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
-                                 Driver::Packet* receivedPackets[],
+                                 Driver::Packet receivedPackets[],
                                  IpAddress sourceAddresses[])
 {
     uint32_t numPacketsReceived = 0;
@@ -395,14 +406,13 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
         uint32_t length = rte_pktmbuf_pkt_len(m) - headerLength;
         assert(length <= MAX_PAYLOAD_SIZE);
 
-        DpdkDriver::Impl::Packet* packet = nullptr;
+        PacketBuf* packetBuf = nullptr;
         {
             SpinLock::Lock lock(packetLock);
-            packet = packetPool.construct(m, payload);
+            packetBuf = packetPool.construct(m, payload);
         }
-        packet->base.length = length;
 
-        receivedPackets[numPacketsReceived] = &packet->base;
+        receivedPackets[numPacketsReceived] = packetBuf->toPacket(length);
         sourceAddresses[numPacketsReceived] = {srcIp};
         ++numPacketsReceived;
     }
@@ -412,18 +422,17 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
 
 // See Driver::releasePackets()
 void
-DpdkDriver::Impl::releasePackets(Driver::Packet* packets[], uint16_t numPackets)
+DpdkDriver::Impl::releasePackets(Driver::Packet packets[], uint16_t numPackets)
 {
     for (uint16_t i = 0; i < numPackets; ++i) {
         SpinLock::Lock lock(packetLock);
-        DpdkDriver::Impl::Packet* packet =
-            container_of(packets[i], DpdkDriver::Impl::Packet, base);
-        if (likely(packet->bufType == DpdkDriver::Impl::Packet::MBUF)) {
-            rte_pktmbuf_free(packet->bufRef.mbuf);
+        auto* packetBuf = (PacketBuf*) packets[i].descriptor;
+        if (likely(packetBuf->bufType == PacketBuf::MBUF)) {
+            rte_pktmbuf_free(packetBuf->bufRef.mbuf);
         } else {
-            overflowBufferPool.destroy(packet->bufRef.overflowBuf);
+            overflowBufferPool.destroy(packetBuf->bufRef.overflowBuf);
         }
-        packetPool.destroy(packet);
+        packetPool.destroy(packetBuf);
     }
 }
 
@@ -715,10 +724,9 @@ DpdkDriver::Impl::_init()
  *      The newly allocated Dpdk Packet; nullptr if the mbuf allocation
  * failed.
  */
-DpdkDriver::Impl::Packet*
+DpdkDriver::Impl::PacketBuf*
 DpdkDriver::Impl::_allocMbufPacket()
 {
-    DpdkDriver::Impl::Packet* packet = nullptr;
     uint32_t numMbufsAvail = rte_mempool_avail_count(mbufPool);
     if (unlikely(numMbufsAvail <= NB_MBUF_RESERVED)) {
         uint32_t numMbufsInUse = rte_mempool_in_use_count(mbufPool);
@@ -752,11 +760,8 @@ DpdkDriver::Impl::_allocMbufPacket()
     }
 
     // Perform packet operations with the lock held.
-    {
-        SpinLock::Lock _(packetLock);
-        packet = packetPool.construct(mbuf, buf + PACKET_HDR_LEN);
-    }
-    return packet;
+    SpinLock::Lock _(packetLock);
+    return packetPool.construct(mbuf, buf + PACKET_HDR_LEN);
 }
 
 /**

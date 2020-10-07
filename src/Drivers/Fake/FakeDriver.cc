@@ -181,11 +181,11 @@ FakeDriver::~FakeDriver()
 /**
  * See Driver::allocPacket()
  */
-Driver::Packet*
+Driver::Packet
 FakeDriver::allocPacket()
 {
-    FakePacket* packet = new FakePacket();
-    return &packet->base;
+    FakePacket* fakePacket = new FakePacket();
+    return fakePacket->toPacket();
 }
 
 /**
@@ -194,7 +194,8 @@ FakeDriver::allocPacket()
 void
 FakeDriver::sendPacket(Packet* packet, IpAddress destination, int priority)
 {
-    FakePacket* srcPacket = container_of(packet, &FakePacket::base);
+    FakePacket* srcPacket = (FakePacket*) packet->descriptor;
+    srcPacket->length = packet->length;
     IpAddress srcAddress = getLocalAddress();
     IpAddress dstAddress = destination;
     fakeNetwork.sendPacket(srcPacket, priority, srcAddress, dstAddress);
@@ -205,7 +206,7 @@ FakeDriver::sendPacket(Packet* packet, IpAddress destination, int priority)
  * See Driver::receivePackets()
  */
 uint32_t
-FakeDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[],
+FakeDriver::receivePackets(uint32_t maxPackets, Packet receivedPackets[],
                            IpAddress sourceAddresses[])
 {
     std::lock_guard<std::mutex> lock_nic(nic.mutex);
@@ -214,7 +215,7 @@ FakeDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[],
         while (numReceived < maxPackets && !nic.priorityQueue.at(i).empty()) {
             FakePacket* fakePacket = nic.priorityQueue.at(i).front();
             nic.priorityQueue.at(i).pop_front();
-            receivedPackets[numReceived] = &fakePacket->base;
+            receivedPackets[numReceived] = fakePacket->toPacket();
             sourceAddresses[numReceived] = fakePacket->sourceIp;
             numReceived++;
         }
@@ -226,10 +227,10 @@ FakeDriver::receivePackets(uint32_t maxPackets, Packet* receivedPackets[],
  * See Driver::releasePackets()
  */
 void
-FakeDriver::releasePackets(Packet* packets[], uint16_t numPackets)
+FakeDriver::releasePackets(Packet packets[], uint16_t numPackets)
 {
     for (uint16_t i = 0; i < numPackets; ++i) {
-        delete container_of(packets[i], &FakePacket::base);
+        delete (FakePacket*) packets[i].descriptor;
     }
 }
 

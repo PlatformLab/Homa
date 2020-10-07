@@ -14,17 +14,11 @@
  */
 
 #include "TransportImpl.h"
-
-#include <algorithm>
-#include <memory>
-#include <utility>
-
 #include "Cycles.h"
 #include "Perf.h"
 #include "Protocol.h"
 
-namespace Homa {
-namespace Core {
+namespace Homa::Core {
 
 // Basic timeout unit.
 const uint64_t BASE_TIMEOUT_US = 2000;
@@ -36,15 +30,18 @@ const uint64_t PING_INTERVAL_US = 3 * BASE_TIMEOUT_US;
 const uint64_t RESEND_INTERVAL_US = BASE_TIMEOUT_US;
 
 /**
- * Construct an instances of a Homa-based transport.
+ * Construct an instance of a Homa-based transport.
  *
  * @param driver
  *      Driver with which this transport should send and receive packets.
+ * @param mailboxDir
+ *      Mailbox directory with which this transport should deliver messages.
  * @param transportId
  *      This transport's unique identifier in the group of transports among
  *      which this transport will communicate.
  */
-TransportImpl::TransportImpl(Driver* driver, uint64_t transportId)
+TransportImpl::TransportImpl(Driver* driver, MailboxDir* mailboxDir,
+                             uint64_t transportId)
     : transportId(transportId)
     , driver(driver)
     , policyManager(new Policy::Manager(driver))
@@ -52,10 +49,24 @@ TransportImpl::TransportImpl(Driver* driver, uint64_t transportId)
                         PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                         PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
     , receiver(
-          new Receiver(driver, policyManager.get(),
+          new Receiver(driver, mailboxDir, policyManager.get(),
                        PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                        PerfUtils::Cycles::fromMicroseconds(RESEND_INTERVAL_US)))
-    , nextTimeoutCycles(0)
+    , mailboxDir(mailboxDir)
+{}
+
+/**
+ * Construct an instance of a Homa-based transport for unit testing.
+ */
+TransportImpl::TransportImpl(Driver* driver, MailboxDir* mailboxDir,
+                             Sender* sender, Receiver* receiver,
+                             uint64_t transportId)
+    : transportId(transportId)
+    , driver(driver)
+    , policyManager(new Policy::Manager(driver))
+    , sender(sender)
+    , receiver(receiver)
+    , mailboxDir(mailboxDir)
 {}
 
 /**
@@ -63,55 +74,41 @@ TransportImpl::TransportImpl(Driver* driver, uint64_t transportId)
  */
 TransportImpl::~TransportImpl() = default;
 
-/// See Homa::Transport::poll()
+/// See Homa::Transport::free()
 void
-TransportImpl::poll()
+TransportImpl::free()
 {
-    // Receive and dispatch incoming packets.
-    processPackets();
-
-    // Allow sender and receiver to make incremental progress.
-    sender->poll();
-    receiver->poll();
-
-    if (PerfUtils::Cycles::rdtsc() >= nextTimeoutCycles.load()) {
-        uint64_t requestedTimeoutCycles;
-        requestedTimeoutCycles = sender->checkTimeouts();
-        nextTimeoutCycles.store(requestedTimeoutCycles);
-        requestedTimeoutCycles = receiver->checkTimeouts();
-        if (nextTimeoutCycles.load() > requestedTimeoutCycles) {
-            nextTimeoutCycles.store(requestedTimeoutCycles);
-        }
-    }
+    // We simply call "delete this" here because the only way to instantiate
+    // a Core::TransportImpl instance is via "new" in Transport::create().
+    // An alternative would be to provide a static free() method that takes
+    // a pointer to Transport, the downside of this approach is that we must
+    // cast the argument to TransportImpl* because polymorphic deletion is
+    // disabled on the Transport interface.
+    delete this;
 }
 
-/**
- * Helper method which receives a burst of incoming packets and process them
- * through the transport protocol.  Pulled out of TransportImpl::poll() to
- * simplify unit testing.
- */
-void
-TransportImpl::processPackets()
+/// See Homa::Transport::open()
+Homa::unique_ptr<Socket>
+TransportImpl::open(uint16_t port)
 {
-    // Keep track of time spent doing active processing versus idle.
-    uint64_t cycles = PerfUtils::Cycles::rdtsc();
-
-    const int MAX_BURST = 32;
-    Driver::Packet* packets[MAX_BURST];
-    IpAddress srcAddrs[MAX_BURST];
-    int numPackets = driver->receivePackets(MAX_BURST, packets, srcAddrs);
-    for (int i = 0; i < numPackets; ++i) {
-        processPacket(packets[i], srcAddrs[i]);
+    Mailbox* mailbox = mailboxDir->alloc(port);
+    if (!mailbox) {
+        return nullptr;
     }
-
-    cycles = PerfUtils::Cycles::rdtsc() - cycles;
-    if (numPackets > 0) {
-        Perf::counters.active_cycles.add(cycles);
-    } else {
-        Perf::counters.idle_cycles.add(cycles);
-    }
+    SocketImpl* socket = new SocketImpl(this, port, mailbox);
+    return Homa::unique_ptr<Socket>(socket);
 }
 
+/// See Homa::Transport::checkTimeouts()
+uint64_t
+TransportImpl::checkTimeouts()
+{
+    uint64_t requestedTimeoutCycles = std::min(sender->checkTimeouts(),
+        receiver->checkTimeouts());
+    return requestedTimeoutCycles;
+}
+
+/// See Homa::Transport::processPacket()
 void
 TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
 {
@@ -156,5 +153,88 @@ TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
     }
 }
 
-}  // namespace Core
-}  // namespace Homa
+/// See Homa::Transport::registerCallbackSendReady()
+void
+TransportImpl::registerCallbackSendReady(Callback func)
+{
+    sender->registerCallbackSendReady(func);
+}
+
+/// See Homa::Transport::trySend()
+bool
+TransportImpl::trySend(uint64_t* waitUntil)
+{
+    return sender->trySend(waitUntil);
+}
+
+/// See Homa::Transport::trySendGrants()
+bool
+TransportImpl::trySendGrants()
+{
+    return receiver->trySendGrants();
+}
+
+/**
+ * Construct an instance of a Homa socket.
+ *
+ * @param transport
+ *      Transport that owns the socket.
+ * @param port
+ *      Local port number of the socket.
+ * @param mailbox
+ *      Mailbox assigned to this socket.
+ */
+TransportImpl::SocketImpl::SocketImpl(TransportImpl* transport, uint16_t port,
+                                      Mailbox* mailbox)
+    : Socket()
+    , disabled()
+    , localAddress{transport->getDriver()->getLocalAddress(), port}
+    , mailbox(mailbox)
+    , transport(transport)
+{}
+
+/// See Homa::Socket::alloc()
+unique_ptr<Homa::OutMessage>
+TransportImpl::SocketImpl::alloc()
+{
+    if (isShutdown()) {
+        return nullptr;
+    }
+    OutMessage* outMessage = transport->sender->allocMessage(localAddress.port);
+    return unique_ptr<OutMessage>(outMessage);
+}
+
+/// See Homa::Socket::close()
+void
+TransportImpl::SocketImpl::close()
+{
+    bool success = transport->mailboxDir->remove(localAddress.port);
+    if (!success) {
+        ERROR("Failed to remove mailbox (port = %u)", localAddress.port);
+    }
+
+    // Destruct the socket (the mailbox may be still in use).
+    // Note: it's actually legal to say "delete this" from a member function:
+    // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
+    delete this;
+}
+
+/// See Homa::Socket::receive()
+unique_ptr<Homa::InMessage>
+TransportImpl::SocketImpl::receive(bool blocking)
+{
+    if (isShutdown()) {
+        return nullptr;
+    }
+    return unique_ptr<InMessage>(mailbox->retrieve(blocking));
+}
+
+/// See Homa::Socket::shutdown()
+void
+TransportImpl::SocketImpl::shutdown()
+{
+    disabled.store(true);
+    mailbox->socketShutdown();
+}
+
+}  // namespace Homa::Core

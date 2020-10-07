@@ -45,8 +45,8 @@ class MockSender : public Core::Sender {
     MOCK_METHOD(void, handleUnknownPacket, (Driver::Packet * packet),
                 (override));
     MOCK_METHOD(void, handleErrorPacket, (Driver::Packet * packet), (override));
-    MOCK_METHOD(void, poll, (), (override));
     MOCK_METHOD(uint64_t, checkTimeouts, (), (override));
+    MOCK_METHOD(bool, trySend, (uint64_t*), (override));
 };
 
 }  // namespace Mock

@@ -24,18 +24,27 @@
 #define HOMA_INCLUDE_HOMA_HOMA_H
 
 #include <Homa/Driver.h>
-
-#include <atomic>
-#include <bitset>
-#include <cstdint>
+#include <functional>
 
 namespace Homa {
 
 /**
  * Shorthand for an std::unique_ptr with a customized deleter.
+ *
+ * This is used to implement the "borrow" semantics for interface classes like
+ * InMessage, OutMessage, and Socket; that is, a user can obtain pointers to
+ * these objects and use them to make function calls, but the user must always
+ * return the objects back to the transport library eventually because the user
+ * has no idea how to destruct the objects or reclaim memory.
  */
 template <typename T>
 using unique_ptr = std::unique_ptr<T, typename T::Deleter>;
+
+/**
+ * Shorthand for user-defined callback functions which are used by the transport
+ * library to notify users of certain events.
+ */
+using Callback = std::function<void()>;
 
 /**
  * Represents a socket address to (from) which we can send (receive) messages.
@@ -104,6 +113,11 @@ class InMessage {
                        size_t count) const = 0;
 
     /**
+     * Return the remote address from which this Message is sent.
+     */
+    virtual SocketAddress getSourceAddress() const = 0;
+
+    /**
      * Return the number of bytes this Message contains.
      */
     virtual size_t length() const = 0;
@@ -117,6 +131,12 @@ class InMessage {
     virtual void strip(size_t count) = 0;
 
   protected:
+    /**
+     * Use protected destructor to prevent users from calling delete on pointers
+     * to this interface.
+     */
+    ~InMessage() = default;
+
     /**
      * Signal that this message is no longer needed.  The caller should not
      * access this message following this call.
@@ -134,14 +154,7 @@ class OutMessage {
     /**
      * Defines the possible states of an OutMessage.
      */
-    enum class Status {
-        NOT_STARTED,  //< The sending of this message has not started.
-        IN_PROGRESS,  //< The message is in the process of being sent.
-        CANCELED,     //< The message was canceled while still IN_PROGRESS.
-        SENT,         //< The message has been completely sent.
-        COMPLETED,    //< The message has been received and processed.
-        FAILED,       //< The message failed to be delivered and processed.
-    };
+    using Status = OutMessageStatus;
 
     /**
      * Options with which an OutMessage can be sent.
@@ -211,6 +224,15 @@ class OutMessage {
     virtual void prepend(const void* source, size_t count) = 0;
 
     /**
+     * Register a callback function to be invoked when the status of this
+     * message reaches an end state.
+     *
+     * @param func
+     *      The function object to invoke.
+     */
+    virtual void registerCallbackEndState(Callback func) = 0;
+
+    /**
      * Reserve a number of bytes at the beginning of the Message.
      *
      * The reserved space is used when bytes are prepended to the Message.
@@ -240,6 +262,12 @@ class OutMessage {
 
   protected:
     /**
+     * Use protected destructor to prevent users from calling delete on pointers
+     * to this interface.
+     */
+    ~OutMessage() = default;
+
+    /**
      * Signal that this message is no longer needed.  The caller should not
      * access this message following this call.
      */
@@ -247,58 +275,265 @@ class OutMessage {
 };
 
 /**
+ * Represents a location which can hold incoming messages temporarily before
+ * they are consumed by high-level applications.
+ *
+ * Despite a one-to-one relationship between Mailbox and Socket, this class
+ * is decoupled from Socket for three reasons:
+ * <ul>
+ * <li> Abstract out the interaction with the user's thread scheduler: e.g.,
+ * a user system may want to block on receive until a message is delivered;
+ * <li> Abstract out the mechanism for high-performance message dispatch: e.g.,
+ * a user system may choose to implement the message receive queue with a
+ * concurrent MPMC queue as opposed to a linked-list protected by a mutex;
+ * <li> Abstract out the mechanism for safe memory reclamation of the receive
+ * queue: e.g., RCU is a well-known solution, reference counting is another.
+ * </ul>
+ *
+ * Note: methods in this class are NOT meant to be called by user applications
+ * directly; instead, they are defined by user applications and called by the
+ * Homa transport library.
+ *
+ * This class is thread-safe.
+ *
+ * @sa MailboxDir
+ */
+class Mailbox {
+  public:
+    /**
+     * Destructor.
+     */
+    virtual ~Mailbox() = default;
+
+    /**
+     * Signal that the caller will not access the mailbox after this call.
+     * A mailbox will only be destroyed if it's removed from the directory
+     * and closed by all openers.
+     *
+     * Not meant to be called by users.
+     *
+     * @sa MailboxDir::open()
+     */
+    virtual void close() = 0;
+
+    /**
+     * Used by a transport to deliver an ingress message to this mailbox.
+     *
+     * Not meant to be called by users.
+     *
+     * @param message
+     *      An ingress message just completed by the transport.
+     */
+    virtual void deliver(InMessage* message) = 0;
+
+    /**
+     * Retrieve a message currently stored in the mailbox.
+     *
+     * Not meant to be called by users; use Socket::receive() instead.
+     *
+     * @param blocking
+     *      When set to true, this method should not return until a message
+     *      arrives or the corresponding socket is shut down.
+     * @return
+     *      A message previously delivered to this mailbox, if the mailbox is
+     *      not empty; nullptr, otherwise.
+     *
+     * @sa Socket::receive()
+     */
+    virtual InMessage* retrieve(bool blocking) = 0;
+
+    /**
+     * Invoked when the corresponding socket of the mailbox is shut down.
+     * All pending retrieve() requests must return immediately.
+     */
+    virtual void socketShutdown() = 0;
+};
+
+/**
+ * Provides a means to keep track of the mailboxes that are currently in use
+ * by Homa sockets.
+ *
+ * This class is separated out from Transport to allow users to 1) use their
+ * own data structures to store the map from port numbers to mailboxes, and
+ * 2) apply their own mechanisms to perform synchronization (e.g., hash map
+ * with fine-grained locks, RCU to delay mailbox destruction, etc).
+ *
+ * Similar to Mailbox, methods in this class are NOT meant to be called by
+ * user applications.
+ *
+ * This class is thread-safe.
+ */
+class MailboxDir {
+  public:
+    /**
+     * Destructor.
+     */
+    virtual ~MailboxDir() = default;
+
+    /**
+     * Allocate a new mailbox in the directory.
+     *
+     * @param port
+     *      Port number which identifies the mailbox.
+     * @return
+     *      Pointer to the new Mailbox on success; nullptr, if the port number
+     *      is already in use.
+     */
+    virtual Mailbox* alloc(uint16_t port) = 0;
+
+    /**
+     * Find and open the mailbox that matches the given port number.  Once a
+     * mailbox is opened, it's guaranteed to remain usable even if someone else
+     * removes it from the directory.
+     *
+     * @param port
+     *      Port number which identifies the mailbox.
+     * @return
+     *      Pointer to the opened mailbox on success; nullptr, if the desired
+     *      mailbox doesn't exist.
+     */
+    virtual Mailbox* open(uint16_t port) = 0;
+
+    /**
+     * Remove the mailbox that matches the given port number.
+     *
+     * @param port
+     *      Port number of the mailbox that will be removed.
+     * @return
+     *      True on success; false, if the desired mailbox doesn't exist.
+     */
+    virtual bool remove(uint16_t port) = 0;
+};
+
+/**
+ * Connection-less socket that can be used to send and receive Homa messages.
+ *
+ * This class is thread-safe.
+ */
+class Socket {
+  public:
+    using Address = SocketAddress;
+
+    /**
+     * Custom deleter for use with Homa::unique_ptr.
+     */
+    struct Deleter {
+        void operator()(Socket* socket)
+        {
+            socket->close();
+        }
+    };
+
+    /**
+     * Allocate Message that can be sent with this Socket.
+     *
+     * @param sourcePort
+     *      Port number of the socket from which the message will be sent.
+     * @return
+     *      A pointer to the allocated message or nullptr if the socket has
+     *      been shut down.
+     */
+    virtual Homa::unique_ptr<Homa::OutMessage> alloc() = 0;
+
+    /**
+     * Check for and return a Message sent to this Socket if available.
+     *
+     * @param blocking
+     *      When set to true, this method should not return until a message
+     *      arrives or the socket is shut down.
+     * @return
+     *      Pointer to the received message, if any.  Otherwise, nullptr is
+     *      returned if no message has been delivered or the socket has been
+     *      shut down.
+     */
+    virtual Homa::unique_ptr<Homa::InMessage> receive(bool blocking) = 0;
+
+    /**
+     * Disable the socket.  Once a socket is shut down, all ongoing/subsequent
+     * requests on the socket will return a failure.
+     *
+     * When multiple threads are working on a socket, this method can be used
+     * to notify other threads to drop their references to this socket so that
+     * the caller can safely close() the socket.
+     */
+    virtual void shutdown() = 0;
+
+    /**
+     * Check if the Socket has been shut down.
+     */
+    virtual bool isShutdown() const = 0;
+
+    /**
+     * Return the local IP address and port number of this Socket.
+     */
+    virtual Socket::Address getLocalAddress() const = 0;
+
+  protected:
+    /**
+     * Use protected destructor to prevent users from calling delete on pointers
+     * to this interface.
+     */
+    ~Socket() = default;
+
+    /**
+     * Signal that this Socket is no longer needed.  No one should access this
+     * socket after this call.
+     *
+     * Note: outgoing messages already allocated from this socket will not be
+     * affected.
+     */
+    virtual void close() = 0;
+};
+
+/**
  * Provides a means of communicating across the network using the Homa protocol.
  *
- * The transport is used to send and receive messages across the network using
- * the RemoteOp and ServerOp abstractions.  The execution of the transport is
- * driven through repeated calls to the Transport::poll() method; the transport
- * will not make any progress otherwise.
+ * The execution of the transport is driven through repeated calls to methods
+ * like checkTimeouts(), processPacket(), trySend(), and trySendGrants(); the
+ * transport will not make any progress otherwise.
  *
  * This class is thread-safe.
  */
 class Transport {
   public:
     /**
+     * Custom deleter for use with std::unique_ptr.
+     */
+    struct Deleter {
+        void operator()(Transport* transport)
+        {
+            transport->free();
+        }
+    };
+
+    /**
      * Return a new instance of a Homa-based transport.
-     *
-     * The caller is responsible for calling free() on the returned pointer.
      *
      * @param driver
      *      Driver with which this transport should send and receive packets.
+     * @param mailboxDir
+     *      Mailbox directory with which this transport should decide where
+     *      to deliver a message.
      * @param transportId
      *      This transport's unique identifier in the group of transports among
      *      which this transport will communicate.
      * @return
      *      Pointer to the new transport instance.
      */
-    static Transport* create(Driver* driver, uint64_t transportId);
+    static Homa::unique_ptr<Transport> create(Driver* driver,
+                                              MailboxDir* mailboxDir,
+                                              uint64_t transportId);
 
     /**
-     * Allocate Message that can be sent with this Transport.
+     * Create a socket that can be used to send and receive messages.
      *
-     * @param sourcePort
-     *      Port number of the socket from which the message will be sent.
+     * @param port
+     *      The port number allocated to the socket.
      * @return
-     *      A pointer to the allocated message.
+     *      Pointer to the new socket, if the port number is not in use;
+     *      nullptr, otherwise.
      */
-    virtual Homa::unique_ptr<Homa::OutMessage> alloc(uint16_t sourcePort) = 0;
-
-    /**
-     * Check for and return a Message sent to this Transport if available.
-     *
-     * @return
-     *      Pointer to the received message, if any.  Otherwise, nullptr is
-     *      returned if no message has been delivered.
-     */
-    virtual Homa::unique_ptr<Homa::InMessage> receive() = 0;
-
-    /**
-     * Make incremental progress performing all Transport functionality.
-     *
-     * This method MUST be called for the Transport to make progress and should
-     * be called frequently to ensure timely progress.
-     */
-    virtual void poll() = 0;
+    virtual Homa::unique_ptr<Socket> open(uint16_t port) = 0;
 
     /**
      * Return the driver that this transport uses to send and receive packets.
@@ -309,6 +544,85 @@ class Transport {
      * Return this transport's unique identifier.
      */
     virtual uint64_t getId() = 0;
+
+    /**
+     * Process any timeouts that have expired.
+     *
+     * This method must be called periodically to ensure timely handling of
+     * expired timeouts.
+     *
+     * @return
+     *      The rdtsc cycle time when this method should be called again.
+     */
+    virtual uint64_t checkTimeouts() = 0;
+
+    /**
+     * Handle an ingress packet by running it through the transport protocol
+     * stack.
+     *
+     * @param packet
+     *      The ingress packet.
+     * @param source
+     *      IpAddress of the socket from which the packet is sent.
+     */
+    virtual void processPacket(Driver::Packet* packet, IpAddress source) = 0;
+
+    /**
+     * Register a callback function to be invoked when some packets just became
+     * ready to be sent (and there was none before).
+     *
+     * This callback allows the transport library to notify the users that
+     * trySend() should be invoked again as soon as possible. For example,
+     * the callback can be used to implement wakeup signals for the thread
+     * that is responsible for calling trySend(), if this thread decides to
+     * sleep when there is no packets to send.
+     *
+     * @param func
+     *      The function object to invoke.
+     */
+    virtual void registerCallbackSendReady(Callback func) = 0;
+
+    /**
+     * Attempt to send out packets for any messages with unscheduled/granted
+     * bytes in a way that limits queue buildup in the NIC.
+     *
+     * This method must be called eagerly to allow the Transport to make
+     * progress toward sending outgoing messages.
+     *
+     * @param[out] waitUntil
+     *      The rdtsc cycle time when this method should be called again
+     *      (this allows the NIC to drain its transmit queue). Only set
+     *      when this method returns true.
+     * @return
+     *      True if more packets are ready to be transmitted when the method
+     *      returns; false, otherwise.
+     */
+    virtual bool trySend(uint64_t* waitUntil) = 0;
+
+    /**
+     * Attempt to grant to incoming messages according to the Homa protocol.
+     *
+     * This method must be called eagerly to allow the Transport to make
+     * progress toward receiving incoming messages.
+     *
+     * @return
+     *      True if the method has found some messages to grant; false,
+     *      otherwise.
+     */
+    virtual bool trySendGrants() = 0;
+
+  protected:
+    /**
+     * Use protected destructor to prevent users from calling delete on pointers
+     * to this interface.
+     */
+    ~Transport() = default;
+
+    /**
+     * Free this transport instance.  No one should not access this transport
+     * following this call.
+     */
+    virtual void free() = 0;
 };
 
 /**

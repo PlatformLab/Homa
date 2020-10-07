@@ -18,6 +18,7 @@
 
 #include <string>
 
+#include "Homa/OutMessageStatus.h"
 #include "Homa/Exception.h"
 
 namespace Homa {
@@ -67,26 +68,6 @@ struct IpAddress final {
 static_assert(std::is_trivially_copyable<IpAddress>());
 
 /**
- * Represents a packet of data that can be send or is received over the network.
- * A Packet logically contains only the transport-layer (L4) Homa header in
- * addition to application data.
- *
- * This struct specifies the minimal object layout of a packet that the core
- * Homa protocol depends on (e.g., Homa::Core::{Sender, Receiver}); this is
- * useful for applications that only want to use the transport layer of this
- * library and have their own infrastructures for sending and receiving packets.
- */
-struct PacketSpec {
-    /// Pointer to an array of bytes containing the payload of this Packet.
-    /// This array is valid until the Packet is released back to the Driver.
-    void* payload;
-
-    /// Number of bytes in the payload.
-    int32_t length;
-} __attribute__((packed));
-static_assert(std::is_trivial<PacketSpec>());
-
-/**
  * Used by Homa::Transport to send and receive unreliable datagrams.  Provides
  * the interface to which all Driver implementations must conform.
  *
@@ -94,8 +75,23 @@ static_assert(std::is_trivial<PacketSpec>());
  */
 class Driver {
   public:
-    /// Import PacketSpec into the Driver namespace.
-    using Packet = PacketSpec;
+    /**
+     * Describes a packet of data that can be send or is received over the
+     * network. A Packet logically contains only the transport-layer (L4) Homa
+     * header in addition to application data.
+     */
+    struct Packet {
+        /// Unique identifier of this Packet within the Driver. This descriptor
+        /// is entirely opaque to the transport.
+        uintptr_t descriptor;
+
+        /// Pointer to an array of bytes containing the payload of this Packet.
+        /// This array is valid until the Packet is released back to the Driver.
+        void* payload;
+
+        /// Number of bytes in the payload.
+        int32_t length;
+    };
 
     /**
      * Driver destructor.
@@ -107,7 +103,7 @@ class Driver {
      * caller must eventually release the packet by passing it to a call to
      * releasePacket().
      */
-    virtual Packet* allocPacket() = 0;
+    virtual Packet allocPacket() = 0;
 
     /**
      * Send a packet over the network.
@@ -183,7 +179,7 @@ class Driver {
      * @sa Driver::releasePackets()
      */
     virtual uint32_t receivePackets(uint32_t maxPackets,
-                                    Packet* receivedPackets[],
+                                    Packet receivedPackets[],
                                     IpAddress sourceAddresses[]) = 0;
 
     /**
@@ -201,7 +197,7 @@ class Driver {
      * @param numPackets
      *      Number of Packet objects in _packets_.
      */
-    virtual void releasePackets(Packet* packets[], uint16_t numPackets) = 0;
+    virtual void releasePackets(Packet packets[], uint16_t numPackets) = 0;
 
     /**
      * Returns the highest packet priority level this Driver supports (0 is
