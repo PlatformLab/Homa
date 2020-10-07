@@ -53,6 +53,7 @@ class Receiver {
     virtual void handlePingPacket(Driver::Packet* packet, IpAddress sourceIp);
     virtual Homa::InMessage* receiveMessage();
     virtual void poll();
+    virtual void checkTimeouts();
 
   private:
     // Forward declaration
@@ -456,7 +457,6 @@ class Receiver {
     void dropMessage(Receiver::Message* message);
     void checkMessageTimeouts(uint64_t now, MessageBucket* bucket);
     void checkResendTimeouts(uint64_t now, MessageBucket* bucket);
-    void checkTimeouts();
     void trySendGrants();
     void schedule(Message* message, const SpinLock::Lock& lock);
     void unschedule(Message* message, const SpinLock::Lock& lock);

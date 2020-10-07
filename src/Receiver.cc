@@ -287,6 +287,22 @@ Receiver::poll()
 }
 
 /**
+ * Make incremental progress processing expired Receiver timeouts.
+ *
+ * Pulled out of poll() for ease of testing.
+ */
+void
+Receiver::checkTimeouts()
+{
+    uint index = nextBucketIndex.fetch_add(1, std::memory_order_relaxed) &
+                 MessageBucketMap::HASH_KEY_MASK;
+    MessageBucket* bucket = messageBuckets.buckets.at(index);
+    uint64_t now = PerfUtils::Cycles::rdtsc();
+    checkResendTimeouts(now, bucket);
+    checkMessageTimeouts(now, bucket);
+}
+
+/**
  * Destruct a Message. Will release all contained Packet objects.
  */
 Receiver::Message::~Message()
@@ -674,22 +690,6 @@ Receiver::checkResendTimeouts(uint64_t now, MessageBucket* bucket)
                 message->scheduledMessageInfo.priority);
         }
     }
-}
-
-/**
- * Process any Receiver timeouts that have expired.
- *
- * Pulled out of poll() for ease of testing.
- */
-void
-Receiver::checkTimeouts()
-{
-    uint index = nextBucketIndex.fetch_add(1, std::memory_order_relaxed) &
-                 MessageBucketMap::HASH_KEY_MASK;
-    MessageBucket* bucket = messageBuckets.buckets.at(index);
-    uint64_t now = PerfUtils::Cycles::rdtsc();
-    checkResendTimeouts(now, bucket);
-    checkMessageTimeouts(now, bucket);
 }
 
 /**
