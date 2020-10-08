@@ -47,14 +47,14 @@ class SimpleMailboxDir final : public MailboxDir {
     explicit SimpleMailboxDir();
     ~SimpleMailboxDir() override;
     Mailbox* alloc(uint16_t port) override;
-    Mailbox* open(uint16_t port) override;
+    bool deliver(uint16_t port, Homa::InMessage* message) override;
     bool remove(uint16_t port) override;
 
   private:
     /// Monitor-style lock.
     std::unique_ptr<SpinLock> mutex;
 
-    /// Hash table that maps port numbers to mailboxes.
+    /// Hash table that maps port numbers to mailboxes. Protected by mutex.
     std::unordered_map<uint16_t, MailboxImpl*> map;
 };
 

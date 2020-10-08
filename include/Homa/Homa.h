@@ -306,27 +306,6 @@ class Mailbox {
     virtual ~Mailbox() = default;
 
     /**
-     * Signal that the caller will not access the mailbox after this call.
-     * A mailbox will only be destroyed if it's removed from the directory
-     * and closed by all openers.
-     *
-     * Not meant to be called by users.
-     *
-     * @sa MailboxDir::open()
-     */
-    virtual void close() = 0;
-
-    /**
-     * Used by a transport to deliver an ingress message to this mailbox.
-     *
-     * Not meant to be called by users.
-     *
-     * @param message
-     *      An ingress message just completed by the transport.
-     */
-    virtual void deliver(InMessage* message) = 0;
-
-    /**
      * Retrieve a message currently stored in the mailbox.
      *
      * Not meant to be called by users; use Socket::receive() instead.
@@ -382,17 +361,19 @@ class MailboxDir {
     virtual Mailbox* alloc(uint16_t port) = 0;
 
     /**
-     * Find and open the mailbox that matches the given port number.  Once a
-     * mailbox is opened, it's guaranteed to remain usable even if someone else
-     * removes it from the directory.
+     * Used by a transport to deliver an ingress message to a mailbox.
+     *
+     * Not meant to be called by users.
      *
      * @param port
      *      Port number which identifies the mailbox.
+     * @param message
+     *      An ingress message just completed by the transport.
      * @return
-     *      Pointer to the opened mailbox on success; nullptr, if the desired
+     *      True if the message is delivered successfully; false, if the target
      *      mailbox doesn't exist.
      */
-    virtual Mailbox* open(uint16_t port) = 0;
+    virtual bool deliver(uint16_t port, InMessage* message) = 0;
 
     /**
      * Remove the mailbox that matches the given port number.

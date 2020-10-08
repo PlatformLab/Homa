@@ -27,8 +27,9 @@ class MailboxImpl : public Mailbox {
   public:
     explicit MailboxImpl();
     ~MailboxImpl() override;
-    void close() override;
-    void deliver(InMessage* message) override;
+    void open();
+    void close();
+    void deliver(InMessage* message);
     InMessage* retrieve(bool blocking) override;
     void socketShutdown() override;
 
@@ -63,7 +64,24 @@ MailboxImpl::~MailboxImpl()
     }
 }
 
-/// See Homa::Mailbox::close()
+/**
+ * Signal that the caller will be accessing the mailbox until close() is called.
+ * Once a mailbox is opened, it's guaranteed to remain usable even if someone
+ * else removes it from the directory.
+ */
+void
+MailboxImpl::open()
+{
+    // Increment the reference count of the mailbox, so this mailbox won't be
+    // deleted even if it's removed from the hash table.
+    openers.fetch_add(1, std::memory_order_relaxed);
+}
+
+/**
+ * Signal that the caller will not access the mailbox after this call.
+ * A mailbox will only be destroyed if it's removed from the directory
+ * and closed by all openers.
+ */
 void
 MailboxImpl::close()
 {
@@ -75,7 +93,12 @@ MailboxImpl::close()
     }
 }
 
-/// See Homa::Mailbox::deliver()
+/**
+ * Deliver an ingress message to this mailbox.
+ *
+ * @param message
+ *      An ingress message just completed by the transport.
+ */
 void
 MailboxImpl::deliver(InMessage* message)
 {
@@ -131,24 +154,27 @@ SimpleMailboxDir::alloc(uint16_t port)
     return mailbox;
 }
 
-Mailbox*
-SimpleMailboxDir::open(uint16_t port)
+bool
+SimpleMailboxDir::deliver(uint16_t port, Homa::InMessage* message)
 {
+    // Find the mailbox.
     MailboxImpl* mailbox = nullptr;
     {
-        // Look up the mailbox
         SpinLock::Lock _(*mutex);
         auto it = map.find(port);
         if (it != map.end()) {
             mailbox = it->second;
         }
+        if (mailbox == nullptr) {
+            return false;
+        }
     }
 
-    // Increment the reference count of the mailbox.
-    if (mailbox) {
-        mailbox->openers.fetch_add(1, std::memory_order_relaxed);
-    }
-    return mailbox;
+    // Deliver the message.
+    mailbox->open();
+    mailbox->deliver(message);
+    mailbox->close();
+    return true;
 }
 
 bool

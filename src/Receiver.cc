@@ -165,11 +165,8 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
             message->setState(Message::State::COMPLETED);
             bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
             uint16_t dport = be16toh(header->common.prefix.dport);
-            Mailbox* mailbox = mailboxDir->open(dport);
-            if (mailbox) {
-                mailbox->deliver(message);
-                mailbox->close();
-            } else {
+            bool success = mailboxDir->deliver(dport, message);
+            if (!success) {
                 lock_bucket.destroy();
                 ERROR("Unable to deliver the message; message dropped");
                 dropMessage(message);

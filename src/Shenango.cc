@@ -27,12 +27,6 @@ using namespace Homa;
     extern ReturnType (*shenango_##MethodName)(__VA_ARGS__);
 
 /**
- * Fast thread-local slab-based memory allocation.
- */
-DECLARE_SHENANGO_FUNC(void*, smalloc, size_t)
-DECLARE_SHENANGO_FUNC(void, sfree, void*)
-
-/**
  * Protect RCU read-side critical sections.
  */
 DECLARE_SHENANGO_FUNC(void, rcu_read_lock)
@@ -165,29 +159,12 @@ homa_driver_free(homa_driver drv)
 }
 
 /**
- * An almost trivial implementation of Mailbox.  This class is essentially
- * a wrapper around a socket table entry in Shenango (i.e., struct trans_entry).
- *
+ * A trivial implementation of Mailbox for catching errors.
  */
 class ShenangoMailbox final : public Mailbox {
   public:
-    explicit ShenangoMailbox(void* trans_entry)
-        : trans_entry(trans_entry)
-    {}
-
+    explicit ShenangoMailbox() = default;
     ~ShenangoMailbox() override = default;
-
-    void close() override
-    {
-        this->~ShenangoMailbox();
-        shenango_sfree(this);
-        shenango_rcu_read_unlock();
-    }
-
-    void deliver(InMessage* message) override
-    {
-        shenango_homa_mb_deliver(trans_entry, homa_inmsg{message});
-    }
 
     InMessage* retrieve(bool blocking) override
     {
@@ -199,10 +176,6 @@ class ShenangoMailbox final : public Mailbox {
     {
         PANIC("Shenango should never call Homa::Socket::shutdown");
     }
-
-  private:
-    /// An opaque pointer to "struct trans_entry" in Shenango.
-    void* const trans_entry;
 };
 
 /**
@@ -226,21 +199,22 @@ class ShenangoMailboxDir final : MailboxDir {
     {
         // Shenango doesn't rely on Homa::Socket to receive messages,
         // so there is no need to assign a real mailbox to SocketImpl.
-        static ShenangoMailbox dummyMailbox(nullptr);
+        static ShenangoMailbox dummyMailbox;
         (void)port;
         return &dummyMailbox;
     }
 
-    Mailbox* open(uint16_t port) override
+    bool deliver(uint16_t port, InMessage* message) override
     {
-        SocketAddress laddr = {local_ip, port};
+        // The socket table in Shenango is protected by an RCU.
         shenango_rcu_read_lock();
+        SocketAddress laddr = {local_ip, port};
         void* trans_entry = shenango_trans_table_lookup(proto, laddr, {});
-        if (!trans_entry) {
-            return nullptr;
+        if (trans_entry) {
+            shenango_homa_mb_deliver(trans_entry, homa_inmsg{message});
         }
-        void* backing = shenango_smalloc(sizeof(ShenangoMailbox));
-        return new (backing) ShenangoMailbox(trans_entry);
+        shenango_rcu_read_unlock();
+        return trans_entry != nullptr;
     }
 
     bool remove(uint16_t port) override
