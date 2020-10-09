@@ -33,7 +33,7 @@ class MockSender : public Core::Sender {
   public:
     MockSender(uint64_t transportId, Driver* driver,
                uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles)
-        : Sender(transportId, driver, nullptr, messageTimeoutCycles,
+        : Sender(transportId, driver, nullptr, nullptr, messageTimeoutCycles,
                  pingIntervalCycles)
     {}
 

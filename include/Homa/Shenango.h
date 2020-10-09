@@ -56,21 +56,25 @@ extern homa_driver homa_driver_create(uint8_t proto, uint32_t local_ip,
 extern void homa_driver_free(homa_driver drv);
 
 /**
- * homa_mb_dir_create - creates a shim mailbox directory that translates
- * Homa::Mailbox operations to Shenango functions
+ * homa_callbacks_create - creates a collection of the Shenango-defined
+ * callbacks for the transport.
  * @proto: protocol number reserved for Homa transport protocol
  * @local_ip: local IP address of the driver
+ * @cb_send_ready: callback function to invoke in Callbacks::notifySendReady
+ * @cb_data: input data for @cb_send_ready
  *
- * Returns a handle to the mailbox created.
+ * Returns a handle to the callbacks created.
  */
-extern homa_mailbox_dir homa_mb_dir_create(uint8_t proto, uint32_t local_ip);
+extern homa_callbacks homa_callbacks_create(uint8_t proto, uint32_t local_ip,
+                                            void (*cb_send_ready)(void*),
+                                            void* cb_data);
 
 /**
- * homa_mb_dir_free - frees a shim mailbox directory created earlier with
- * @homa_mb_dir_create.
- * @param mailbox_dir: the mailbox directory to free
+ * homa_callbacks_free - frees the Callbacks object created earlier with
+ * @homa_callbacks_create.
+ * @param cbs: the callbacks to free
  */
-extern void homa_mb_dir_free(homa_mailbox_dir mailbox_dir);
+extern void homa_callbacks_free(homa_callbacks cbs);
 
 #ifdef __cplusplus
 }

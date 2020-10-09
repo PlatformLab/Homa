@@ -37,17 +37,15 @@ namespace Homa::Core {
  */
 class TransportImpl final : public Transport {
   public:
-    explicit TransportImpl(Driver* driver, MailboxDir* mailboxDir,
+    explicit TransportImpl(Driver* driver, Callbacks* callbacks,
                            uint64_t transportId);
-    explicit TransportImpl(Driver* driver, MailboxDir* mailboxDir,
-                           Sender* sender, Receiver* receiver,
-                           uint64_t transportId);
+    explicit TransportImpl(Driver* driver, Callbacks* callbacks, Sender* sender,
+                           Receiver* receiver, uint64_t transportId);
     ~TransportImpl();
     void free() override;
-    Homa::unique_ptr<Socket> open(uint16_t port) override;
+    Homa::unique_ptr<OutMessage> alloc(uint16_t port) override;
     uint64_t checkTimeouts() override;
     void processPacket(Driver::Packet* packet, IpAddress source) override;
-    void registerCallbackSendReady(Callback func) override;
     bool trySend(uint64_t* waitUntil) override;
     bool trySendGrants() override;
 
@@ -63,52 +61,12 @@ class TransportImpl final : public Transport {
         return transportId;
     }
 
-    /**
-     * Internal implementation of Homa::Socket.
-     *
-     * @sa
-     *      TransportImpl::socketMap
-     */
-    class SocketImpl final : public Socket {
-      public:
-        explicit SocketImpl(TransportImpl* transport, uint16_t port,
-                            Mailbox* mailbox);
-        virtual ~SocketImpl() = default;
-
-        Homa::unique_ptr<Homa::OutMessage> alloc() override;
-        void close() override;
-        Homa::unique_ptr<Homa::InMessage> receive(bool blocking) override;
-        void shutdown() override;
-
-        /// See Homa::Socket::isShutdown()
-        bool isShutdown() const override
-        {
-            return disabled.load(std::memory_order_relaxed);
-        }
-
-        /// See Homa::Socket::getLocalAddress()
-        Address getLocalAddress() const override
-        {
-            return localAddress;
-        }
-
-      private:
-        /// Has the socket been shut down?
-        std::atomic<bool> disabled;
-
-        /// Local address of the socket.
-        Address localAddress;
-
-        /// Mailbox assigned to this socket. Not owned by this class.
-        Mailbox* mailbox;
-
-        /// Transport that owns this socket.
-        TransportImpl* transport;
-    };
-
   private:
     /// Unique identifier for this transport.
     const uint64_t transportId;
+
+    /// User-defined transport callbacks. Not owned by this class.
+    Callbacks* const callbacks;
 
     /// Driver from which this transport will send and receive packets.
     /// Not owned by this class.
@@ -122,10 +80,6 @@ class TransportImpl final : public Transport {
 
     /// Module which receives packets and forms them into messages.
     std::unique_ptr<Core::Receiver> receiver;
-
-    /// Module which keeps track of mailboxes currently in use. Not owned by
-    /// this class (we don't even know whether it's instantiated by "new").
-    MailboxDir* const mailboxDir;
 };
 
 }  // namespace Homa::Core

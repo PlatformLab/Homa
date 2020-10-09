@@ -41,12 +41,6 @@ template <typename T>
 using unique_ptr = std::unique_ptr<T, typename T::Deleter>;
 
 /**
- * Shorthand for user-defined callback functions which are used by the transport
- * library to notify users of certain events.
- */
-using Callback = std::function<void()>;
-
-/**
  * Represents a socket address to (from) which we can send (receive) messages.
  */
 struct SocketAddress {
@@ -224,15 +218,6 @@ class OutMessage {
     virtual void prepend(const void* source, size_t count) = 0;
 
     /**
-     * Register a callback function to be invoked when the status of this
-     * message reaches an end state.
-     *
-     * @param func
-     *      The function object to invoke.
-     */
-    virtual void registerCallbackEndState(Callback func) = 0;
-
-    /**
      * Reserve a number of bytes at the beginning of the Message.
      *
      * The reserved space is used when bytes are prepended to the Message.
@@ -259,6 +244,7 @@ class OutMessage {
      */
     virtual void send(SocketAddress destination,
                       Options options = Options::NONE) = 0;
+    // FIXME: this is problematic; we can't really call send a second time...
 
   protected:
     /**
@@ -275,195 +261,52 @@ class OutMessage {
 };
 
 /**
- * Represents a location which can hold incoming messages temporarily before
- * they are consumed by high-level applications.
- *
- * Despite a one-to-one relationship between Mailbox and Socket, this class
- * is decoupled from Socket for three reasons:
- * <ul>
- * <li> Abstract out the interaction with the user's thread scheduler: e.g.,
- * a user system may want to block on receive until a message is delivered;
- * <li> Abstract out the mechanism for high-performance message dispatch: e.g.,
- * a user system may choose to implement the message receive queue with a
- * concurrent MPMC queue as opposed to a linked-list protected by a mutex;
- * <li> Abstract out the mechanism for safe memory reclamation of the receive
- * queue: e.g., RCU is a well-known solution, reference counting is another.
- * </ul>
- *
- * Note: methods in this class are NOT meant to be called by user applications
- * directly; instead, they are defined by user applications and called by the
- * Homa transport library.
- *
- * This class is thread-safe.
- *
- * @sa MailboxDir
+ * Collection of user-defined transport callbacks.
  */
-class Mailbox {
+class Callbacks {
   public:
     /**
      * Destructor.
      */
-    virtual ~Mailbox() = default;
+    virtual ~Callbacks() = default;
 
     /**
-     * Retrieve a message currently stored in the mailbox.
+     * Invoked when an incoming message arrives and needs to dispatched to its
+     * destination in the user application for processing.
      *
-     * Not meant to be called by users; use Socket::receive() instead.
-     *
-     * @param blocking
-     *      When set to true, this method should not return until a message
-     *      arrives or the corresponding socket is shut down.
-     * @return
-     *      A message previously delivered to this mailbox, if the mailbox is
-     *      not empty; nullptr, otherwise.
-     *
-     * @sa Socket::receive()
-     */
-    virtual InMessage* retrieve(bool blocking) = 0;
-
-    /**
-     * Invoked when the corresponding socket of the mailbox is shut down.
-     * All pending retrieve() requests must return immediately.
-     */
-    virtual void socketShutdown() = 0;
-};
-
-/**
- * Provides a means to keep track of the mailboxes that are currently in use
- * by Homa sockets.
- *
- * This class is separated out from Transport to allow users to 1) use their
- * own data structures to store the map from port numbers to mailboxes, and
- * 2) apply their own mechanisms to perform synchronization (e.g., hash map
- * with fine-grained locks, RCU to delay mailbox destruction, etc).
- *
- * Similar to Mailbox, methods in this class are NOT meant to be called by
- * user applications.
- *
- * This class is thread-safe.
- */
-class MailboxDir {
-  public:
-    /**
-     * Destructor.
-     */
-    virtual ~MailboxDir() = default;
-
-    /**
-     * Allocate a new mailbox in the directory.
+     * Here are a few example use cases of this callback:
+     * <ul>
+     * <li> Interaction with the user's thread scheduler: e.g., an application
+     * may want to block on receive until a message is delivered, so this method
+     * can be used to wake up blocking threads.
+     * <li> High-performance message dispatch: e.g., an application may choose
+     * to implement the message receive queue with a concurrent MPMC queue as
+     * opposed to a linked-list protected by a mutex;
+     * <li> Lightweight synchronization: e.g., the socket table that maps from
+     * port numbers to sockets is a read-mostly data structure, so lookup
+     * operations can benefit from synchronization schemes such as RCU.
+     * </ul>
      *
      * @param port
-     *      Port number which identifies the mailbox.
-     * @return
-     *      Pointer to the new Mailbox on success; nullptr, if the port number
-     *      is already in use.
-     */
-    virtual Mailbox* alloc(uint16_t port) = 0;
-
-    /**
-     * Used by a transport to deliver an ingress message to a mailbox.
-     *
-     * Not meant to be called by users.
-     *
-     * @param port
-     *      Port number which identifies the mailbox.
+     *      Destination port number of the message.
      * @param message
-     *      An ingress message just completed by the transport.
+     *      Incoming message to dispatch.
      * @return
-     *      True if the message is delivered successfully; false, if the target
-     *      mailbox doesn't exist.
+     *      True if the message is delivered successfully; false, otherwise.
      */
     virtual bool deliver(uint16_t port, InMessage* message) = 0;
 
     /**
-     * Remove the mailbox that matches the given port number.
+     * Invoked when some packets just became ready to be sent (and there was
+     * none before).
      *
-     * @param port
-     *      Port number of the mailbox that will be removed.
-     * @return
-     *      True on success; false, if the desired mailbox doesn't exist.
+     * This callback allows the transport library to notify the users that
+     * trySend() should be invoked again as soon as possible. For example,
+     * the callback can be used to implement wakeup signals for the thread
+     * that is responsible for calling trySend(), if this thread decides to
+     * sleep when there is no packets to send.
      */
-    virtual bool remove(uint16_t port) = 0;
-};
-
-/**
- * Connection-less socket that can be used to send and receive Homa messages.
- *
- * This class is thread-safe.
- */
-class Socket {
-  public:
-    using Address = SocketAddress;
-
-    /**
-     * Custom deleter for use with Homa::unique_ptr.
-     */
-    struct Deleter {
-        void operator()(Socket* socket)
-        {
-            socket->close();
-        }
-    };
-
-    /**
-     * Allocate Message that can be sent with this Socket.
-     *
-     * @param sourcePort
-     *      Port number of the socket from which the message will be sent.
-     * @return
-     *      A pointer to the allocated message or nullptr if the socket has
-     *      been shut down.
-     */
-    virtual Homa::unique_ptr<Homa::OutMessage> alloc() = 0;
-
-    /**
-     * Check for and return a Message sent to this Socket if available.
-     *
-     * @param blocking
-     *      When set to true, this method should not return until a message
-     *      arrives or the socket is shut down.
-     * @return
-     *      Pointer to the received message, if any.  Otherwise, nullptr is
-     *      returned if no message has been delivered or the socket has been
-     *      shut down.
-     */
-    virtual Homa::unique_ptr<Homa::InMessage> receive(bool blocking) = 0;
-
-    /**
-     * Disable the socket.  Once a socket is shut down, all ongoing/subsequent
-     * requests on the socket will return a failure.
-     *
-     * When multiple threads are working on a socket, this method can be used
-     * to notify other threads to drop their references to this socket so that
-     * the caller can safely close() the socket.
-     */
-    virtual void shutdown() = 0;
-
-    /**
-     * Check if the Socket has been shut down.
-     */
-    virtual bool isShutdown() const = 0;
-
-    /**
-     * Return the local IP address and port number of this Socket.
-     */
-    virtual Socket::Address getLocalAddress() const = 0;
-
-  protected:
-    /**
-     * Use protected destructor to prevent users from calling delete on pointers
-     * to this interface.
-     */
-    ~Socket() = default;
-
-    /**
-     * Signal that this Socket is no longer needed.  No one should access this
-     * socket after this call.
-     *
-     * Note: outgoing messages already allocated from this socket will not be
-     * affected.
-     */
-    virtual void close() = 0;
+    virtual void notifySendReady() {}
 };
 
 /**
@@ -492,9 +335,9 @@ class Transport {
      *
      * @param driver
      *      Driver with which this transport should send and receive packets.
-     * @param mailboxDir
-     *      Mailbox directory with which this transport should decide where
-     *      to deliver a message.
+     * @param callbacks
+     *      Collection of user-defined callbacks to customize the behavior of
+     *      the transport.
      * @param transportId
      *      This transport's unique identifier in the group of transports among
      *      which this transport will communicate.
@@ -502,19 +345,18 @@ class Transport {
      *      Pointer to the new transport instance.
      */
     static Homa::unique_ptr<Transport> create(Driver* driver,
-                                              MailboxDir* mailboxDir,
+                                              Callbacks* callbacks,
                                               uint64_t transportId);
 
     /**
-     * Create a socket that can be used to send and receive messages.
+     * Allocate Message that can be sent with this Transport.
      *
      * @param port
-     *      The port number allocated to the socket.
+     *      Port number of the socket from which the message will be sent.
      * @return
-     *      Pointer to the new socket, if the port number is not in use;
-     *      nullptr, otherwise.
+     *      A pointer to the allocated message.
      */
-    virtual Homa::unique_ptr<Socket> open(uint16_t port) = 0;
+    virtual Homa::unique_ptr<Homa::OutMessage> alloc(uint16_t port) = 0;
 
     /**
      * Return the driver that this transport uses to send and receive packets.
@@ -547,21 +389,6 @@ class Transport {
      *      IpAddress of the socket from which the packet is sent.
      */
     virtual void processPacket(Driver::Packet* packet, IpAddress source) = 0;
-
-    /**
-     * Register a callback function to be invoked when some packets just became
-     * ready to be sent (and there was none before).
-     *
-     * This callback allows the transport library to notify the users that
-     * trySend() should be invoked again as soon as possible. For example,
-     * the callback can be used to implement wakeup signals for the thread
-     * that is responsible for calling trySend(), if this thread decides to
-     * sleep when there is no packets to send.
-     *
-     * @param func
-     *      The function object to invoke.
-     */
-    virtual void registerCallbackSendReady(Callback func) = 0;
 
     /**
      * Attempt to send out packets for any messages with unscheduled/granted

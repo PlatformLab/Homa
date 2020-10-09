@@ -44,13 +44,11 @@ extern "C" {
         void* p;                  \
     } homa_##x;
 
-DEFINE_HOMA_OBJ_HANDLE(driver)      /* Homa::Driver     */
-DEFINE_HOMA_OBJ_HANDLE(inmsg)       /* Homa::InMessage  */
-DEFINE_HOMA_OBJ_HANDLE(outmsg)      /* Homa::OutMessage */
-DEFINE_HOMA_OBJ_HANDLE(mailbox)     /* Homa::Mailbox    */
-DEFINE_HOMA_OBJ_HANDLE(mailbox_dir) /* Homa::MailboxDir */
-DEFINE_HOMA_OBJ_HANDLE(sk)          /* Homa::Socket     */
-DEFINE_HOMA_OBJ_HANDLE(trans)       /* Homa::Transport  */
+DEFINE_HOMA_OBJ_HANDLE(callbacks) /* Homa::Callbacks  */
+DEFINE_HOMA_OBJ_HANDLE(driver)    /* Homa::Driver     */
+DEFINE_HOMA_OBJ_HANDLE(inmsg)     /* Homa::InMessage  */
+DEFINE_HOMA_OBJ_HANDLE(outmsg)    /* Homa::OutMessage */
+DEFINE_HOMA_OBJ_HANDLE(trans)     /* Homa::Transport  */
 
 /* ============================ */
 /*     Homa::InMessage API      */
@@ -135,50 +133,9 @@ extern void homa_outmsg_reserve(homa_outmsg out_msg, size_t n);
 extern void homa_outmsg_send(homa_outmsg out_msg, uint32_t ip, uint16_t port);
 
 /**
- * homa_outmsg_register_cb - C-binding for
- * Homa::OutMessage::registerCallbackEndState
- */
-extern void homa_outmsg_register_cb_end_state(homa_outmsg out_msg,
-                                              void (*cb)(void*), void* data);
-
-/**
  * homa_outmsg_release - C-binding for Homa::OutMessage::release
  */
 extern void homa_outmsg_release(homa_outmsg out_msg);
-
-/* ============================ */
-/*       Homa::Socket API       */
-/* ============================ */
-
-/**
- * homa_sk_alloc - C-binding for Homa::Socket::alloc
- */
-extern homa_outmsg homa_sk_alloc(homa_sk sk);
-
-/**
- * homa_sk_receive - C-binding for Homa::Socket::receive
- */
-extern homa_inmsg homa_sk_receive(homa_sk sk, bool blocking);
-
-/**
- * homa_sk_shutdown - C-binding for Homa::Socket::shutdown
- */
-extern void homa_sk_shutdown(homa_sk sk);
-
-/**
- * homa_sk_is_shutdown - C-binding for Homa::Socket::isShutdown
- */
-extern bool homa_sk_is_shutdown(homa_sk sk);
-
-/**
- * homa_sk_local_addr - C-binding for Homa::Socket::getLocalAddress
- */
-extern void homa_sk_local_addr(homa_sk sk, uint32_t* ip, uint16_t* port);
-
-/**
- * homa_sk_close - C-binding for Homa::Socket::close
- */
-extern void homa_sk_close(homa_sk sk);
 
 /* ============================ */
 /*     Homa::Transport API      */
@@ -187,7 +144,7 @@ extern void homa_sk_close(homa_sk sk);
 /**
  * homa_trans_create - C-binding for Homa::Transport::create
  */
-extern homa_trans homa_trans_create(homa_driver drv, homa_mailbox_dir dir,
+extern homa_trans homa_trans_create(homa_driver drv, homa_callbacks cbs,
                                     uint64_t id);
 
 /**
@@ -196,9 +153,9 @@ extern homa_trans homa_trans_create(homa_driver drv, homa_mailbox_dir dir,
 extern void homa_trans_free(homa_trans trans);
 
 /**
- * homa_trans_open - C-binding for Homa::Transport::open
+ * homa_trans_alloc - C-binding for Homa::Transport::alloc
  */
-extern homa_sk homa_trans_open(homa_trans trans, uint16_t port);
+extern homa_outmsg homa_trans_alloc(homa_trans trans, uint16_t port);
 
 /**
  * homa_trans_check_timeouts - C-binding for Homa::Transport::checkTimeouts
@@ -215,13 +172,6 @@ extern uint64_t homa_trans_id(homa_trans trans);
  */
 extern void homa_trans_proc(homa_trans trans, uintptr_t desc, void* payload,
                             int32_t len, uint32_t src_ip);
-
-/**
- * homa_trans_try_send - C-binding for
- * Homa::Transport::registerCallbackSendReady
- */
-extern void homa_trans_register_cb_send_ready(homa_trans trans,
-                                              void (*cb)(void*), void* data);
 
 /**
  * homa_trans_try_send - C-binding for Homa::Transport::trySend

@@ -34,39 +34,39 @@ const uint64_t RESEND_INTERVAL_US = BASE_TIMEOUT_US;
  *
  * @param driver
  *      Driver with which this transport should send and receive packets.
- * @param mailboxDir
- *      Mailbox directory with which this transport should deliver messages.
+ * @param callbacks
+ *      User-defined transport callbacks.
  * @param transportId
  *      This transport's unique identifier in the group of transports among
  *      which this transport will communicate.
  */
-TransportImpl::TransportImpl(Driver* driver, MailboxDir* mailboxDir,
+TransportImpl::TransportImpl(Driver* driver, Callbacks* callbacks,
                              uint64_t transportId)
     : transportId(transportId)
+    , callbacks(callbacks)
     , driver(driver)
     , policyManager(new Policy::Manager(driver))
-    , sender(new Sender(transportId, driver, policyManager.get(),
+    , sender(new Sender(transportId, driver, callbacks, policyManager.get(),
                         PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                         PerfUtils::Cycles::fromMicroseconds(PING_INTERVAL_US)))
     , receiver(
-          new Receiver(driver, mailboxDir, policyManager.get(),
+          new Receiver(driver, callbacks, policyManager.get(),
                        PerfUtils::Cycles::fromMicroseconds(MESSAGE_TIMEOUT_US),
                        PerfUtils::Cycles::fromMicroseconds(RESEND_INTERVAL_US)))
-    , mailboxDir(mailboxDir)
 {}
 
 /**
  * Construct an instance of a Homa-based transport for unit testing.
  */
-TransportImpl::TransportImpl(Driver* driver, MailboxDir* mailboxDir,
+TransportImpl::TransportImpl(Driver* driver, Callbacks* callbacks,
                              Sender* sender, Receiver* receiver,
                              uint64_t transportId)
     : transportId(transportId)
+    , callbacks(callbacks)
     , driver(driver)
     , policyManager(new Policy::Manager(driver))
     , sender(sender)
     , receiver(receiver)
-    , mailboxDir(mailboxDir)
 {}
 
 /**
@@ -87,16 +87,12 @@ TransportImpl::free()
     delete this;
 }
 
-/// See Homa::Transport::open()
-Homa::unique_ptr<Socket>
-TransportImpl::open(uint16_t port)
+/// See Homa::Transport::alloc()
+Homa::unique_ptr<OutMessage>
+TransportImpl::alloc(uint16_t port)
 {
-    Mailbox* mailbox = mailboxDir->alloc(port);
-    if (!mailbox) {
-        return nullptr;
-    }
-    SocketImpl* socket = new SocketImpl(this, port, mailbox);
-    return Homa::unique_ptr<Socket>(socket);
+    OutMessage* outMessage = sender->allocMessage(port);
+    return unique_ptr<OutMessage>(outMessage);
 }
 
 /// See Homa::Transport::checkTimeouts()
@@ -153,13 +149,6 @@ TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
     }
 }
 
-/// See Homa::Transport::registerCallbackSendReady()
-void
-TransportImpl::registerCallbackSendReady(Callback func)
-{
-    sender->registerCallbackSendReady(func);
-}
-
 /// See Homa::Transport::trySend()
 bool
 TransportImpl::trySend(uint64_t* waitUntil)
@@ -172,69 +161,6 @@ bool
 TransportImpl::trySendGrants()
 {
     return receiver->trySendGrants();
-}
-
-/**
- * Construct an instance of a Homa socket.
- *
- * @param transport
- *      Transport that owns the socket.
- * @param port
- *      Local port number of the socket.
- * @param mailbox
- *      Mailbox assigned to this socket.
- */
-TransportImpl::SocketImpl::SocketImpl(TransportImpl* transport, uint16_t port,
-                                      Mailbox* mailbox)
-    : Socket()
-    , disabled()
-    , localAddress{transport->getDriver()->getLocalAddress(), port}
-    , mailbox(mailbox)
-    , transport(transport)
-{}
-
-/// See Homa::Socket::alloc()
-unique_ptr<Homa::OutMessage>
-TransportImpl::SocketImpl::alloc()
-{
-    if (isShutdown()) {
-        return nullptr;
-    }
-    OutMessage* outMessage = transport->sender->allocMessage(localAddress.port);
-    return unique_ptr<OutMessage>(outMessage);
-}
-
-/// See Homa::Socket::close()
-void
-TransportImpl::SocketImpl::close()
-{
-    bool success = transport->mailboxDir->remove(localAddress.port);
-    if (!success) {
-        ERROR("Failed to remove mailbox (port = %u)", localAddress.port);
-    }
-
-    // Destruct the socket (the mailbox may be still in use).
-    // Note: it's actually legal to say "delete this" from a member function:
-    // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
-    delete this;
-}
-
-/// See Homa::Socket::receive()
-unique_ptr<Homa::InMessage>
-TransportImpl::SocketImpl::receive(bool blocking)
-{
-    if (isShutdown()) {
-        return nullptr;
-    }
-    return unique_ptr<InMessage>(mailbox->retrieve(blocking));
-}
-
-/// See Homa::Socket::shutdown()
-void
-TransportImpl::SocketImpl::shutdown()
-{
-    disabled.store(true);
-    mailbox->socketShutdown();
 }
 
 }  // namespace Homa::Core

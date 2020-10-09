@@ -15,7 +15,6 @@
 
 #include <Cycles.h>
 #include <Homa/Debug.h>
-#include <Homa/Utils/SimpleMailboxDir.h>
 #include <gtest/gtest.h>
 
 #include <mutex>
@@ -61,14 +60,31 @@ MATCHER_P(EqPacketLen, length, "")
     return arg->length == length;
 }
 
+class MockCallbacks : public Callbacks {
+  public:
+    explicit MockCallbacks()
+        : receivedMessage()
+    {}
+
+    bool deliver(uint16_t port, Homa::InMessage* message) override
+    {
+        if (port != 60001) {
+            return false;
+        }
+        receivedMessage = message;
+        return true;
+    }
+
+    Homa::InMessage* receivedMessage;
+};
+
 class ReceiverTest : public ::testing::Test {
   public:
     ReceiverTest()
-        : mockDriver()
+        : mockCallbacks()
+        , mockDriver()
         , mockPacket()
         , mockPolicyManager(&mockDriver)
-        , mailboxDir()
-        , mailbox(mailboxDir.alloc(60001))
         , payload()
         , packetBuf{&payload}
         , receiver()
@@ -79,7 +95,7 @@ class ReceiverTest : public ::testing::Test {
         mockPacket = packetBuf.toPacket();
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        receiver = new Receiver(&mockDriver, &mailboxDir, &mockPolicyManager,
+        receiver = new Receiver(&mockDriver, &mockCallbacks, &mockPolicyManager,
                                 messageTimeoutCycles, resendIntervalCycles);
         PerfUtils::Cycles::mockTscValue = 10000;
     }
@@ -95,11 +111,10 @@ class ReceiverTest : public ::testing::Test {
     static const uint64_t messageTimeoutCycles = 1000;
     static const uint64_t resendIntervalCycles = 100;
 
+    MockCallbacks mockCallbacks;
     NiceMock<Homa::Mock::MockDriver> mockDriver;
     Driver::Packet mockPacket;
     NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;
-    SimpleMailboxDir mailboxDir;
-    Mailbox* mailbox;
     char payload[1028];
     Homa::Mock::MockDriver::PacketBuf packetBuf;
     Receiver* receiver;
@@ -221,7 +236,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(4U, message->numPackets);
     EXPECT_EQ(0U, info->bytesRemaining);
     EXPECT_EQ(Receiver::Message::State::COMPLETED, message->state);
-    EXPECT_EQ(message, mailbox->retrieve(false));
+    EXPECT_EQ(message, mockCallbacks.receivedMessage);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // -------------------------------------------------------------------------

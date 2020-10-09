@@ -82,7 +82,6 @@ add_library(Homa
     src/Receiver.cc
     src/Sender.cc
     src/Shenango.cc
-    src/SimpleMailboxDir.cc
     src/StringUtil.cc
     src/ThreadId.cc
     src/TransportImpl.cc

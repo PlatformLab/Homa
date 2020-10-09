@@ -109,66 +109,17 @@ homa_outmsg_send(homa_outmsg out_msg, uint32_t ip, uint16_t port)
 }
 
 void
-homa_outmsg_register_cb_end_state(homa_outmsg out_msg, void (*cb)(void*),
-                                  void* data)
-{
-    std::function<void()> func = std::bind(cb, data);
-    deref(OutMessage, out_msg).registerCallbackEndState(func);
-}
-
-void
 homa_outmsg_release(homa_outmsg out_msg)
 {
     OutMessage::Deleter deleter;
     deleter(&deref(OutMessage, out_msg));
 }
 
-homa_outmsg
-homa_sk_alloc(homa_sk sk)
-{
-    unique_ptr<OutMessage> out_msg = deref(Socket, sk).alloc();
-    return homa_outmsg{out_msg.release()};
-}
-
-homa_inmsg
-homa_sk_receive(homa_sk sk, bool blocking)
-{
-    unique_ptr<InMessage> in_msg = deref(Socket, sk).receive(blocking);
-    return homa_inmsg{in_msg.release()};
-}
-
-void
-homa_sk_shutdown(homa_sk sk)
-{
-    deref(Socket, sk).shutdown();
-}
-
-bool
-homa_sk_is_shutdown(homa_sk sk)
-{
-    return deref(Socket, sk).isShutdown();
-}
-
-void
-homa_sk_local_addr(homa_sk sk, uint32_t* ip, uint16_t* port)
-{
-    SocketAddress addr = deref(Socket, sk).getLocalAddress();
-    *ip = (uint32_t)addr.ip;
-    *port = addr.port;
-}
-
-void
-homa_sk_close(homa_sk sk)
-{
-    Socket::Deleter deleter;
-    deleter(&deref(Socket, sk));
-}
-
 homa_trans
-homa_trans_create(homa_driver drv, homa_mailbox_dir dir, uint64_t id)
+homa_trans_create(homa_driver drv, homa_callbacks cbs, uint64_t id)
 {
     unique_ptr<Transport> trans =
-        Transport::create(&deref(Driver, drv), &deref(MailboxDir, dir), id);
+        Transport::create(&deref(Driver, drv), &deref(Callbacks, cbs), id);
     return homa_trans{trans.release()};
 }
 
@@ -179,11 +130,11 @@ homa_trans_free(homa_trans trans)
     deleter(&deref(Transport, trans));
 }
 
-homa_sk
-homa_trans_open(homa_trans trans, uint16_t port)
+homa_outmsg
+homa_trans_alloc(homa_trans trans, uint16_t port)
 {
-    unique_ptr<Socket> sk = deref(Transport, trans).open(port);
-    return homa_sk{sk.release()};
+    unique_ptr<OutMessage> out_msg = deref(Transport, trans).alloc(port);
+    return homa_outmsg{out_msg.release()};
 }
 
 uint64_t
@@ -205,14 +156,6 @@ homa_trans_proc(homa_trans trans, uintptr_t desc, void* payload, int32_t len,
     Driver::Packet packet = {
         .descriptor = desc, .payload = payload, .length = len};
     deref(Transport, trans).processPacket(&packet, IpAddress{src_ip});
-}
-
-void
-homa_trans_register_cb_send_ready(homa_trans trans, void (*cb)(void*),
-                                  void* data)
-{
-    std::function<void()> func = std::bind(cb, data);
-    deref(Transport, trans).registerCallbackSendReady(func);
 }
 
 bool

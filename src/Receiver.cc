@@ -29,8 +29,8 @@ namespace Core {
  *
  * @param driver
  *      The driver used to send and receive packets.
- * @param mailboxDir
- *      The mailbox directory used to lookup message destination.
+ * @param callbacks
+ *      User-defined transport callbacks.
  * @param policyManager
  *      Provides information about the grant and network priority policies.
  * @param messageTimeoutCycles
@@ -40,12 +40,12 @@ namespace Core {
  *      Number of cycles of inactivity to wait between requesting retransmission
  *      of un-received parts of a message.
  */
-Receiver::Receiver(Driver* driver, MailboxDir* mailboxDir,
+Receiver::Receiver(Driver* driver, Callbacks* callbacks,
                    Policy::Manager* policyManager,
                    uint64_t messageTimeoutCycles, uint64_t resendIntervalCycles)
-    : driver(driver)
+    : callbacks(callbacks)
+    , driver(driver)
     , policyManager(policyManager)
-    , mailboxDir(mailboxDir)
     , messageBuckets(messageTimeoutCycles, resendIntervalCycles)
     , schedulerMutex()
     , scheduledPeers()
@@ -165,7 +165,7 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
             message->setState(Message::State::COMPLETED);
             bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
             uint16_t dport = be16toh(header->common.prefix.dport);
-            bool success = mailboxDir->deliver(dport, message);
+            bool success = callbacks->deliver(dport, message);
             if (!success) {
                 lock_bucket.destroy();
                 ERROR("Unable to deliver the message; message dropped");

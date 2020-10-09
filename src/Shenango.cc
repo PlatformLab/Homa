@@ -14,6 +14,8 @@
  */
 
 #include "Homa/Shenango.h"
+
+#include <utility>
 #include "Debug.h"
 #include "Homa/Homa.h"
 
@@ -159,50 +161,18 @@ homa_driver_free(homa_driver drv)
 }
 
 /**
- * A trivial implementation of Mailbox for catching errors.
+ * Shenango-defined callback functions for the transport.
  */
-class ShenangoMailbox final : public Mailbox {
+class ShenangoCallbacks final : Callbacks {
   public:
-    explicit ShenangoMailbox() = default;
-    ~ShenangoMailbox() override = default;
-
-    InMessage* retrieve(bool blocking) override
-    {
-        (void)blocking;
-        PANIC("Shenango should never call Homa::Socket::receive");
-    }
-
-    void socketShutdown() override
-    {
-        PANIC("Shenango should never call Homa::Socket::shutdown");
-    }
-};
-
-/**
- * An almost trivial implementation of MailboxDir that uses Shenango's RCU
- * mechanism to prevent a mailbox from being destroyed until all readers have
- * closed it.
- *
- * Note: Shenango doesn't use Homa::Socket to receive messages, so the only
- * method that has a meaningful implementation is open().
- */
-class ShenangoMailboxDir final : MailboxDir {
-  public:
-    explicit ShenangoMailboxDir(uint8_t proto, uint32_t local_ip)
+    explicit ShenangoCallbacks(uint8_t proto, uint32_t local_ip,
+                               std::function<void()> notify_send_ready)
         : proto(proto)
         , local_ip{local_ip}
+        , notify_send_ready(std::move(notify_send_ready))
     {}
 
-    ~ShenangoMailboxDir() override = default;
-
-    Mailbox* alloc(uint16_t port) override
-    {
-        // Shenango doesn't rely on Homa::Socket to receive messages,
-        // so there is no need to assign a real mailbox to SocketImpl.
-        static ShenangoMailbox dummyMailbox;
-        (void)port;
-        return &dummyMailbox;
-    }
+    ~ShenangoCallbacks() override = default;
 
     bool deliver(uint16_t port, InMessage* message) override
     {
@@ -217,12 +187,9 @@ class ShenangoMailboxDir final : MailboxDir {
         return trans_entry != nullptr;
     }
 
-    bool remove(uint16_t port) override
+    void notifySendReady() override
     {
-        // Nothing to do; Shenango is responsible for taking care of freeing
-        // the resources related to homa sockets.
-        (void)port;
-        return true;
+        notify_send_ready();
     }
 
     /// Protocol number reserved for Homa; defined as IPPROTO_HOMA in Shenango.
@@ -230,17 +197,22 @@ class ShenangoMailboxDir final : MailboxDir {
 
     /// Local IP address of the transport.
     const IpAddress local_ip;
+
+    /// Callback function for notifySendReady().
+    std::function<void()> notify_send_ready;
 };
 
-homa_mailbox_dir
-homa_mb_dir_create(uint8_t proto, uint32_t local_ip)
+homa_callbacks
+homa_callbacks_create(uint8_t proto, uint32_t local_ip,
+                      void (*cb_send_ready)(void*), void* cb_data)
 {
-    void* dir = new ShenangoMailboxDir(proto, local_ip);
-    return homa_mailbox_dir{dir};
+    void* cbs = new ShenangoCallbacks(proto, local_ip,
+                                      std::bind(cb_send_ready, cb_data));
+    return homa_callbacks{cbs};
 }
 
 void
-homa_mb_dir_free(homa_mailbox_dir mailbox_dir)
+homa_callbacks_free(homa_callbacks cbs)
 {
-    delete static_cast<ShenangoMailboxDir*>(mailbox_dir.p);
+    delete static_cast<ShenangoCallbacks*>(cbs.p);
 }

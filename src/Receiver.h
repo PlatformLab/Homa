@@ -44,7 +44,7 @@ namespace Core {
  */
 class Receiver {
   public:
-    explicit Receiver(Driver* driver, MailboxDir* mailboxDir,
+    explicit Receiver(Driver* driver, Callbacks* callbacks,
                       Policy::Manager* policyManager,
                       uint64_t messageTimeoutCycles,
                       uint64_t resendIntervalCycles);
@@ -466,15 +466,15 @@ class Receiver {
     void unschedule(Message* message, const SpinLock::Lock& lock);
     void updateSchedule(Message* message, const SpinLock::Lock& lock);
 
+    /// User-defined transport callbacks. Not owned by this class.
+    Callbacks* const callbacks;
+
     /// Driver with which all packets will be sent and received.  This driver
     /// is chosen by the Transport that owns this Sender.
     Driver* const driver;
 
     /// Provider of network packet priority and grant policy decisions.
     Policy::Manager* const policyManager;
-
-    /// Records where to deliver the messages when they are completed.
-    MailboxDir* const mailboxDir;
 
     /// Tracks the set of inbound messages being received by this Receiver.
     MessageBucketMap messageBuckets;

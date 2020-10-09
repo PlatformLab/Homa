@@ -16,7 +16,6 @@
 #include <Homa/Debug.h>
 #include <Homa/Drivers/Fake/FakeDriver.h>
 #include <Homa/Homa.h>
-#include <Homa/Utils/SimpleMailboxDir.h>
 #include <Homa/Utils/TransportPoller.h>
 
 #include <atomic>
@@ -55,23 +54,41 @@ struct MessageHeader {
 } __attribute__((packed));
 
 struct Node {
+    class Callbacks : public Homa::Callbacks {
+      public:
+        explicit Callbacks(std::vector<Homa::InMessage*>& receiveQueue)
+            : receiveQueue(receiveQueue)
+        {}
+
+        bool deliver(uint16_t port, Homa::InMessage* message) override
+        {
+            if (port != SERVER_PORT) {
+                return false;
+            }
+            receiveQueue.push_back(message);
+            return true;
+        }
+
+        std::vector<Homa::InMessage*>& receiveQueue;
+    };
+
     explicit Node(uint64_t id)
         : id(id)
+        , callbacks(receiveQueue)
         , driver()
-        , mailboxDir()
-        , transport(Homa::Transport::create(&driver, &mailboxDir, id))
+        , transport(Homa::Transport::create(&driver, &callbacks, id))
         , thread()
+        , receiveQueue()
         , run(false)
-        , serverSocket(transport->open(SERVER_PORT))
     {}
 
     const uint64_t id;
+    Callbacks callbacks;
     Homa::Drivers::Fake::FakeDriver driver;
-    Homa::SimpleMailboxDir mailboxDir;
     Homa::unique_ptr<Homa::Transport> transport;
     std::thread thread;
+    std::vector<Homa::InMessage*> receiveQueue;
     std::atomic<bool> run;
-    Homa::unique_ptr<Homa::Socket> serverSocket;
 };
 
 void
@@ -83,9 +100,8 @@ serverMain(Node* server, std::vector<Homa::IpAddress> addresses)
             break;
         }
 
-        Homa::unique_ptr<Homa::InMessage> message =
-            server->serverSocket->receive(false);
-
+        Homa::unique_ptr<Homa::InMessage> message(server->receiveQueue.back());
+        server->receiveQueue.pop_back();
         if (message) {
             MessageHeader header;
             message->get(0, &header, sizeof(MessageHeader));
@@ -119,7 +135,6 @@ clientMain(int count, int size, std::vector<Homa::IpAddress> addresses)
 
     Node client(1);
     Homa::TransportPoller poller(client.transport.get());
-    Homa::unique_ptr<Homa::Socket> clientSocket = client.transport->open(0);
     for (int i = 0; i < count; ++i) {
         uint64_t id = nextId++;
         char payload[size];
@@ -129,7 +144,7 @@ clientMain(int count, int size, std::vector<Homa::IpAddress> addresses)
 
         Homa::IpAddress destAddress = addresses[randAddr(gen)];
 
-        Homa::unique_ptr<Homa::OutMessage> message = clientSocket->alloc();
+        Homa::unique_ptr<Homa::OutMessage> message = client.transport->alloc(0);
         {
             MessageHeader header;
             header.id = id;

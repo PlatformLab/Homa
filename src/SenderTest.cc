@@ -40,10 +40,21 @@ MATCHER_P(EqPacket, p, "")
     return arg->descriptor == p->descriptor;
 }
 
+class MockCallbacks : public Callbacks {
+  public:
+    explicit MockCallbacks() = default;
+
+    bool deliver(uint16_t port, Homa::InMessage* message) override
+    {
+        return true;
+    }
+};
+
 class SenderTest : public ::testing::Test {
   public:
     SenderTest()
-        : mockDriver()
+        : mockCallbacks()
+        , mockDriver()
         , mockPacket()
         , mockPolicyManager(&mockDriver)
         , payload()
@@ -57,7 +68,7 @@ class SenderTest : public ::testing::Test {
         ON_CALL(mockDriver, getQueuedBytes).WillByDefault(Return(0));
         Debug::setLogPolicy(
             Debug::logPolicyFromString("src/ObjectPool@SILENT"));
-        sender = new Sender(22, &mockDriver, &mockPolicyManager,
+        sender = new Sender(22, &mockDriver, &mockCallbacks, &mockPolicyManager,
                             messageTimeoutCycles, pingIntervalCycles);
         PerfUtils::Cycles::mockTscValue = 10000;
     }
@@ -69,6 +80,7 @@ class SenderTest : public ::testing::Test {
         PerfUtils::Cycles::mockTscValue = 0;
     }
 
+    MockCallbacks mockCallbacks;
     NiceMock<Homa::Mock::MockDriver> mockDriver;
     Driver::Packet mockPacket;
     NiceMock<Homa::Mock::MockPolicyManager> mockPolicyManager;

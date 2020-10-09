@@ -41,7 +41,7 @@ namespace Core {
  */
 class Sender {
   public:
-    explicit Sender(uint64_t transportId, Driver* driver,
+    explicit Sender(uint64_t transportId, Driver* driver, Callbacks* callbacks,
                     Policy::Manager* policyManager,
                     uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
     virtual ~Sender();
@@ -53,7 +53,6 @@ class Sender {
     virtual void handleUnknownPacket(Driver::Packet* packet);
     virtual void handleErrorPacket(Driver::Packet* packet);
     virtual uint64_t checkTimeouts();
-    virtual void registerCallbackSendReady(Callback func);
     virtual bool trySend(uint64_t* waitUntil);
 
   private:
@@ -149,7 +148,6 @@ class Sender {
             // packets is not initialized to reduce the work done during
             // construction. See Message::occupied.
             , state(Status::NOT_STARTED)
-            , notifyEndState()
             , bucketNode(this)
             , messageTimeout(this)
             , pingTimeout(this)
@@ -162,7 +160,6 @@ class Sender {
         virtual Status getStatus() const;
         virtual size_t length() const;
         virtual void prepend(const void* source, size_t count);
-        virtual void registerCallbackEndState(Callback func);
         virtual void release();
         virtual void reserve(size_t count);
         virtual void send(SocketAddress destination,
@@ -222,9 +219,6 @@ class Sender {
 
         /// This message's current state.
         std::atomic<Status> state;
-
-        /// Callback function to invoke when _state_ reaches an end state.
-        Callback notifyEndState;
 
         /// Intrusive structure used by the Sender to hold on to this Message
         /// in one of the Sender's MessageBuckets.  Access to this structure
@@ -407,6 +401,9 @@ class Sender {
     /// Transport identifier.
     const uint64_t transportId;
 
+    /// User-defined transport callbacks; not owned by this class.
+    Callbacks* const callbacks;
+
     /// Driver with which all packets will be sent and received.  This driver
     /// is chosen by the Transport that owns this Sender.
     Driver* const driver;
@@ -433,10 +430,6 @@ class Sender {
     /// messages in the sendQueue. Encoded into a single bool so that checking
     /// if there is work to do is more efficient.
     bool sendReady;
-
-    /// Callback function to be invoked when _sendReady_ flips from false to
-    /// true.
-    Callback notifySendReady;
 
     /// A list of outbound messages that have unsent packets.  Messages are kept
     /// in order of priority.

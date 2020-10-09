@@ -33,6 +33,8 @@ namespace Core {
  *      Unique identifier for the Transport that owns this Sender.
  * @param driver
  *      The driver used to send and receive packets.
+ * @param callbacks
+ *      Collections of user-defined transport callbacks.
  * @param policyManager
  *      Provides information about the network packet priority policies.
  * @param messageTimeoutCycles
@@ -42,10 +44,11 @@ namespace Core {
  *      Number of cycles of inactivity to wait between checking on the liveness
  *      of an Sender::Message.
  */
-Sender::Sender(uint64_t transportId, Driver* driver,
+Sender::Sender(uint64_t transportId, Driver* driver, Callbacks* callbacks,
                Policy::Manager* policyManager, uint64_t messageTimeoutCycles,
                uint64_t pingIntervalCycles)
     : transportId(transportId)
+    , callbacks(callbacks)
     , driver(driver)
     , policyManager(policyManager)
     , nextMessageSequenceNumber(1)
@@ -55,7 +58,6 @@ Sender::Sender(uint64_t transportId, Driver* driver,
     , messageBuckets(messageTimeoutCycles, pingIntervalCycles)
     , queueMutex()
     , sendReady(false)
-    , notifySendReady()
     , sendQueue()
     , messageAllocator()
 {}
@@ -592,16 +594,6 @@ void
 Sender::Message::setStatus(OutMessage::Status newStatus)
 {
     state.store(newStatus, std::memory_order_release);
-    if (notifyEndState) {
-        switch (newStatus) {
-            case OutMessage::Status::CANCELED:
-            case OutMessage::Status::COMPLETED:
-            case OutMessage::Status::FAILED:
-                notifyEndState();
-            default:
-                break;
-        }
-    }
 }
 
 /**
@@ -641,15 +633,6 @@ Sender::Message::prepend(const void* source, size_t count)
         packetIndex++;
         packetOffset = 0;
     }
-}
-
-/**
- * @copydoc Homa::OutMessage::registerCallbackEndState()
- */
-void
-Sender::Message::registerCallbackEndState(Callback func)
-{
-    notifyEndState = std::move(func);
 }
 
 /**
@@ -999,13 +982,6 @@ Sender::checkPingTimeouts()
     return globalNextTimeout;
 }
 
-/// See Homa::Transport::registerCallbackSendReady()
-void
-Sender::registerCallbackSendReady(Callback func)
-{
-    notifySendReady = std::move(func);
-}
-
 /**
  * Attempt to wake up the pacer thread that is responsible for calling trySend()
  * repeatedly, if it's currently blocked waiting for packets to become ready to
@@ -1022,9 +998,7 @@ Sender::signalPacerThread(const SpinLock::Lock& lockHeld)
 {
     (void)lockHeld;
     sendReady = true;
-    if (notifySendReady) {
-        notifySendReady();
-    }
+    callbacks->notifySendReady();
 }
 
 /**
