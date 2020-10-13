@@ -14,9 +14,10 @@
  */
 
 #include "Homa/Bindings/CHoma.h"
-#include "Homa/Homa.h"
+#include "Homa/Core/Transport.h"
 
 using namespace Homa;
+using Transport = Core::Transport;
 
 /// Shorthand for converting C-style Homa object handle types back to C++ types.
 #define deref(T, x) (*static_cast<T*>(x.p))
@@ -118,8 +119,8 @@ homa_outmsg_release(homa_outmsg out_msg)
 homa_trans
 homa_trans_create(homa_driver drv, homa_callbacks cbs, uint64_t id)
 {
-    unique_ptr<Transport> trans =
-        Transport::create(&deref(Driver, drv), &deref(Callbacks, cbs), id);
+    unique_ptr<Transport> trans = Transport::create(
+        &deref(Driver, drv), &deref(Transport::Callbacks, cbs), id);
     return homa_trans{trans.release()};
 }
 
@@ -147,6 +148,12 @@ uint64_t
 homa_trans_id(homa_trans trans)
 {
     return deref(Transport, trans).getId();
+}
+
+homa_driver homa_trans_get_drv(homa_trans trans)
+{
+    Driver* drv = deref(Transport, trans).getDriver();
+    return homa_driver{drv};
 }
 
 void

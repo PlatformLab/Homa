@@ -60,7 +60,7 @@ MATCHER_P(EqPacketLen, length, "")
     return arg->length == length;
 }
 
-class MockCallbacks : public Callbacks {
+class MockCallbacks : public Transport::Callbacks {
   public:
     explicit MockCallbacks()
         : receivedMessage()

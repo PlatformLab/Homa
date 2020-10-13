@@ -29,6 +29,14 @@ const uint64_t PING_INTERVAL_US = 3 * BASE_TIMEOUT_US;
 /// Microseconds to wait before performing retires on inbound messages.
 const uint64_t RESEND_INTERVAL_US = BASE_TIMEOUT_US;
 
+Homa::unique_ptr<Transport>
+Transport::create(Driver* driver, Callbacks* callbacks, uint64_t transportId)
+{
+    Transport* transport =
+        new Core::TransportImpl(driver, callbacks, transportId);
+    return Homa::unique_ptr<Transport>(transport);
+}
+
 /**
  * Construct an instance of a Homa-based transport.
  *
@@ -68,11 +76,6 @@ TransportImpl::TransportImpl(Driver* driver, Callbacks* callbacks,
     , sender(sender)
     , receiver(receiver)
 {}
-
-/**
- * TransportImpl Destructor.
- */
-TransportImpl::~TransportImpl() = default;
 
 /// See Homa::Transport::free()
 void

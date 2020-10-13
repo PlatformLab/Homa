@@ -142,44 +142,49 @@ extern void homa_outmsg_release(homa_outmsg out_msg);
 /* ============================ */
 
 /**
- * homa_trans_create - C-binding for Homa::Transport::create
+ * homa_trans_create - C-binding for Homa::TransportBase::create
  */
 extern homa_trans homa_trans_create(homa_driver drv, homa_callbacks cbs,
                                     uint64_t id);
 
 /**
- * homa_trans_free - C-binding for Homa::Transport::free
+ * homa_trans_free - C-binding for Homa::TransportBase::free
  */
 extern void homa_trans_free(homa_trans trans);
 
 /**
- * homa_trans_alloc - C-binding for Homa::Transport::alloc
+ * homa_trans_alloc - C-binding for Homa::TransportBase::alloc
  */
 extern homa_outmsg homa_trans_alloc(homa_trans trans, uint16_t port);
 
 /**
- * homa_trans_check_timeouts - C-binding for Homa::Transport::checkTimeouts
+ * homa_trans_get_drv - C-binding for Homa::TransportBase::getDriver
  */
-extern uint64_t homa_trans_check_timeouts(homa_trans trans);
+extern homa_driver homa_trans_get_drv(homa_trans trans);
 
 /**
- * homa_trans_id - C-binding for Homa::Transport::getId
+ * homa_trans_id - C-binding for Homa::TransportBase::getId
  */
 extern uint64_t homa_trans_id(homa_trans trans);
 
 /**
- * homa_trans_proc - C-binding for Homa::Transport::processPacket
+ * homa_trans_check_timeouts - C-binding for Core::Transport::checkTimeouts
+ */
+extern uint64_t homa_trans_check_timeouts(homa_trans trans);
+
+/**
+ * homa_trans_proc - C-binding for Core::Transport::processPacket
  */
 extern void homa_trans_proc(homa_trans trans, uintptr_t desc, void* payload,
                             int32_t len, uint32_t src_ip);
 
 /**
- * homa_trans_try_send - C-binding for Homa::Transport::trySend
+ * homa_trans_try_send - C-binding for Core::Transport::trySend
  */
 extern bool homa_trans_try_send(homa_trans trans, uint64_t* wait_until);
 
 /**
- * homa_trans_try_grant - C-binding for Homa::Transport::trySendGrants
+ * homa_trans_try_grant - C-binding for Core::Transport::trySendGrants
  */
 extern bool homa_trans_try_grant(homa_trans trans);
 

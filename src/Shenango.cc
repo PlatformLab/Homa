@@ -13,11 +13,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "Homa/Shenango.h"
+#include "Homa/Transports/Shenango.h"
 
 #include <utility>
 #include "Debug.h"
-#include "Homa/Homa.h"
+#include "Homa/Core/Transport.h"
 
 using namespace Homa;
 
@@ -67,6 +67,48 @@ DECLARE_SHENANGO_FUNC(void*, trans_table_lookup, uint8_t, SocketAddress,
                       SocketAddress)
 
 /**
+ * Callback functions specialized for the Shenango runtime.
+ */
+class ShenangoCallbacks final : Core::Transport::Callbacks {
+  public:
+    explicit ShenangoCallbacks(uint8_t proto, uint32_t local_ip,
+                               std::function<void()> notify_send_ready)
+        : proto(proto)
+        , local_ip{local_ip}
+        , notify_send_ready(std::move(notify_send_ready))
+    {}
+
+    ~ShenangoCallbacks() override = default;
+
+    bool deliver(uint16_t port, InMessage* message) override
+    {
+        // The socket table in Shenango is protected by an RCU.
+        shenango_rcu_read_lock();
+        SocketAddress laddr = {local_ip, port};
+        void* trans_entry = shenango_trans_table_lookup(proto, laddr, {});
+        if (trans_entry) {
+            shenango_homa_mb_deliver(trans_entry, homa_inmsg{message});
+        }
+        shenango_rcu_read_unlock();
+        return trans_entry != nullptr;
+    }
+
+    void notifySendReady() override
+    {
+        notify_send_ready();
+    }
+
+    /// Protocol number reserved for Homa; defined as IPPROTO_HOMA in Shenango.
+    const uint8_t proto;
+
+    /// Local IP address of the transport.
+    const IpAddress local_ip;
+
+    /// Callback function for notifySendReady().
+    std::function<void()> notify_send_ready;
+};
+
+/**
  * A simple shim driver that translates Driver operations to Shenango
  * functions.
  */
@@ -79,7 +121,10 @@ class ShenangoDriver final : public Driver {
         , local_ip{local_ip}
         , max_payload(max_payload)
         , link_speed(link_speed)
+        , callbacks()
     {}
+
+    ~ShenangoDriver() override = default;
 
     Packet allocPacket() override
     {
@@ -132,7 +177,6 @@ class ShenangoDriver final : public Driver {
         return shenango_homa_queued_bytes();
     }
 
-  private:
     /// Protocol number reserved for Homa; defined as IPPROTO_HOMA in Shenango.
     const uint8_t proto;
 
@@ -144,75 +188,28 @@ class ShenangoDriver final : public Driver {
 
     /// Effective network bandwidth, in Mbits/second.
     const uint32_t link_speed;
+
+    /// Callback object. Piggybacked here to allow automatic destruction.
+    std::unique_ptr<ShenangoCallbacks> callbacks;
 };
 
-homa_driver
-homa_driver_create(uint8_t proto, uint32_t local_ip, uint32_t max_payload,
-                   uint32_t link_speed)
+homa_trans
+homa_create_shenango_trans(uint64_t id, uint8_t proto, uint32_t local_ip,
+                           uint32_t max_payload, uint32_t link_speed,
+                           void (*cb_send_ready)(void*), void* cb_data)
 {
-    void* driver = new ShenangoDriver(proto, local_ip, max_payload, link_speed);
-    return homa_driver{driver};
+    ShenangoCallbacks* callbacks = new ShenangoCallbacks(
+        proto, local_ip, std::bind(cb_send_ready, cb_data));
+    ShenangoDriver* drv =
+        new ShenangoDriver(proto, local_ip, max_payload, link_speed);
+    drv->callbacks.reset(callbacks);
+    return homa_trans_create(homa_driver{drv}, homa_callbacks{callbacks}, id);
 }
 
 void
-homa_driver_free(homa_driver drv)
+homa_free_shenango_trans(homa_trans trans)
 {
+    homa_driver drv = homa_trans_get_drv(trans);
+    homa_trans_free(trans);
     delete static_cast<ShenangoDriver*>(drv.p);
-}
-
-/**
- * Shenango-defined callback functions for the transport.
- */
-class ShenangoCallbacks final : Callbacks {
-  public:
-    explicit ShenangoCallbacks(uint8_t proto, uint32_t local_ip,
-                               std::function<void()> notify_send_ready)
-        : proto(proto)
-        , local_ip{local_ip}
-        , notify_send_ready(std::move(notify_send_ready))
-    {}
-
-    ~ShenangoCallbacks() override = default;
-
-    bool deliver(uint16_t port, InMessage* message) override
-    {
-        // The socket table in Shenango is protected by an RCU.
-        shenango_rcu_read_lock();
-        SocketAddress laddr = {local_ip, port};
-        void* trans_entry = shenango_trans_table_lookup(proto, laddr, {});
-        if (trans_entry) {
-            shenango_homa_mb_deliver(trans_entry, homa_inmsg{message});
-        }
-        shenango_rcu_read_unlock();
-        return trans_entry != nullptr;
-    }
-
-    void notifySendReady() override
-    {
-        notify_send_ready();
-    }
-
-    /// Protocol number reserved for Homa; defined as IPPROTO_HOMA in Shenango.
-    const uint8_t proto;
-
-    /// Local IP address of the transport.
-    const IpAddress local_ip;
-
-    /// Callback function for notifySendReady().
-    std::function<void()> notify_send_ready;
-};
-
-homa_callbacks
-homa_callbacks_create(uint8_t proto, uint32_t local_ip,
-                      void (*cb_send_ready)(void*), void* cb_data)
-{
-    void* cbs = new ShenangoCallbacks(proto, local_ip,
-                                      std::bind(cb_send_ready, cb_data));
-    return homa_callbacks{cbs};
-}
-
-void
-homa_callbacks_free(homa_callbacks cbs)
-{
-    delete static_cast<ShenangoCallbacks*>(cbs.p);
 }

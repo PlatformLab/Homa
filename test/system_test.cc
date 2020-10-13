@@ -15,8 +15,7 @@
 
 #include <Homa/Debug.h>
 #include <Homa/Drivers/Fake/FakeDriver.h>
-#include <Homa/Homa.h>
-#include <Homa/Utils/TransportPoller.h>
+#include <Homa/Transports/PollModeTransport.h>
 
 #include <atomic>
 #include <iostream>
@@ -54,54 +53,30 @@ struct MessageHeader {
 } __attribute__((packed));
 
 struct Node {
-    class Callbacks : public Homa::Callbacks {
-      public:
-        explicit Callbacks(std::vector<Homa::InMessage*>& receiveQueue)
-            : receiveQueue(receiveQueue)
-        {}
-
-        bool deliver(uint16_t port, Homa::InMessage* message) override
-        {
-            if (port != SERVER_PORT) {
-                return false;
-            }
-            receiveQueue.push_back(message);
-            return true;
-        }
-
-        std::vector<Homa::InMessage*>& receiveQueue;
-    };
-
     explicit Node(uint64_t id)
         : id(id)
-        , callbacks(receiveQueue)
         , driver()
-        , transport(Homa::Transport::create(&driver, &callbacks, id))
+        , transport(Homa::PollModeTransport::create(&driver, id))
         , thread()
-        , receiveQueue()
         , run(false)
     {}
 
     const uint64_t id;
-    Callbacks callbacks;
     Homa::Drivers::Fake::FakeDriver driver;
-    Homa::unique_ptr<Homa::Transport> transport;
+    Homa::unique_ptr<Homa::PollModeTransport> transport;
     std::thread thread;
-    std::vector<Homa::InMessage*> receiveQueue;
     std::atomic<bool> run;
 };
 
 void
 serverMain(Node* server, std::vector<Homa::IpAddress> addresses)
 {
-    Homa::TransportPoller poller(server->transport.get());
     while (true) {
         if (server->run.load() == false) {
             break;
         }
 
-        Homa::unique_ptr<Homa::InMessage> message(server->receiveQueue.back());
-        server->receiveQueue.pop_back();
+        Homa::unique_ptr<Homa::InMessage> message(server->transport->receive());
         if (message) {
             MessageHeader header;
             message->get(0, &header, sizeof(MessageHeader));
@@ -114,7 +89,7 @@ serverMain(Node* server, std::vector<Homa::IpAddress> addresses)
             }
             message->acknowledge();
         }
-        poller.poll();
+        server->transport->poll();
     }
 }
 
@@ -134,7 +109,6 @@ clientMain(int count, int size, std::vector<Homa::IpAddress> addresses)
     int numFailed = 0;
 
     Node client(1);
-    Homa::TransportPoller poller(client.transport.get());
     for (int i = 0; i < count; ++i) {
         uint64_t id = nextId++;
         char payload[size];
@@ -166,7 +140,7 @@ clientMain(int count, int size, std::vector<Homa::IpAddress> addresses)
                 numFailed++;
                 break;
             }
-            poller.poll();
+            client.transport->poll();
         }
     }
     return numFailed;

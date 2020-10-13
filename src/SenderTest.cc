@@ -40,7 +40,7 @@ MATCHER_P(EqPacket, p, "")
     return arg->descriptor == p->descriptor;
 }
 
-class MockCallbacks : public Callbacks {
+class MockCallbacks : public Transport::Callbacks {
   public:
     explicit MockCallbacks() = default;
 

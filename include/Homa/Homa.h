@@ -24,7 +24,6 @@
 #define HOMA_INCLUDE_HOMA_HOMA_H
 
 #include <Homa/Driver.h>
-#include <functional>
 
 namespace Homa {
 
@@ -261,92 +260,22 @@ class OutMessage {
 };
 
 /**
- * Collection of user-defined transport callbacks.
- */
-class Callbacks {
-  public:
-    /**
-     * Destructor.
-     */
-    virtual ~Callbacks() = default;
-
-    /**
-     * Invoked when an incoming message arrives and needs to dispatched to its
-     * destination in the user application for processing.
-     *
-     * Here are a few example use cases of this callback:
-     * <ul>
-     * <li> Interaction with the user's thread scheduler: e.g., an application
-     * may want to block on receive until a message is delivered, so this method
-     * can be used to wake up blocking threads.
-     * <li> High-performance message dispatch: e.g., an application may choose
-     * to implement the message receive queue with a concurrent MPMC queue as
-     * opposed to a linked-list protected by a mutex;
-     * <li> Lightweight synchronization: e.g., the socket table that maps from
-     * port numbers to sockets is a read-mostly data structure, so lookup
-     * operations can benefit from synchronization schemes such as RCU.
-     * </ul>
-     *
-     * @param port
-     *      Destination port number of the message.
-     * @param message
-     *      Incoming message to dispatch.
-     * @return
-     *      True if the message is delivered successfully; false, otherwise.
-     */
-    virtual bool deliver(uint16_t port, InMessage* message) = 0;
-
-    /**
-     * Invoked when some packets just became ready to be sent (and there was
-     * none before).
-     *
-     * This callback allows the transport library to notify the users that
-     * trySend() should be invoked again as soon as possible. For example,
-     * the callback can be used to implement wakeup signals for the thread
-     * that is responsible for calling trySend(), if this thread decides to
-     * sleep when there is no packets to send.
-     */
-    virtual void notifySendReady() {}
-};
-
-/**
- * Provides a means of communicating across the network using the Homa protocol.
- *
- * The execution of the transport is driven through repeated calls to methods
- * like checkTimeouts(), processPacket(), trySend(), and trySendGrants(); the
- * transport will not make any progress otherwise.
+ * Basic transport API that are shared between the low-level and high-level
+ * transport interfaces.
  *
  * This class is thread-safe.
  */
-class Transport {
+class TransportBase {
   public:
     /**
      * Custom deleter for use with std::unique_ptr.
      */
     struct Deleter {
-        void operator()(Transport* transport)
+        void operator()(TransportBase* transport)
         {
             transport->free();
         }
     };
-
-    /**
-     * Return a new instance of a Homa-based transport.
-     *
-     * @param driver
-     *      Driver with which this transport should send and receive packets.
-     * @param callbacks
-     *      Collection of user-defined callbacks to customize the behavior of
-     *      the transport.
-     * @param transportId
-     *      This transport's unique identifier in the group of transports among
-     *      which this transport will communicate.
-     * @return
-     *      Pointer to the new transport instance.
-     */
-    static Homa::unique_ptr<Transport> create(Driver* driver,
-                                              Callbacks* callbacks,
-                                              uint64_t transportId);
 
     /**
      * Allocate Message that can be sent with this Transport.
@@ -368,63 +297,12 @@ class Transport {
      */
     virtual uint64_t getId() = 0;
 
-    /**
-     * Process any timeouts that have expired.
-     *
-     * This method must be called periodically to ensure timely handling of
-     * expired timeouts.
-     *
-     * @return
-     *      The rdtsc cycle time when this method should be called again.
-     */
-    virtual uint64_t checkTimeouts() = 0;
-
-    /**
-     * Handle an ingress packet by running it through the transport protocol
-     * stack.
-     *
-     * @param packet
-     *      The ingress packet.
-     * @param source
-     *      IpAddress of the socket from which the packet is sent.
-     */
-    virtual void processPacket(Driver::Packet* packet, IpAddress source) = 0;
-
-    /**
-     * Attempt to send out packets for any messages with unscheduled/granted
-     * bytes in a way that limits queue buildup in the NIC.
-     *
-     * This method must be called eagerly to allow the Transport to make
-     * progress toward sending outgoing messages.
-     *
-     * @param[out] waitUntil
-     *      The rdtsc cycle time when this method should be called again
-     *      (this allows the NIC to drain its transmit queue). Only set
-     *      when this method returns true.
-     * @return
-     *      True if more packets are ready to be transmitted when the method
-     *      returns; false, otherwise.
-     */
-    virtual bool trySend(uint64_t* waitUntil) = 0;
-
-    /**
-     * Attempt to grant to incoming messages according to the Homa protocol.
-     *
-     * This method must be called eagerly to allow the Transport to make
-     * progress toward receiving incoming messages.
-     *
-     * @return
-     *      True if the method has found some messages to grant; false,
-     *      otherwise.
-     */
-    virtual bool trySendGrants() = 0;
-
   protected:
     /**
      * Use protected destructor to prevent users from calling delete on pointers
      * to this interface.
      */
-    ~Transport() = default;
+    ~TransportBase() = default;
 
     /**
      * Free this transport instance.  No one should not access this transport

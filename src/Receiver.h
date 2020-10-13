@@ -16,8 +16,8 @@
 #ifndef HOMA_CORE_RECEIVER_H
 #define HOMA_CORE_RECEIVER_H
 
+#include <Homa/Core/Transport.h>
 #include <Homa/Driver.h>
-#include <Homa/Homa.h>
 
 #include <atomic>
 #include <bitset>
@@ -44,7 +44,7 @@ namespace Core {
  */
 class Receiver {
   public:
-    explicit Receiver(Driver* driver, Callbacks* callbacks,
+    explicit Receiver(Driver* driver, Transport::Callbacks* callbacks,
                       Policy::Manager* policyManager,
                       uint64_t messageTimeoutCycles,
                       uint64_t resendIntervalCycles);
@@ -467,7 +467,7 @@ class Receiver {
     void updateSchedule(Message* message, const SpinLock::Lock& lock);
 
     /// User-defined transport callbacks. Not owned by this class.
-    Callbacks* const callbacks;
+    Transport::Callbacks* const callbacks;
 
     /// Driver with which all packets will be sent and received.  This driver
     /// is chosen by the Transport that owns this Sender.

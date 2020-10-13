@@ -40,7 +40,7 @@ namespace Core {
  *      Number of cycles of inactivity to wait between requesting retransmission
  *      of un-received parts of a message.
  */
-Receiver::Receiver(Driver* driver, Callbacks* callbacks,
+Receiver::Receiver(Driver* driver, Transport::Callbacks* callbacks,
                    Policy::Manager* policyManager,
                    uint64_t messageTimeoutCycles, uint64_t resendIntervalCycles)
     : callbacks(callbacks)

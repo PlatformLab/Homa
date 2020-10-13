@@ -16,7 +16,7 @@
 #ifndef HOMA_CORE_TRANSPORT_H
 #define HOMA_CORE_TRANSPORT_H
 
-#include <Homa/Homa.h>
+#include <Homa/Core/Transport.h>
 
 #include <atomic>
 #include <bitset>
@@ -41,7 +41,7 @@ class TransportImpl final : public Transport {
                            uint64_t transportId);
     explicit TransportImpl(Driver* driver, Callbacks* callbacks, Sender* sender,
                            Receiver* receiver, uint64_t transportId);
-    ~TransportImpl();
+    virtual ~TransportImpl() = default;
     void free() override;
     Homa::unique_ptr<OutMessage> alloc(uint16_t port) override;
     uint64_t checkTimeouts() override;
@@ -50,13 +50,13 @@ class TransportImpl final : public Transport {
     bool trySendGrants() override;
 
     /// See Homa::Transport::getDriver()
-    virtual Driver* getDriver()
+    Driver* getDriver() override
     {
         return driver;
     }
 
     /// See Homa::Transport::getId()
-    virtual uint64_t getId()
+    uint64_t getId() override
     {
         return transportId;
     }

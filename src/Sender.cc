@@ -44,9 +44,9 @@ namespace Core {
  *      Number of cycles of inactivity to wait between checking on the liveness
  *      of an Sender::Message.
  */
-Sender::Sender(uint64_t transportId, Driver* driver, Callbacks* callbacks,
-               Policy::Manager* policyManager, uint64_t messageTimeoutCycles,
-               uint64_t pingIntervalCycles)
+Sender::Sender(uint64_t transportId, Driver* driver,
+               Transport::Callbacks* callbacks, Policy::Manager* policyManager,
+               uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles)
     : transportId(transportId)
     , callbacks(callbacks)
     , driver(driver)

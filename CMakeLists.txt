@@ -76,16 +76,15 @@ add_library(Homa
     src/CHoma.cc
     src/Debug.cc
     src/Driver.cc
-    src/Homa.cc
     src/Perf.cc
     src/Policy.cc
+    src/PollModeTransportImpl.cc
     src/Receiver.cc
     src/Sender.cc
     src/Shenango.cc
     src/StringUtil.cc
     src/ThreadId.cc
     src/TransportImpl.cc
-    src/TransportPoller.cc
     src/Util.cc
 )
 add_library(Homa::Homa ALIAS Homa)
@@ -257,6 +256,7 @@ add_executable(unit_test
     src/IntrusiveTest.cc
     src/ObjectPoolTest.cc
     src/PolicyTest.cc
+    src/PollModeTransportImplTest.cc
     src/ReceiverTest.cc
     src/SenderTest.cc
     src/SpinLockTest.cc

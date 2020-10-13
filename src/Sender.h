@@ -16,8 +16,8 @@
 #ifndef HOMA_CORE_SENDER_H
 #define HOMA_CORE_SENDER_H
 
+#include <Homa/Core/Transport.h>
 #include <Homa/Driver.h>
-#include <Homa/Homa.h>
 
 #include <array>
 #include <atomic>
@@ -41,7 +41,8 @@ namespace Core {
  */
 class Sender {
   public:
-    explicit Sender(uint64_t transportId, Driver* driver, Callbacks* callbacks,
+    explicit Sender(uint64_t transportId, Driver* driver,
+                    Transport::Callbacks* callbacks,
                     Policy::Manager* policyManager,
                     uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
     virtual ~Sender();
@@ -402,7 +403,7 @@ class Sender {
     const uint64_t transportId;
 
     /// User-defined transport callbacks; not owned by this class.
-    Callbacks* const callbacks;
+    Transport::Callbacks* const callbacks;
 
     /// Driver with which all packets will be sent and received.  This driver
     /// is chosen by the Transport that owns this Sender.
