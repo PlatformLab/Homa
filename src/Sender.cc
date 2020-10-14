@@ -527,7 +527,7 @@ Sender::checkTimeouts()
 {
     uint index = nextBucketIndex.fetch_add(1, std::memory_order_relaxed) &
                  MessageBucketMap::HASH_KEY_MASK;
-    MessageBucket* bucket = messageBuckets.buckets.at(index);
+    MessageBucket* bucket = &messageBuckets.buckets[index];
     uint64_t now = PerfUtils::Cycles::rdtsc();
     checkPingTimeouts(now, bucket);
     checkMessageTimeouts(now, bucket);

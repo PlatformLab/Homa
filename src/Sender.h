@@ -157,15 +157,15 @@ class Sender {
         {}
 
         virtual ~Message();
-        virtual void append(const void* source, size_t count);
-        virtual void cancel();
-        virtual Status getStatus() const;
-        virtual size_t length() const;
-        virtual void prepend(const void* source, size_t count);
-        virtual void release();
-        virtual void reserve(size_t count);
-        virtual void send(SocketAddress destination,
-                          Options options = Options::NONE);
+        void append(const void* source, size_t count) override;
+        void cancel() override;
+        Status getStatus() const override;
+        size_t length() const override;
+        void prepend(const void* source, size_t count) override;
+        void release() override;
+        void reserve(size_t count) override;
+        void send(SocketAddress destination,
+                  Options options = Options::NONE) override;
 
       private:
         /// Define the maximum number of packets that a message can hold.
@@ -289,14 +289,12 @@ class Sender {
                              const SpinLock::Lock& lock)
         {
             (void)lock;
-            Message* message = nullptr;
-            for (auto it = messages.begin(); it != messages.end(); ++it) {
-                if (it->id == msgId) {
-                    message = &(*it);
-                    break;
+            for (auto& it : messages) {
+                if (it.id == msgId) {
+                    return &it;
                 }
             }
-            return message;
+            return nullptr;
         }
 
         /// Mutex protecting the contents of this bucket.
@@ -308,7 +306,7 @@ class Sender {
         /// Maintains Message objects in increasing order of timeout.
         TimeoutManager<Message> messageTimeouts;
 
-        /// Maintains Message object in increase order of ping timeout.
+        /// Maintains Message objects in increasing order of ping timeout.
         TimeoutManager<Message> pingTimeouts;
     };
 
@@ -335,27 +333,6 @@ class Sender {
         static_assert(NUM_BUCKETS == HASH_KEY_MASK + 1);
 
         /**
-         * Helper method to create the set of buckets.
-         *
-         * @param messageTimeoutCycles
-         *      Number of cycles of inactivity to wait before a Message is
-         *      considered failed.
-         * @param pingIntervalCycles
-         *      Number of cycles of inactivity to wait between checking on the
-         *      liveness of a Message.
-         */
-        static std::array<MessageBucket*, NUM_BUCKETS> makeBuckets(
-            uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles)
-        {
-            std::array<MessageBucket*, NUM_BUCKETS> buckets;
-            for (int i = 0; i < NUM_BUCKETS; ++i) {
-                buckets[i] =
-                    new MessageBucket(messageTimeoutCycles, pingIntervalCycles);
-            }
-            return buckets;
-        }
-
-        /**
          * MessageBucketMap constructor.
          *
          * @param messageTimeoutCycles
@@ -367,32 +344,33 @@ class Sender {
          */
         explicit MessageBucketMap(uint64_t messageTimeoutCycles,
                                   uint64_t pingIntervalCycles)
-            : buckets(makeBuckets(messageTimeoutCycles, pingIntervalCycles))
+            : buckets()
             , hasher()
-        {}
+        {
+            buckets.reserve(NUM_BUCKETS);
+            for (int i = 0; i < NUM_BUCKETS; ++i) {
+                buckets.emplace_back(messageTimeoutCycles, pingIntervalCycles);
+            }
+        }
 
         /**
          * MessageBucketMap destructor.
          */
-        ~MessageBucketMap()
-        {
-            for (int i = 0; i < NUM_BUCKETS; ++i) {
-                delete buckets[i];
-            }
-        }
+        ~MessageBucketMap() = default;
 
         /**
          * Return the MessageBucket that should hold a Message with the given
          * MessageId.
          */
-        MessageBucket* getBucket(const Protocol::MessageId& msgId) const
+        MessageBucket* getBucket(const Protocol::MessageId& msgId)
         {
             uint index = hasher(msgId) & HASH_KEY_MASK;
-            return buckets[index];
+            return &buckets[index];
         }
 
-        /// Array of buckets.
-        std::array<MessageBucket*, NUM_BUCKETS> const buckets;
+        /// Array of NUM_BUCKETS buckets. Defined as a vector to avoid the need
+        /// for a default constructor in MessageBucket.
+        std::vector<MessageBucket> buckets;
 
         /// MessageId hash function container.
         Protocol::MessageId::Hasher hasher;
