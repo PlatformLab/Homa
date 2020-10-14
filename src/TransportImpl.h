@@ -75,7 +75,7 @@ class TransportImpl : public Transport {
 
   private:
     void processPackets();
-    void processPacket(Driver::Packet* packet, IpAddress source);
+    bool processPacket(Driver::Packet* packet, IpAddress source);
 
     /// Unique identifier for this transport.
     const std::atomic<uint64_t> transportId;

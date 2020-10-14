@@ -84,8 +84,12 @@ Receiver::~Receiver()
  *      The incoming packet to be processed.
  * @param sourceIp
  *      Source IP address of the packet.
+ * @return
+ *      True if the Receiver decides to take ownership of the packet. False
+ *      if the Receiver has no more use of this packet and it can be released
+ *      to the driver.
  */
-void
+bool
 Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
 {
     Protocol::Packet::DataHeader* header =
@@ -164,9 +168,9 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
         }
     } else {
         // must be a duplicate packet; drop packet.
-        driver->releasePackets(&packet, 1);
+        return false;
     }
-    return;
+    return true;
 }
 
 /**
@@ -193,7 +197,6 @@ Receiver::handleBusyPacket(Driver::Packet* packet)
             bucket->resendTimeouts.setTimeout(&message->resendTimeout);
         }
     }
-    driver->releasePackets(&packet, 1);
 }
 
 /**
@@ -247,7 +250,6 @@ Receiver::handlePingPacket(Driver::Packet* packet, IpAddress sourceIp)
         ControlPacket::send<Protocol::Packet::UnknownHeader>(driver, sourceIp,
                                                              id);
     }
-    driver->releasePackets(&packet, 1);
 }
 
 /**

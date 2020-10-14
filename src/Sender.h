@@ -53,12 +53,16 @@ class Sender {
     virtual void handleGrantPacket(Driver::Packet* packet);
     virtual void handleUnknownPacket(Driver::Packet* packet);
     virtual void handleErrorPacket(Driver::Packet* packet);
+
     virtual void poll();
     virtual void checkTimeouts();
 
   private:
     /// Forward declarations
     class Message;
+    class MessageBucket;
+
+    Message* handleIncomingPacket(Driver::Packet* packet, bool resetTimeout);
 
     /**
      * Contains metadata for a Message that has been queued to be sent.
@@ -138,7 +142,8 @@ class Sender {
             , TRANSPORT_HEADER_LENGTH(sizeof(Protocol::Packet::DataHeader))
             , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() -
                                  TRANSPORT_HEADER_LENGTH)
-            , id(0, 0)
+            , id(sender->transportId, sender->nextMessageSequenceNumber++)
+            , bucket(sender->messageBuckets.getBucket(id))
             , source{driver->getLocalAddress(), sourcePort}
             , destination()
             , options(Options::NONE)
@@ -159,7 +164,12 @@ class Sender {
         virtual ~Message();
         void append(const void* source, size_t count) override;
         void cancel() override;
+        void destroy(const SpinLock::Lock& lock);
         Status getStatus() const override;
+        void setStatus(Status newStatus);
+        void deschedule();
+        void resetTimeout(const SpinLock::Lock& lock);
+        void cancelTimeout(const SpinLock::Lock& lock);
         size_t length() const override;
         void prepend(const void* source, size_t count) override;
         void release() override;
@@ -189,15 +199,20 @@ class Sender {
         const int PACKET_DATA_LENGTH;
 
         /// Contains the unique identifier for this message.
-        Protocol::MessageId id;
+        const Protocol::MessageId id;
+
+        /// Message bucket this message belongs to.
+        MessageBucket* const bucket;
 
         /// Contains source address of this message.
-        SocketAddress source;
+        const SocketAddress source;
 
-        /// Contains destination address of this message.
+        /// Contains destination address of this message. Must be constant after
+        /// send() is invoked.
         SocketAddress destination;
 
-        /// Contains flags for any requested optional send behavior.
+        /// Contains flags for any requested optional send behavior. Must be
+        /// constant after send() is invoked.
         Options options;
 
         /// True if a pointer to this message is accessible by the application
@@ -205,21 +220,26 @@ class Sender {
         /// been release via dropMessage()); false, otherwise.
         bool held;
 
-        /// First byte where data is or will go if empty.
+        /// First byte where data is or will go if empty. Must be constant after
+        /// send() is invoked.
         int start;
 
         /// Number of bytes in this Message including any reserved headroom.
+        /// Must be constant after send() is invoked.
         int messageLength;
 
-        /// Number of packets currently contained in this message.
+        /// Number of packets currently contained in this message. Must be
+        /// constant after send() is invoked.
         int numPackets;
 
-        /// Bit array representing which entires in the _packets_ array are set.
-        /// Used to avoid having to zero out the entire _packets_ array.
+        /// Bit array representing which entries in the _packets_ array are set.
+        /// Used to avoid having to zero out the entire _packets_ array. Must be
+        /// constant after send() is invoked.
         std::bitset<MAX_MESSAGE_PACKETS> occupied;
 
         /// Collection of Packet objects that make up this context's Message.
-        /// These Packets will be released when this context is destroyed.
+        /// These Packets will be released when this context is destroyed. Must
+        /// be constant after send() is invoked.
         Driver::Packet* packets[MAX_MESSAGE_PACKETS];
 
         /// This message's current state.
@@ -395,7 +415,7 @@ class Sender {
     Policy::Manager* const policyManager;
 
     /// The sequence number to be used for the next Message.
-    std::atomic<uint64_t> nextMessageSequenceNumber;
+    volatile uint64_t nextMessageSequenceNumber;
 
     /// The maximum number of bytes that should be queued in the Driver.
     const uint32_t DRIVER_QUEUED_BYTE_LIMIT;
