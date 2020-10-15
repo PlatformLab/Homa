@@ -45,7 +45,7 @@ class Sender {
     explicit Sender(uint64_t transportId, Driver* driver,
                     Policy::Manager* policyManager,
                     uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
-    virtual ~Sender();
+    virtual ~Sender() = default;
 
     virtual Homa::OutMessage* allocMessage(uint16_t sourcePort);
     virtual void handleDonePacket(Driver::Packet* packet);
@@ -60,7 +60,7 @@ class Sender {
   private:
     /// Forward declarations
     class Message;
-    class MessageBucket;
+    struct MessageBucket;
 
     Message* handleIncomingPacket(Driver::Packet* packet, bool resetTimeout);
 
@@ -87,9 +87,7 @@ class Sender {
          *      Message to which this metadata is associated.
          */
         explicit QueuedMessageInfo(Message* message)
-            : id(0, 0)
-            , destination()
-            , packets(nullptr)
+            : packets(message)
             , unsentBytes(0)
             , packetsGranted(0)
             , priority(0)
@@ -97,16 +95,10 @@ class Sender {
             , sendQueueNode(message)
         {}
 
-        /// Contains the unique identifier for this message.
-        Protocol::MessageId id;
-
-        /// Contains destination address this message.
-        SocketAddress destination;
-
         /// Handle to the queue Message for access to the packets that will
         /// be sent.  This member documents that the packets are logically owned
         /// by the sendQueue and thus protected by the queueMutex.
-        Message* packets;
+        Message* const packets;
 
         /// The number of bytes that still need to be sent for a queued Message.
         int unsentBytes;
@@ -128,8 +120,8 @@ class Sender {
     /**
      * Represents an outgoing message that can be sent.
      *
-     * Sender::Message objects are contained in the Transport::Op but should
-     * only be accessed by the Sender.
+     * TODO: document which part of the Message state are immutable, which part
+     * is thread-safe, and which part should be protected by mutex.
      */
     class Message : public Homa::OutMessage {
       public:
@@ -164,12 +156,9 @@ class Sender {
         virtual ~Message();
         void append(const void* source, size_t count) override;
         void cancel() override;
-        void destroy(const SpinLock::Lock& lock);
+        void destroy();
         Status getStatus() const override;
-        void setStatus(Status newStatus);
-        void deschedule();
-        void resetTimeout(const SpinLock::Lock& lock);
-        void cancelTimeout(const SpinLock::Lock& lock);
+        void setStatus(Status newStatus, bool deschedule);
         size_t length() const override;
         void prepend(const void* source, size_t count) override;
         void release() override;
@@ -179,7 +168,7 @@ class Sender {
 
       private:
         /// Define the maximum number of packets that a message can hold.
-        static const size_t MAX_MESSAGE_PACKETS = 1024;
+        static const int MAX_MESSAGE_PACKETS = 1024;
 
         Driver::Packet* getPacket(size_t index) const;
         Driver::Packet* getOrAllocPacket(size_t index);
@@ -218,7 +207,7 @@ class Sender {
         /// True if a pointer to this message is accessible by the application
         /// (e.g. the message has been allocated via allocMessage() but has not
         /// been release via dropMessage()); false, otherwise.
-        bool held;
+        std::atomic<bool> held;
 
         /// First byte where data is or will go if empty. Must be constant after
         /// send() is invoked.
@@ -323,6 +312,8 @@ class Sender {
         /// Collection of outbound messages
         Intrusive::List<Message> messages;
 
+        // FIXME: we should be able eliminate this field if messageTimeout is
+        // always a multiple of pingTimeout
         /// Maintains Message objects in increasing order of timeout.
         TimeoutManager<Message> messageTimeouts;
 
@@ -396,11 +387,9 @@ class Sender {
         Protocol::MessageId::Hasher hasher;
     };
 
-    void sendMessage(Sender::Message* message, SocketAddress destination,
-                     Message::Options options = Message::Options::NONE);
-    void cancelMessage(Sender::Message* message);
-    void dropMessage(Sender::Message* message);
-    void checkMessageTimeouts(uint64_t now, MessageBucket* bucket);
+    void startMessage(Sender::Message* message, bool restart);
+    // FIXME: merge the following two methods
+    static void checkMessageTimeouts(uint64_t now, MessageBucket* bucket);
     void checkPingTimeouts(uint64_t now, MessageBucket* bucket);
     void trySend();
 
@@ -423,7 +412,10 @@ class Sender {
     /// Tracks all outbound messages being sent by the Sender.
     MessageBucketMap messageBuckets;
 
-    /// Protects the readyQueue.
+    // TODO: document the locking principle that if someone want to acquire both
+    // a bucket mutex and this queueMutex, the bucket mutex must be acquired first!
+    // TODO: why this principle? why not the reverse order?
+    /// Protects the sendQueue.
     SpinLock queueMutex;
 
     /// A list of outbound messages that have unsent packets.  Messages are kept

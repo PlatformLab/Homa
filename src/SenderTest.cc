@@ -1575,7 +1575,6 @@ TEST_F(SenderTest, cancelMessage)
     EXPECT_TRUE(bucket->pingTimeouts.list.empty());
     EXPECT_TRUE(sender->sendQueue.empty());
     EXPECT_EQ(Homa::OutMessage::Status::CANCELED, message->state.load());
-    // FIXME: shouldn't we check if the bucket is empty?
 }
 
 TEST_F(SenderTest, dropMessage_basic)

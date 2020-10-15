@@ -14,11 +14,7 @@
  */
 
 #include "TransportImpl.h"
-
 #include <algorithm>
-#include <memory>
-#include <utility>
-
 #include "Cycles.h"
 #include "Perf.h"
 #include "Protocol.h"
