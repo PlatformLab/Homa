@@ -71,6 +71,19 @@ isPowerOfTwo(num_type n)
 }
 
 /**
+ * Round up the result of x divided by y, where both x and y are positive
+ * integers.
+ */
+template <typename num_type>
+constexpr num_type
+roundUpIntDiv(num_type x, num_type y)
+{
+    static_assert(std::is_integral<num_type>::value, "Integral required.");
+    assert(x > 0 && y > 0);
+    return (x + y - 1) / y;
+}
+
+/**
  * This class is used to temporarily release lock in a safe fashion. Creating
  * an object of this class will unlock its associated mutex; when the object
  * is deleted, the mutex will be locked again. The template class T must be

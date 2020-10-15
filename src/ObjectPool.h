@@ -16,11 +16,10 @@
 #ifndef HOMA_OBJECTPOOL_H
 #define HOMA_OBJECTPOOL_H
 
-#include "Homa/Exception.h"
-
-#include "Debug.h"
-
 #include <vector>
+#include "Debug.h"
+#include "Homa/Exception.h"
+#include "SpinLock.h"
 
 /*
  * Notes on performance and efficiency:
@@ -52,6 +51,8 @@ namespace Homa {
  * new and delete an relatively fixed set of objects very quickly.
  * For example, transports use ObjectPool to allocate short-lived rpc
  * objects that cannot be kept in a stack context.
+ *
+ * This class is thread-safe.
  */
 template <typename T>
 class ObjectPool {
@@ -99,24 +100,26 @@ class ObjectPool {
     template <typename... Args>
     T* construct(Args&&... args)
     {
-        void* backing = NULL;
-        if (pool.size() == 0) {
-            backing = operator new(sizeof(T));
-        } else {
-            backing = pool.back();
-            pool.pop_back();
+        void* backing = nullptr;
+        {
+            SpinLock::Lock lock(mutex);
+            if (pool.size() == 0) {
+                backing = operator new(sizeof(T));
+            } else {
+                backing = pool.back();
+                pool.pop_back();
+            }
+            outstandingObjects++;
         }
 
-        T* object = NULL;
         try {
-            object = new (backing) T(static_cast<Args&&>(args)...);
+            return new (backing) T(static_cast<Args&&>(args)...);
         } catch (...) {
+            SpinLock::Lock lock(mutex);
             pool.push_back(backing);
+            outstandingObjects--;
             throw;
         }
-
-        outstandingObjects++;
-        return object;
     }
 
     /**
@@ -124,13 +127,18 @@ class ObjectPool {
      */
     void destroy(T* object)
     {
-        assert(outstandingObjects > 0);
         object->~T();
+
+        SpinLock::Lock lock(mutex);
+        assert(outstandingObjects > 0);
         pool.push_back(static_cast<void*>(object));
         outstandingObjects--;
     }
 
   private:
+    /// Monitor-style lock to protect the metadata of the pool.
+    SpinLock mutex;
+
     /// Count of the number of objects for which construct() was called, but
     /// destroy() was not.
     uint64_t outstandingObjects;

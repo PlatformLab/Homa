@@ -184,9 +184,6 @@ class DpdkDriver::Impl {
     /// set by override).
     const int HIGHEST_PACKET_PRIORITY;
 
-    /// Protects access to the packetPool.
-    SpinLock packetLock;
-
     /// Provides memory allocation for the DPDK specific implementation of a
     /// Driver Packet.
     ObjectPool<Packet> packetPool;

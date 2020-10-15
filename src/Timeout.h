@@ -100,12 +100,16 @@ class TimeoutManager {
      *
      * @param timeout
      *      The Timeout that should be scheduled.
+     * @param now
+     *      Optionally provided "current" timestamp cycle time. Used to avoid
+     *      unnecessary calls to PerfUtils::Cycles::rdtsc() if the current time
+     *      is already available to the caller.
      */
-    inline void setTimeout(Timeout<ElementType>* timeout)
+    inline void setTimeout(Timeout<ElementType>* timeout,
+                           uint64_t now = PerfUtils::Cycles::rdtsc())
     {
         list.remove(&timeout->node);
-        timeout->expirationCycleTime =
-            PerfUtils::Cycles::rdtsc() + timeoutIntervalCycles;
+        timeout->expirationCycleTime = now + timeoutIntervalCycles;
         list.push_back(&timeout->node);
         nextTimeout.store(list.front().expirationCycleTime,
                           std::memory_order_relaxed);

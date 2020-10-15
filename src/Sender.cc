@@ -50,7 +50,9 @@ Sender::Sender(uint64_t transportId, Driver* driver,
     , policyManager(policyManager)
     , nextMessageSequenceNumber(1)
     , DRIVER_QUEUED_BYTE_LIMIT(2 * driver->getMaxPayloadSize())
-    , messageBuckets(messageTimeoutCycles, pingIntervalCycles)
+    , MESSAGE_TIMEOUT_INTERVALS(
+          Util::roundUpIntDiv(messageTimeoutCycles, pingIntervalCycles))
+    , messageBuckets(pingIntervalCycles)
     , queueMutex()
     , sendQueue()
     , sending()
@@ -65,9 +67,8 @@ Sender::Sender(uint64_t transportId, Driver* driver,
 Homa::OutMessage*
 Sender::allocMessage(uint16_t sourcePort)
 {
-    SpinLock::Lock lock_allocator(messageAllocator.mutex);
     Perf::counters.allocated_tx_messages.add(1);
-    return messageAllocator.pool.construct(this, sourcePort);
+    return messageAllocator.construct(this, sourcePort);
 }
 
 /**
@@ -95,7 +96,7 @@ Sender::handleIncomingPacket(Driver::Packet* packet, bool resetTimeout)
     SpinLock::Lock lock(bucket->mutex);
     Message* message = bucket->findMessage(msgId, lock);
     if (resetTimeout) {
-        bucket->messageTimeouts.setTimeout(&message->messageTimeout);
+        message->numPingTimeouts = 0;
         bucket->pingTimeouts.setTimeout(&message->pingTimeout);
     }
     return message;
@@ -407,14 +408,29 @@ Sender::checkTimeouts()
     MessageBucket* bucket = &messageBuckets.buckets[index];
     uint64_t now = PerfUtils::Cycles::rdtsc();
     checkPingTimeouts(now, bucket);
-    checkMessageTimeouts(now, bucket);
 }
 
 /**
- * Destruct a Message. Will release all contained Packet objects.
+ * Destruct a Message.
+ *
+ * This method will detach the message from the Sender and release all contained
+ * Packet objects.
  */
 Sender::Message::~Message()
 {
+    Perf::counters.destroyed_tx_messages.add(1);
+
+    // We assume that this message has been unlinked from the sendQueue before
+    // this method is invoked.
+    assert(getStatus() != OutMessage::Status::IN_PROGRESS);
+
+    // Remove this message from the other data structures of the Sender.
+    {
+        SpinLock::Lock bucket_lock(bucket->mutex);
+        bucket->pingTimeouts.cancelTimeout(&pingTimeout);
+        bucket->messages.remove(&bucketNode);
+    }
+
     // Sender message must be contiguous
     driver->releasePackets(packets, numPackets);
 }
@@ -467,32 +483,6 @@ Sender::Message::cancel()
 }
 
 /**
- * Detach this message from the transport and destruct the Message object.
- *
- * Note: no one should access this message after the method returns.
- */
-void
-Sender::Message::destroy()
-{
-    // We assume that this message has been unlinked from the sendQueue before
-    // this method is invoked.
-    assert(getStatus() != OutMessage::Status::IN_PROGRESS);
-
-    // Remove this message from the other data structures of the Sender.
-    {
-        SpinLock::Lock bucket_lock(bucket->mutex);
-        bucket->messageTimeouts.cancelTimeout(&messageTimeout);
-        bucket->pingTimeouts.cancelTimeout(&pingTimeout);
-        bucket->messages.remove(&bucketNode);
-    }
-
-    // Destruct the Message object.
-    SpinLock::Lock lock_allocator(sender->messageAllocator.mutex);
-    sender->messageAllocator.pool.destroy(this);
-    Perf::counters.destroyed_tx_messages.add(1);
-}
-
-/**
  * @copydoc Homa::OutMessage::getStatus()
  */
 OutMessage::Status
@@ -537,7 +527,6 @@ Sender::Message::setStatus(Status newStatus, bool deschedule)
         newStatus == OutMessage::Status::COMPLETED ||
         newStatus == OutMessage::Status::FAILED) {
         SpinLock::Lock lock(bucket->mutex);
-        bucket->messageTimeouts.cancelTimeout(&messageTimeout);
         bucket->pingTimeouts.cancelTimeout(&pingTimeout);
     }
 
@@ -594,7 +583,7 @@ Sender::Message::release()
     if (getStatus() != OutMessage::Status::IN_PROGRESS) {
         // Ok to delete immediately since we don't have to wait for the message
         // to be sent.
-        destroy();
+        sender->messageAllocator.destroy(this);
     } else {
         // Defer deletion and wait for the message to be SENT.
     }
@@ -787,12 +776,10 @@ Sender::startMessage(Sender::Message* message, bool restart)
                      Util::downCast<uint16_t>(message->numPackets));
         info->priority = policy.priority;
         info->packetsSent = 0;
-        // Insert and move message into the correct order in the priority
-        // queue.
+        // Insert and move message into the correct order in the priority queue.
         sendQueue.push_front(&info->sendQueueNode);
-        Intrusive::deprioritize<Message>(
-            &sendQueue, &info->sendQueueNode,
-            QueuedMessageInfo::ComparePriority());
+        Intrusive::deprioritize<Message>(&sendQueue, &info->sendQueueNode,
+                                         QueuedMessageInfo::ComparePriority());
         sendReady.store(true);
     }
 
@@ -800,49 +787,8 @@ Sender::startMessage(Sender::Message* message, bool restart)
     if (needTimeouts) {
         MessageBucket* bucket = message->bucket;
         SpinLock::Lock lock(bucket->mutex);
-        bucket->messageTimeouts.setTimeout(&message->messageTimeout);
+        message->numPingTimeouts = 0;
         bucket->pingTimeouts.setTimeout(&message->pingTimeout);
-    }
-}
-
-/**
- * Process any outbound messages in a given bucket that have timed out due to
- * lack of activity from the Receiver.
- *
- * Pulled out of checkTimeouts() for ease of testing.
- *
- * @param now
- *      The rdtsc cycle that should be considered the "current" time.
- * @param bucket
- *      The bucket whose message timeouts should be checked.
- */
-void
-Sender::checkMessageTimeouts(uint64_t now, MessageBucket* bucket)
-{
-    if (!bucket->messageTimeouts.anyElapsed(now)) {
-        return;
-    }
-
-    while (true) {
-        SpinLock::UniqueLock bucket_lock(bucket->mutex);
-        // No remaining timeouts.
-        if (bucket->messageTimeouts.empty()) {
-            break;
-        }
-        Message* message = &bucket->messageTimeouts.front();
-        // No remaining expired timeouts.
-        if (!message->messageTimeout.hasElapsed(now)) {
-            break;
-        }
-
-        // Release the bucket mutex to avoid deadlock inside setStatus().
-        bucket_lock.unlock();
-
-        // Found expired timeout.
-        OutMessage::Status status = message->getStatus();
-        assert(status == OutMessage::Status::IN_PROGRESS ||
-               status == OutMessage::Status::SENT);
-        message->setStatus(OutMessage::Status::FAILED, true);
     }
 }
 
@@ -881,11 +827,20 @@ Sender::checkPingTimeouts(uint64_t now, MessageBucket* bucket)
                status == OutMessage::Status::SENT);
         if (message->options & OutMessage::Options::NO_KEEP_ALIVE &&
             status == OutMessage::Status::SENT) {
-            bucket->messageTimeouts.cancelTimeout(&message->messageTimeout);
             bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
             continue;
         } else {
-            bucket->pingTimeouts.setTimeout(&message->pingTimeout);
+            message->numPingTimeouts++;
+            if (message->numPingTimeouts >= MESSAGE_TIMEOUT_INTERVALS) {
+                // Found expired message.
+
+                // Release the bucket mutex to avoid deadlock in setStatus().
+                bucket_lock.unlock();
+                message->setStatus(OutMessage::Status::FAILED, true);
+                continue;
+            } else {
+                bucket->pingTimeouts.setTimeout(&message->pingTimeout);
+            }
         }
 
         // The following code doesn't access bucket data anymore; release the
@@ -987,7 +942,7 @@ Sender::trySend()
 
             if (!message.held.load(std::memory_order_acquire)) {
                 // Ok to delete now that the message has been sent.
-                message.destroy();
+                messageAllocator.destroy(&message);
             } else if (message.options & OutMessage::Options::NO_KEEP_ALIVE) {
                 // No timeouts need to be checked after sending the message when
                 // the NO_KEEP_ALIVE option is enabled.
@@ -997,7 +952,6 @@ Sender::trySend()
                 // before the send queueMutex.
                 MessageBucket* bucket = message.bucket;
                 SpinLock::Lock bucket_lock(bucket->mutex);
-                bucket->messageTimeouts.cancelTimeout(&message.messageTimeout);
                 bucket->pingTimeouts.cancelTimeout(&message.pingTimeout);
             }
             lock_queue.lock();

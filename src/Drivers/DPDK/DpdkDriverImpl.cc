@@ -94,7 +94,6 @@ DpdkDriver::Impl::Impl(const char* ifname, int argc, char* argv[],
           (config == nullptr || config->HIGHEST_PACKET_PRIORITY_OVERRIDE < 0)
               ? Homa::Util::arrayLength(PRIORITY_TO_PCP) - 1
               : config->HIGHEST_PACKET_PRIORITY_OVERRIDE)
-    , packetLock()
     , packetPool()
     , overflowBufferPool()
     , mbufsOutstanding(0)
@@ -147,7 +146,6 @@ DpdkDriver::Impl::Impl(const char* ifname,
           (config == nullptr || config->HIGHEST_PACKET_PRIORITY_OVERRIDE < 0)
               ? Homa::Util::arrayLength(PRIORITY_TO_PCP) - 1
               : config->HIGHEST_PACKET_PRIORITY_OVERRIDE)
-    , packetLock()
     , packetPool()
     , overflowBufferPool()
     , mbufPool(nullptr)
@@ -179,7 +177,6 @@ Driver::Packet*
 DpdkDriver::Impl::allocPacket()
 {
     DpdkDriver::Impl::Packet* packet = nullptr;
-    SpinLock::Lock lock(packetLock);
     static const int MBUF_ALLOC_LIMIT = NB_MBUF - NB_MBUF_RESERVED;
     if (mbufsOutstanding < MBUF_ALLOC_LIMIT) {
         struct rte_mbuf* mbuf = rte_pktmbuf_alloc(mbufPool);
@@ -424,17 +421,14 @@ DpdkDriver::Impl::receivePackets(uint32_t maxPackets,
         assert(length <= MAX_PAYLOAD_SIZE);
 
         DpdkDriver::Impl::Packet* packet = nullptr;
-        {
-            SpinLock::Lock lock(packetLock);
-            static const int MBUF_ALLOC_LIMIT = NB_MBUF - NB_MBUF_RESERVED;
-            if (mbufsOutstanding < MBUF_ALLOC_LIMIT) {
-                packet = packetPool.construct(m, payload);
-                mbufsOutstanding++;
-            } else {
-                OverflowBuffer* buf = overflowBufferPool.construct();
-                rte_memcpy(payload, buf->data, length);
-                packet = packetPool.construct(buf);
-            }
+        static const int MBUF_ALLOC_LIMIT = NB_MBUF - NB_MBUF_RESERVED;
+        if (mbufsOutstanding < MBUF_ALLOC_LIMIT) {
+            packet = packetPool.construct(m, payload);
+            mbufsOutstanding++;
+        } else {
+            OverflowBuffer* buf = overflowBufferPool.construct();
+            rte_memcpy(payload, buf->data, length);
+            packet = packetPool.construct(buf);
         }
         packet->base.length = length;
 
@@ -451,7 +445,6 @@ void
 DpdkDriver::Impl::releasePackets(Driver::Packet* packets[], uint16_t numPackets)
 {
     for (uint16_t i = 0; i < numPackets; ++i) {
-        SpinLock::Lock lock(packetLock);
         DpdkDriver::Impl::Packet* packet =
             container_of(packets[i], DpdkDriver::Impl::Packet, base);
         if (likely(packet->bufType == DpdkDriver::Impl::Packet::MBUF)) {
