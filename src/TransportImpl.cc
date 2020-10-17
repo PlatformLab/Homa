@@ -135,6 +135,7 @@ TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
             sender->handleGrantPacket(packet);
             break;
         case Protocol::Packet::DONE:
+            // fixme: rename DONE to ACK?
             Perf::counters.rx_done_pkts.add(1);
             sender->handleDonePacket(packet);
             break;
@@ -155,6 +156,7 @@ TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
             sender->handleUnknownPacket(packet);
             break;
         case Protocol::Packet::ERROR:
+            // FIXME: remove ERROR?
             Perf::counters.rx_error_pkts.add(1);
             sender->handleErrorPacket(packet);
             break;

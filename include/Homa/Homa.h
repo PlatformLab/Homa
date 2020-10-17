@@ -71,17 +71,6 @@ class InMessage {
     virtual void acknowledge() const = 0;
 
     /**
-     * Returns true if the sender is no longer waiting for this message to be
-     * processed; false otherwise.
-     */
-    virtual bool dropped() const = 0;
-
-    /**
-     * Inform the sender that this message has failed to be processed.
-     */
-    virtual void fail() const = 0;
-
-    /**
      * Get the contents of a specified range of bytes in the Message by
      * copying them into the provided destination memory region.
      *

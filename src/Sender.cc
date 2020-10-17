@@ -52,7 +52,7 @@ Sender::Sender(uint64_t transportId, Driver* driver,
     , DRIVER_QUEUED_BYTE_LIMIT(2 * driver->getMaxPayloadSize())
     , MESSAGE_TIMEOUT_INTERVALS(
           Util::roundUpIntDiv(messageTimeoutCycles, pingIntervalCycles))
-    , messageBuckets(pingIntervalCycles)
+    , messageBuckets(this, pingIntervalCycles)
     , queueMutex()
     , sendQueue()
     , sending()
@@ -266,9 +266,8 @@ Sender::handleGrantPacket(Driver::Packet* packet)
         // that holds the last granted byte is also considered granted.  This
         // can cause at most 1 packet worth of data to be sent without a grant
         // but allows the sender to always send full packets.
-        int incomingGrantIndex =
-            (grantHeader->byteLimit + info->packets->PACKET_DATA_LENGTH - 1) /
-            info->packets->PACKET_DATA_LENGTH;
+        int incomingGrantIndex = Util::roundUpIntDiv(
+            grantHeader->byteLimit, info->packets->PACKET_DATA_LENGTH);
 
         // Make that grants don't exceed the number of packets.  Internally,
         // the sender always assumes that packetsGranted <= numPackets.
@@ -705,9 +704,8 @@ Sender::startMessage(Sender::Message* message, bool restart)
     // Get the current policy for unscheduled bytes.
     Policy::Unscheduled policy = policyManager->getUnscheduledPolicy(
         message->destination.ip, message->messageLength);
-    uint16_t unscheduledIndexLimit =
-        ((policy.unscheduledByteLimit + message->PACKET_DATA_LENGTH - 1) /
-         message->PACKET_DATA_LENGTH);
+    uint16_t unscheduledIndexLimit = Util::roundUpIntDiv(
+        policy.unscheduledByteLimit, message->PACKET_DATA_LENGTH);
 
     if (!restart) {
         // Fill out packet headers.
@@ -778,8 +776,7 @@ Sender::startMessage(Sender::Message* message, bool restart)
         info->packetsSent = 0;
         // Insert and move message into the correct order in the priority queue.
         sendQueue.push_front(&info->sendQueueNode);
-        Intrusive::deprioritize<Message>(&sendQueue, &info->sendQueueNode,
-                                         QueuedMessageInfo::ComparePriority());
+        Intrusive::deprioritize<Message>(&sendQueue, &info->sendQueueNode);
         sendReady.store(true);
     }
 
@@ -924,9 +921,7 @@ Sender::trySend()
             info->unsentBytes -= packetDataBytes;
             // The Message's unsentBytes only ever decreases.  See if the
             // updated Message should move up in the queue.
-            Intrusive::prioritize<Message>(
-                &sendQueue, &info->sendQueueNode,
-                QueuedMessageInfo::ComparePriority());
+            Intrusive::prioritize<Message>(&sendQueue, &info->sendQueueNode);
             ++info->packetsSent;
         }
         if (info->packetsSent >= info->packets->numPackets) {

@@ -486,26 +486,25 @@ class List {
  * @tparam ElementType
  *      Type of the element held in the Intrusive::List.
  * @tparam Compare
- *      A weak strict ordering binary comparator for objects of ElementType.
+ *      A weak strict ordering binary comparator for objects of ElementType
+ *      which returns true when the first argument should be ordered before
+ *      the second. The signature should be equivalent to the following:
+ *          bool comp(const ElementType& a, const ElementType& b);
  * @param list
  *      List that contains the element.
  * @parma node
  *      Intrusive list node for the element that should be prioritized.
- * @param comp
- *      Comparison function object which returns true when the first argument
- *      should be ordered before the second.  The signature should be equivalent
- *      to the following:
- *          bool comp(const ElementType& a, const ElementType& b);
  */
-template <typename ElementType, typename Compare>
+template <typename ElementType,
+          typename Compare = typename ElementType::ComparePriority>
 void
-prioritize(List<ElementType>* list, typename List<ElementType>::Node* node,
-           Compare comp)
+prioritize(List<ElementType>* list, typename List<ElementType>::Node* node)
 {
     assert(list->contains(node));
     auto it_node = list->get(node);
     auto it_pos = it_node;
     while (it_pos != list->begin()) {
+        Compare comp;
         if (!comp(*it_node, *std::prev(it_pos))) {
             // Found the correct location; just before it_pos.
             break;
@@ -528,25 +527,24 @@ prioritize(List<ElementType>* list, typename List<ElementType>::Node* node,
  * @tparam ElementType
  *      Type of the element held in the Intrusive::List.
  * @tparam Compare
- *      A weak strict ordering binary comparator for objects of ElementType.
+ *      A weak strict ordering binary comparator for objects of ElementType
+ *      which returns true when the first argument should be ordered before
+ *      the second. The signature should be equivalent to the following:
+ *          bool comp(const ElementType& a, const ElementType& b);
  * @param list
  *      List that contains the element.
  * @parma node
  *      Intrusive list node for the element that should be prioritized.
- * @param comp
- *      Comparison function object which returns true when the first argument
- *      should be ordered before the second.  The signature should be equivalent
- *      to the following:
- *          bool comp(const ElementType& a, const ElementType& b);
  */
-template <typename ElementType, typename Compare>
+template <typename ElementType,
+          typename Compare = typename ElementType::ComparePriority>
 void
-deprioritize(List<ElementType>* list, typename List<ElementType>::Node* node,
-             Compare comp)
+deprioritize(List<ElementType>* list, typename List<ElementType>::Node* node)
 {
     assert(list->contains(node));
     auto it_node = list->get(node);
     auto it_pos = std::next(it_node);
+    Compare comp;
     while (it_pos != list->end()) {
         if (comp(*it_node, *it_pos)) {
             // Found the correct location; just before it_pos.

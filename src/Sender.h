@@ -69,18 +69,6 @@ class Sender {
      */
     struct QueuedMessageInfo {
         /**
-         * Implements a binary comparison function for the strict weak priority
-         * ordering of two Message objects.
-         */
-        struct ComparePriority {
-            bool operator()(const Message& a, const Message& b)
-            {
-                return a.queuedMessageInfo.unsentBytes <
-                       b.queuedMessageInfo.unsentBytes;
-            }
-        };
-
-        /**
          * QueuedMessageInfo constructor.
          *
          * @param message
@@ -122,6 +110,19 @@ class Sender {
      */
     class Message : public Homa::OutMessage {
       public:
+
+        /**
+         * Implements a binary comparison function for the strict weak priority
+         * ordering of two Message objects.
+         */
+        struct ComparePriority {
+            bool operator()(const Message& a, const Message& b)
+            {
+                return a.queuedMessageInfo.unsentBytes <
+                       b.queuedMessageInfo.unsentBytes;
+            }
+        };
+
         /**
          * Construct an Message.
          */
@@ -263,15 +264,30 @@ class Sender {
         /**
          * MessageBucket constructor.
          *
+         * @param Sender
+         *      Sender that owns this bucket.
          * @param pingIntervalCycles
          *      Number of cycles of inactivity to wait between checking on the
          *      liveness of a Message.
          */
-        explicit MessageBucket(uint64_t pingIntervalCycles)
-            : mutex()
+        explicit MessageBucket(Sender* sender, uint64_t pingIntervalCycles)
+            : sender(sender)
+            , mutex()
             , messages()
             , pingTimeouts(pingIntervalCycles)
         {}
+
+        /**
+         * Destruct a MessageBucket. Will destroy all contained Message objects.
+         */
+        ~MessageBucket()
+        {
+            // Intrusive::List is not responsible for destructing its elements;
+            // it must be done manually.
+            for (auto& message : messages) {
+                sender->messageAllocator.destroy(&message);
+            }
+        }
 
         /**
          * Return the Message with the given MessageId.
@@ -295,6 +311,9 @@ class Sender {
             }
             return nullptr;
         }
+
+        /// Sender that owns this object.
+        Sender* const sender;
 
         /// Mutex protecting the contents of this bucket.
         SpinLock mutex;
@@ -331,17 +350,19 @@ class Sender {
         /**
          * MessageBucketMap constructor.
          *
+         * @param sender
+         *      Sender that owns this bucket map.
          * @param pingIntervalCycles
          *      Number of cycles of inactivity to wait between checking on the
          *      liveness of a Message.
          */
-        explicit MessageBucketMap(uint64_t pingIntervalCycles)
+        explicit MessageBucketMap(Sender* sender, uint64_t pingIntervalCycles)
             : buckets()
             , hasher()
         {
             buckets.reserve(NUM_BUCKETS);
             for (int i = 0; i < NUM_BUCKETS; ++i) {
-                buckets.emplace_back(pingIntervalCycles);
+                buckets.emplace_back(sender, pingIntervalCycles);
             }
         }
 
