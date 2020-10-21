@@ -67,13 +67,6 @@ PollModeTransportImpl::free()
     delete this;
 }
 
-/// See Homa::PollModeTransport::getDriver()
-Driver*
-PollModeTransportImpl::getDriver()
-{
-    return core.getDriver();
-}
-
 /// See Homa::PollModeTransport::getId()
 uint64_t
 PollModeTransportImpl::getId()
@@ -124,7 +117,8 @@ PollModeTransportImpl::processPackets()
     const int MAX_BURST = 32;
     Driver::Packet packets[MAX_BURST];
     IpAddress srcAddrs[MAX_BURST];
-    int numPackets = getDriver()->receivePackets(MAX_BURST, packets, srcAddrs);
+    Driver* driver = core.getDriver();
+    int numPackets = driver->receivePackets(MAX_BURST, packets, srcAddrs);
     for (int i = 0; i < numPackets; ++i) {
         core.processPacket(&packets[i], srcAddrs[i]);
     }

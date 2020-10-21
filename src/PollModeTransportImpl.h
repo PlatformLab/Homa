@@ -34,7 +34,6 @@ class PollModeTransportImpl final : public PollModeTransport {
     virtual ~PollModeTransportImpl() = default;
     Homa::unique_ptr<OutMessage> alloc(uint16_t port) override;
     void free() override;
-    Driver* getDriver() override;
     uint64_t getId() override;
     void poll() override;
     Homa::unique_ptr<Homa::InMessage> receive() override;

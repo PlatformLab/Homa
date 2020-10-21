@@ -123,6 +123,11 @@ class Transport : public TransportBase {
     virtual uint64_t checkTimeouts() = 0;
 
     /**
+     * Return the driver that this transport uses to send and receive packets.
+     */
+    virtual Driver* getDriver() = 0;
+
+    /**
      * Handle an ingress packet by running it through the transport protocol
      * stack.
      *
@@ -154,7 +159,9 @@ class Transport : public TransportBase {
      * Attempt to grant to incoming messages according to the Homa protocol.
      *
      * This method must be called eagerly to allow the Transport to make
-     * progress toward receiving incoming messages.
+     * progress toward receiving incoming messages. For example, a user may
+     * invoke this method every time the transport finishes processing a batch
+     * of incoming packets.
      *
      * @return
      *      True if the method has found some messages to grant; false,
