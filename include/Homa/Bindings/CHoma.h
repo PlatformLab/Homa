@@ -19,7 +19,8 @@
  * Contains C-bindings for the Homa Transport API.
  */
 
-#pragma once
+#ifndef HOMA_INCLUDE_HOMA_BINDINGS_CHOMA_H
+#define HOMA_INCLUDE_HOMA_BINDINGS_CHOMA_H
 
 #include "Homa/OutMessageStatus.h"
 
@@ -137,9 +138,9 @@ extern void homa_outmsg_send(homa_outmsg out_msg, uint32_t ip, uint16_t port);
  */
 extern void homa_outmsg_release(homa_outmsg out_msg);
 
-/* ============================ */
-/*     Homa::Transport API      */
-/* ============================ */
+/* ================================ */
+/*     Homa::TransportBase API      */
+/* ================================ */
 
 /**
  * homa_trans_create - C-binding for Homa::TransportBase::create
@@ -167,6 +168,10 @@ extern homa_driver homa_trans_get_drv(homa_trans trans);
  */
 extern uint64_t homa_trans_id(homa_trans trans);
 
+/* ================================ */
+/*     Homa::Core::Transport API    */
+/* ================================ */
+
 /**
  * homa_trans_check_timeouts - C-binding for Core::Transport::checkTimeouts
  */
@@ -191,3 +196,5 @@ extern bool homa_trans_try_grant(homa_trans trans);
 #ifdef __cplusplus
 }
 #endif
+
+#endif  // HOMA_INCLUDE_HOMA_BINDINGS_CHOMA_H

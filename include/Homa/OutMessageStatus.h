@@ -13,7 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#pragma once
+#ifndef HOMA_INCLUDE_HOMA_OUTMESSAGESTATUS_H
+#define HOMA_INCLUDE_HOMA_OUTMESSAGESTATUS_H
 
 /**
  * Defines the possible states of an OutMessage.
@@ -30,3 +31,5 @@ enum homa_outmsg_status {
     COMPLETED,    //< The message has been received and processed.
     FAILED,       //< The message failed to be delivered and processed.
 };
+
+#endif  // HOMA_INCLUDE_HOMA_OUTMESSAGESTATUS_H

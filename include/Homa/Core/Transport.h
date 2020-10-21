@@ -20,7 +20,8 @@
  * Transport library should include this header.
  */
 
-#pragma once
+#ifndef HOMA_INCLUDE_HOMA_CORE_TRANSPORT_H
+#define HOMA_INCLUDE_HOMA_CORE_TRANSPORT_H
 
 #include <Homa/Homa.h>
 
@@ -56,15 +57,18 @@ class Transport : public TransportBase {
          *
          * Here are a few example use cases of this callback:
          * <ul>
-         * <li> Interaction with the user's thread scheduler: e.g., an
-         * application may want to block on receive until a message is
-         * delivered, so this method can be used to wake up blocking threads.
-         * <li> High-performance message dispatch: e.g., an application may
-         * choose to implement the message receive queue with a concurrent MPMC
-         * queue as opposed to a linked-list protected by a mutex; <li>
-         * Lightweight synchronization: e.g., the socket table that maps from
-         * port numbers to sockets is a read-mostly data structure, so lookup
-         * operations can benefit from synchronization schemes such as RCU.
+         * <li>
+         *   Interaction with the user's thread scheduler: e.g., an application
+         *   may want to block on receive until a message is delivered, so this
+         *   method can be used to wake up blocking threads.
+         * <li>
+         *   High-performance message dispatch: e.g., an application may choose
+         *   to implement the message receive queue with a concurrent MPMC queue
+         *   as opposed to a linked-list protected by a mutex;
+         * <li>
+         *   Lightweight synchronization: e.g., the socket table that maps port
+         *   numbers to sockets is a read-mostly data structure, so lookup
+         *   operations can benefit from synchronization schemes such as RCU.
          * </ul>
          *
          * @param port
@@ -160,3 +164,5 @@ class Transport : public TransportBase {
 };
 
 }  // namespace Homa::Core
+
+#endif  // HOMA_INCLUDE_HOMA_CORE_TRANSPORT_H

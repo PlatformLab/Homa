@@ -26,9 +26,10 @@
  * This file follows the Shenango coding style.
  */
 
-#pragma once
+#ifndef HOMA_INCLUDE_HOMA_TRANSPORTS_SHENANGO_H
+#define HOMA_INCLUDE_HOMA_TRANSPORTS_SHENANGO_H
 
-#include "Homa/Bindings/CHoma.h"
+#include <Homa/Bindings/CHoma.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,3 +62,5 @@ extern void homa_free_shenango_trans(homa_trans trans);
 #ifdef __cplusplus
 }
 #endif
+
+#endif  // HOMA_INCLUDE_HOMA_TRANSPORTS_SHENANGO_H

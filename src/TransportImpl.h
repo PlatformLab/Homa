@@ -33,7 +33,7 @@
 namespace Homa::Core {
 
 /**
- * Internal implementation of Homa::Transport.
+ * Internal implementation of Homa::Core::Transport.
  */
 class TransportImpl final : public Transport {
   public:
@@ -49,13 +49,13 @@ class TransportImpl final : public Transport {
     bool trySend(uint64_t* waitUntil) override;
     bool trySendGrants() override;
 
-    /// See Homa::Transport::getDriver()
+    /// See Homa::Core::Transport::getDriver()
     Driver* getDriver() override
     {
         return driver;
     }
 
-    /// See Homa::Transport::getId()
+    /// See Homa::TransportBase::getId()
     uint64_t getId() override
     {
         return transportId;

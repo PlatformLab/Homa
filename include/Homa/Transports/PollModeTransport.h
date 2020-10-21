@@ -13,7 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#pragma once
+#ifndef HOMA_INCLUDE_HOMA_TRANSPORTS_POLLMODETRANSPORT_H
+#define HOMA_INCLUDE_HOMA_TRANSPORTS_POLLMODETRANSPORT_H
 
 #include <Homa/Homa.h>
 
@@ -47,11 +48,8 @@ class PollModeTransport : public TransportBase {
     virtual void poll() = 0;
 
     /**
-     * Check for and return a Message sent to this Socket if available.
+     * Check for and return a Message sent to this transport if available.
      *
-     * @param blocking
-     *      When set to true, this method should not return until a message
-     *      arrives or the socket is shut down.
      * @return
      *      Pointer to the received message, if any; otherwise, nullptr.
      */
@@ -59,3 +57,5 @@ class PollModeTransport : public TransportBase {
 };
 
 }  // namespace Homa
+
+#endif  // HOMA_INCLUDE_HOMA_TRANSPORTS_POLLMODETRANSPORT_H

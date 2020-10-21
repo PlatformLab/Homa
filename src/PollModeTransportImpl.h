@@ -13,7 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#pragma once
+#ifndef HOMA_POLLMODETRANSPORT_H
+#define HOMA_POLLMODETRANSPORT_H
 
 #include <Homa/Transports/PollModeTransport.h>
 #include <atomic>
@@ -81,3 +82,5 @@ class PollModeTransportImpl final : public PollModeTransport {
 };
 
 }  // namespace Homa
+
+#endif  // HOMA_POLLMODETRANSPORT_H

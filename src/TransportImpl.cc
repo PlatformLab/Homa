@@ -29,6 +29,7 @@ const uint64_t PING_INTERVAL_US = 3 * BASE_TIMEOUT_US;
 /// Microseconds to wait before performing retires on inbound messages.
 const uint64_t RESEND_INTERVAL_US = BASE_TIMEOUT_US;
 
+/// See Homa::Core::Transport::create()
 Homa::unique_ptr<Transport>
 Transport::create(Driver* driver, Callbacks* callbacks, uint64_t transportId)
 {
@@ -77,7 +78,7 @@ TransportImpl::TransportImpl(Driver* driver, Callbacks* callbacks,
     , receiver(receiver)
 {}
 
-/// See Homa::Transport::free()
+/// See Homa::TransportBase::free()
 void
 TransportImpl::free()
 {
@@ -90,7 +91,7 @@ TransportImpl::free()
     delete this;
 }
 
-/// See Homa::Transport::alloc()
+/// See Homa::TransportBase::alloc()
 Homa::unique_ptr<OutMessage>
 TransportImpl::alloc(uint16_t port)
 {
@@ -98,7 +99,7 @@ TransportImpl::alloc(uint16_t port)
     return unique_ptr<OutMessage>(outMessage);
 }
 
-/// See Homa::Transport::checkTimeouts()
+/// See Homa::Core::Transport::checkTimeouts()
 uint64_t
 TransportImpl::checkTimeouts()
 {
@@ -107,7 +108,7 @@ TransportImpl::checkTimeouts()
     return requestedTimeoutCycles;
 }
 
-/// See Homa::Transport::processPacket()
+/// See Homa::Core::Transport::processPacket()
 void
 TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
 {
@@ -152,14 +153,14 @@ TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
     }
 }
 
-/// See Homa::Transport::trySend()
+/// See Homa::Core::Transport::trySend()
 bool
 TransportImpl::trySend(uint64_t* waitUntil)
 {
     return sender->trySend(waitUntil);
 }
 
-/// See Homa::Transport::trySendGrants()
+/// See Homa::Core::Transport::trySendGrants()
 bool
 TransportImpl::trySendGrants()
 {

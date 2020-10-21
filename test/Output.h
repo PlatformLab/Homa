@@ -13,7 +13,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#pragma once
+#ifndef HOMA_TEST_OUTPUT_H
+#define HOMA_TEST_OUTPUT_H
 
 #include <algorithm>
 #include <chrono>
@@ -118,3 +119,5 @@ basic(std::vector<Latency>& times, const std::string description)
 }
 
 }  // namespace Output
+
+#endif  // HOMA_TEST_OUTPUT_H

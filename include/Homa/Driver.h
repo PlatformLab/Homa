@@ -19,7 +19,6 @@
 #include <string>
 
 #include "Homa/Exception.h"
-#include "Homa/OutMessageStatus.h"
 
 namespace Homa {
 
@@ -68,8 +67,8 @@ struct IpAddress final {
 static_assert(std::is_trivially_copyable<IpAddress>());
 
 /**
- * Used by Homa::Transport to send and receive unreliable datagrams.  Provides
- * the interface to which all Driver implementations must conform.
+ * Used by Homa::Core::Transport to send and receive unreliable datagrams.
+ * Provides the interface to which all Driver implementations must conform.
  *
  * Implementations of this class should be thread-safe.
  */

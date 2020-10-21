@@ -24,6 +24,7 @@
 #define HOMA_INCLUDE_HOMA_HOMA_H
 
 #include <Homa/Driver.h>
+#include <Homa/OutMessageStatus.h>
 
 namespace Homa {
 
@@ -31,7 +32,7 @@ namespace Homa {
  * Shorthand for an std::unique_ptr with a customized deleter.
  *
  * This is used to implement the "borrow" semantics for interface classes like
- * InMessage, OutMessage, and Socket; that is, a user can obtain pointers to
+ * InMessage, OutMessage, and Transport; that is, a user can obtain pointers to
  * these objects and use them to make function calls, but the user must always
  * return the objects back to the transport library eventually because the user
  * has no idea how to destruct the objects or reclaim memory.
