@@ -129,9 +129,9 @@ class ShenangoDriver final : public Driver {
 
     void allocPacket(Packet* packet) override
     {
-        void* payload;
-        void* mbuf = shenango_homa_tx_alloc_mbuf(&payload);
-        return Packet{(uintptr_t)mbuf, payload, 0};
+        void* mbuf = shenango_homa_tx_alloc_mbuf(&packet->payload);
+        packet->descriptor = reinterpret_cast<uintptr_t>(mbuf);
+        packet->length = 0;
     }
 
     void sendPacket(Packet* packet, IpAddress destination,

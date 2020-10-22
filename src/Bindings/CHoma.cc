@@ -165,10 +165,10 @@ homa_trans_proc(homa_trans trans, uintptr_t desc, void* payload, int32_t len,
     deref(Transport, trans).processPacket(&packet, IpAddress{src_ip});
 }
 
-bool
-homa_trans_try_send(homa_trans trans, uint64_t* wait_until)
+uint64_t
+homa_trans_try_send(homa_trans trans)
 {
-    return deref(Transport, trans).trySend(wait_until);
+    return deref(Transport, trans).trySend();
 }
 
 bool

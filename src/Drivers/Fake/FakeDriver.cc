@@ -185,7 +185,7 @@ void
 FakeDriver::allocPacket(Packet* packet)
 {
     FakePacket* fakePacket = new FakePacket();
-    return fakePacket->toPacket();
+    *packet = fakePacket->toPacket();
 }
 
 /**

@@ -186,7 +186,7 @@ extern void homa_trans_proc(homa_trans trans, uintptr_t desc, void* payload,
 /**
  * homa_trans_try_send - C-binding for Core::Transport::trySend
  */
-extern bool homa_trans_try_send(homa_trans trans, uint64_t* wait_until);
+extern uint64_t homa_trans_try_send(homa_trans trans);
 
 /**
  * homa_trans_try_grant - C-binding for Core::Transport::trySendGrants

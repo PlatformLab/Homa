@@ -50,7 +50,7 @@ class MockDriver : public Driver {
         }
     };
 
-    MOCK_METHOD(Packet, allocPacket, (), (override));
+    MOCK_METHOD(void, allocPacket, (Packet * packet), (override));
     MOCK_METHOD(void, sendPacket,
                 (Packet * packet, IpAddress destination, int priority),
                 (override));

@@ -71,11 +71,11 @@ class MockCallbacks : public Transport::Callbacks {
         if (port != 60001) {
             return false;
         }
-        receivedMessage = std::move(message);
+        receivedMessage = message.release();
         return true;
     }
 
-    Homa::unique_ptr<InMessage> receivedMessage;
+    InMessage* receivedMessage;
 };
 
 class ReceiverTest : public ::testing::Test {
@@ -236,7 +236,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(4U, message->numPackets);
     EXPECT_EQ(0U, info->bytesRemaining);
     EXPECT_EQ(Receiver::Message::State::COMPLETED, message->state);
-    EXPECT_EQ(message, mockCallbacks.receivedMessage.get());
+    EXPECT_EQ(message, mockCallbacks.receivedMessage);
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // -------------------------------------------------------------------------
@@ -305,7 +305,8 @@ TEST_F(ReceiverTest, handlePingPacket_basic)
         (Protocol::Packet::PingHeader*)pingPacketBuf.buffer;
     pingHeader->common.messageId = id;
 
-    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(mockPacket));
+    EXPECT_CALL(mockDriver, allocPacket(_))
+        .WillOnce([this](Driver::Packet* packet) { *packet = mockPacket; });
     EXPECT_CALL(mockDriver,
                 sendPacket(EqPacket(&mockPacket), Eq(mockAddress), _))
         .Times(1);
@@ -339,7 +340,8 @@ TEST_F(ReceiverTest, handlePingPacket_unknown)
         (Protocol::Packet::PingHeader*)pingPacket.payload;
     pingHeader->common.messageId = id;
 
-    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(mockPacket));
+    EXPECT_CALL(mockDriver, allocPacket(_))
+        .WillOnce([this](Driver::Packet* packet) { *packet = mockPacket; });
     EXPECT_CALL(mockDriver,
                 sendPacket(EqPacket(&mockPacket), Eq(mockAddress), _))
         .Times(1);
@@ -427,7 +429,8 @@ TEST_F(ReceiverTest, Message_acknowledge)
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
         receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
 
-    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(mockPacket));
+    EXPECT_CALL(mockDriver, allocPacket(_))
+        .WillOnce([this](Driver::Packet* packet) { *packet = mockPacket; });
     EXPECT_CALL(mockDriver,
                 sendPacket(EqPacketLen(sizeof(Protocol::Packet::DoneHeader)),
                            Eq(message->source.ip), _))
@@ -464,7 +467,8 @@ TEST_F(ReceiverTest, Message_fail)
     Receiver::Message* message = receiver->messageAllocator.pool.construct(
         receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
 
-    EXPECT_CALL(mockDriver, allocPacket()).WillOnce(Return(mockPacket));
+    EXPECT_CALL(mockDriver, allocPacket(_))
+        .WillOnce([this](Driver::Packet* packet) { *packet = mockPacket; });
     EXPECT_CALL(mockDriver,
                 sendPacket(EqPacketLen(sizeof(Protocol::Packet::ErrorHeader)),
                            Eq(message->source.ip), _))
@@ -829,9 +833,9 @@ TEST_F(ReceiverTest, checkResendTimeouts_basic)
     Driver::Packet mockResendPacket2 = packetBuf1.toPacket();
     const size_t RESEND_HEADER_LEN = sizeof(Protocol::Packet::ResendHeader);
 
-    EXPECT_CALL(mockDriver, allocPacket())
-        .WillOnce(Return(mockResendPacket1))
-        .WillOnce(Return(mockResendPacket2));
+    EXPECT_CALL(mockDriver, allocPacket(_))
+        .WillOnce([&mockResendPacket1](auto p) { *p = mockResendPacket1; })
+        .WillOnce([&mockResendPacket2](auto p) { *p = mockResendPacket2; });
     EXPECT_CALL(mockDriver, sendPacket(EqPacketLen(RESEND_HEADER_LEN),
                                        Eq(message[0]->source.ip), _))
         .Times(2);
@@ -914,7 +918,8 @@ TEST_F(ReceiverTest, trySendGrants)
     info[0]->bytesRemaining -= 1000;
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(mockPacket));
+    EXPECT_CALL(mockDriver, allocPacket(_))
+        .WillOnce([this](Driver::Packet* packet) { *packet = mockPacket; });
     EXPECT_CALL(mockDriver, sendPacket(EqPacket(&mockPacket), _, _)).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(EqPacket(&mockPacket), Eq(1)))
         .Times(1);
@@ -941,7 +946,8 @@ TEST_F(ReceiverTest, trySendGrants)
     info[1]->bytesRemaining -= 1000;
     EXPECT_CALL(mockPolicyManager, getScheduledPolicy())
         .WillOnce(Return(policy));
-    EXPECT_CALL(mockDriver, allocPacket).WillOnce(Return(mockPacket));
+    EXPECT_CALL(mockDriver, allocPacket(_))
+        .WillOnce([this](Driver::Packet* packet) { *packet = mockPacket; });
     EXPECT_CALL(mockDriver, sendPacket(EqPacket(&mockPacket), _, _)).Times(1);
     EXPECT_CALL(mockDriver, releasePackets(EqPacket(&mockPacket), Eq(1)))
         .Times(1);
