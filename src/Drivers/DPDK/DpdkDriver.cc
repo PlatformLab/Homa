@@ -38,10 +38,10 @@ DpdkDriver::DpdkDriver(const char* ifname, NoEalInit _,
 DpdkDriver::~DpdkDriver() = default;
 
 /// See Driver::allocPacket()
-Driver::Packet
-DpdkDriver::allocPacket()
+void
+DpdkDriver::allocPacket(Packet* packet)
 {
-    return pImpl->allocPacket();
+    return pImpl->allocPacket(packet);
 }
 
 /// See Driver::sendPacket()

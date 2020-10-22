@@ -39,7 +39,8 @@ template <typename PacketHeaderType, typename... Args>
 void
 send(Driver* driver, IpAddress address, Args&&... args)
 {
-    Driver::Packet packet = driver->allocPacket();
+    Driver::Packet packet;
+    driver->allocPacket(&packet);
     new (packet.payload) PacketHeaderType(static_cast<Args&&>(args)...);
     packet.length = sizeof(PacketHeaderType);
     Perf::counters.tx_bytes.add(packet.length);

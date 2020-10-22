@@ -119,7 +119,7 @@ class FakeDriver : public Driver {
      */
     virtual ~FakeDriver();
 
-    virtual Packet allocPacket();
+    virtual void allocPacket(Packet* packet);
     virtual void sendPacket(Packet* packet, IpAddress destination,
                             int priority);
     virtual uint32_t receivePackets(uint32_t maxPackets,

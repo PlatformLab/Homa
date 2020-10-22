@@ -181,8 +181,8 @@ FakeDriver::~FakeDriver()
 /**
  * See Driver::allocPacket()
  */
-Driver::Packet
-FakeDriver::allocPacket()
+void
+FakeDriver::allocPacket(Packet* packet)
 {
     FakePacket* fakePacket = new FakePacket();
     return fakePacket->toPacket();

@@ -127,7 +127,7 @@ class ShenangoDriver final : public Driver {
 
     ~ShenangoDriver() override = default;
 
-    Packet allocPacket() override
+    void allocPacket(Packet* packet) override
     {
         void* payload;
         void* mbuf = shenango_homa_tx_alloc_mbuf(&payload);

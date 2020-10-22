@@ -184,8 +184,8 @@ DpdkDriver::Impl::~Impl()
 }
 
 // See Driver::allocPacket()
-Driver::Packet
-DpdkDriver::Impl::allocPacket()
+void
+DpdkDriver::Impl::allocPacket(Driver::Packet* packet)
 {
     PacketBuf* packetBuf = _allocMbufPacket();
     if (unlikely(packetBuf == nullptr)) {
@@ -194,7 +194,7 @@ DpdkDriver::Impl::allocPacket()
         packetBuf = packetPool.construct(buf);
         NOTICE("OverflowBuffer used.");
     }
-    return packetBuf->toPacket(0);
+    *packet = packetBuf->toPacket(0);
 }
 
 // See Driver::sendPacket()

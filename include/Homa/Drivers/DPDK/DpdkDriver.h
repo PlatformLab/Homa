@@ -119,7 +119,7 @@ class DpdkDriver : public Driver {
     virtual ~DpdkDriver();
 
     /// See Driver::allocPacket()
-    virtual Packet allocPacket();
+    virtual void allocPacket(Packet* packet);
 
     /// See Driver::sendPacket()
     virtual void sendPacket(Packet* packet, IpAddress destination,

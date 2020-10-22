@@ -61,7 +61,8 @@ main(int argc, char* argv[])
             do {
                 receivedPackets = driver.receivePackets(10, incoming, srcAddrs);
             } while (receivedPackets == 0);
-            Homa::Driver::Packet pong = driver.allocPacket();
+            Homa::Driver::Packet pong;
+            driver.allocPacket(&pong);
             pong.length = 100;
             driver.sendPacket(&pong, srcAddrs[0], 0);
             driver.releasePackets(incoming, receivedPackets);
@@ -74,7 +75,8 @@ main(int argc, char* argv[])
         for (int i = 0; i < 100000; ++i) {
             uint64_t start = PerfUtils::Cycles::rdtsc();
             PerfUtils::TimeTrace::record(start, "START");
-            Homa::Driver::Packet ping = driver.allocPacket();
+            Homa::Driver::Packet ping;
+            driver.allocPacket(&ping);
             PerfUtils::TimeTrace::record("allocPacket");
             ping.length = 100;
             PerfUtils::TimeTrace::record("set ping args");

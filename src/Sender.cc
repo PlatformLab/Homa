@@ -747,7 +747,7 @@ Driver::Packet*
 Sender::Message::getOrAllocPacket(size_t index)
 {
     if (!occupied.test(index)) {
-        packets[index] = driver->allocPacket();
+        driver->allocPacket(&packets[index]);
         occupied.set(index);
         numPackets++;
         // TODO(cstlee): A Message probably shouldn't be in charge of setting

@@ -136,7 +136,7 @@ class DpdkDriver::Impl {
     virtual ~Impl();
 
     // Interface Methods
-    Driver::Packet allocPacket();
+    void allocPacket(Driver::Packet* packet);
     void sendPacket(Driver::Packet* packet, IpAddress destination,
                     int priority);
     void cork();

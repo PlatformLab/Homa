@@ -101,8 +101,12 @@ class Driver {
      * Allocate a new Packet object from the Driver's pool of resources. The
      * caller must eventually release the packet by passing it to a call to
      * releasePacket().
+     *
+     * @param[out] packet
+     *      Set to the description of the allocated packet when the method
+     *      returns.
      */
-    virtual Packet allocPacket() = 0;
+    virtual void allocPacket(Packet* packet) = 0;
 
     /**
      * Send a packet over the network.

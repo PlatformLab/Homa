@@ -37,7 +37,8 @@ TEST(FakeDriverTest, allocPacket)
 {
     // allocPacket doesn't do much so we just need to make sure we can call it.
     FakeDriver driver;
-    Driver::Packet packet = driver.allocPacket();
+    Driver::Packet packet;
+    driver.allocPacket(&packet);
 }
 
 TEST(FakeDriverTest, sendPackets)
@@ -49,7 +50,7 @@ TEST(FakeDriverTest, sendPackets)
     IpAddress destinations[4];
     int prio[4];
     for (int i = 0; i < 4; ++i) {
-        packets[i] = driver1.allocPacket();
+        driver1.allocPacket(&packets[i]);
         destinations[i] = driver2.getLocalAddress();
         prio[i] = i;
     }
