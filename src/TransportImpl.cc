@@ -154,10 +154,10 @@ TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
 }
 
 /// See Homa::Core::Transport::trySend()
-bool
-TransportImpl::trySend(uint64_t* waitUntil)
+uint64_t
+TransportImpl::trySend()
 {
-    return sender->trySend(waitUntil);
+    return sender->trySend();
 }
 
 /// See Homa::Core::Transport::trySendGrants()

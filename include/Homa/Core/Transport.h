@@ -145,15 +145,12 @@ class Transport : public TransportBase {
      * This method must be called eagerly to allow the Transport to make
      * progress toward sending outgoing messages.
      *
-     * @param[out] waitUntil
-     *      The rdtsc cycle time when this method should be called again
-     *      (this allows the NIC to drain its transmit queue). Only set
-     *      when this method returns true.
      * @return
-     *      True if more packets are ready to be transmitted when the method
-     *      returns; false, otherwise.
+     *      The rdtsc cycle time when this method should be called again to
+     *      transmit the rest of the packets (this allows the NIC to drain its
+     *      transmit queue first), or zero if there is no more packets to send.
      */
-    virtual bool trySend(uint64_t* waitUntil) = 0;
+    virtual uint64_t trySend() = 0;
 
     /**
      * Attempt to grant to incoming messages according to the Homa protocol.

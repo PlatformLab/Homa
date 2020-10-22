@@ -210,7 +210,7 @@ Sender::handleResendPacket(Driver::Packet* packet)
         // will never be overridden since the resend index will not exceed the
         // preset packetsGranted.
         info->priority = header->priority;
-        signalPacerThread(lock_queue);
+        signalSendReady(lock_queue);
     }
 
     if (index >= info->packetsSent) {
@@ -292,7 +292,7 @@ Sender::handleGrantPacket(Driver::Packet* packet)
             // limit will never be overridden since the incomingGrantIndex will
             // not exceed the preset packetsGranted.
             info->priority = header->priority;
-            signalPacerThread(lock_queue);
+            signalSendReady(lock_queue);
         }
     }
 
@@ -419,7 +419,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet)
             Intrusive::deprioritize<Message>(
                 &sendQueue, &info->sendQueueNode,
                 QueuedMessageInfo::ComparePriority());
-            signalPacerThread(lock_queue);
+            signalSendReady(lock_queue);
         }
     }
 
@@ -826,7 +826,7 @@ Sender::sendMessage(Sender::Message* message, SocketAddress destination,
         sendQueue.push_front(&info->sendQueueNode);
         Intrusive::deprioritize<Message>(&sendQueue, &info->sendQueueNode,
                                          QueuedMessageInfo::ComparePriority());
-        signalPacerThread(lock_queue);
+        signalSendReady(lock_queue);
     }
 }
 
@@ -983,9 +983,8 @@ Sender::checkPingTimeouts()
 }
 
 /**
- * Attempt to wake up the pacer thread that is responsible for calling trySend()
- * repeatedly, if it's currently blocked waiting for packets to become ready to
- * be sent.
+ * Signal the thread which is responsible for calling trySend() that some
+ * packets just become ready to be sent.
  *
  * This method is called when new GRANTs arrive, when new outgoing messages
  * appear, and when retransmission is requested.
@@ -994,30 +993,16 @@ Sender::checkPingTimeouts()
  *      Reminder to hold the Sender::queueMutex during this call.
  */
 void
-Sender::signalPacerThread(const SpinLock::Lock& lockHeld)
+Sender::signalSendReady(const SpinLock::Lock& lockHeld)
 {
     (void)lockHeld;
     sendReady = true;
     callbacks->notifySendReady();
 }
 
-/**
- * Attempt to send out packets for any messages with unscheduled/granted bytes
- * in a way that limits queue buildup in the NIC.
- *
- * This method must be called eagerly to allow the Sender to make progress
- * toward sending outgoing messages.
- *
- * @param[out] waitUntil
- *      Time to wait before next call, in microseconds, in order to allow
- *      the NIC transmit queue to drain. Only set when this method returns
- *      true.
- * @return
- *      True if more packets are ready to be transmitted when the method
- *      returns; false, otherwise.
- */
-bool
-Sender::trySend(uint64_t* waitUntil)
+/// See Homa::Core::Transport::trySend()
+uint64_t
+Sender::trySend()
 {
     uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
     bool idle = true;
@@ -1025,7 +1010,7 @@ Sender::trySend(uint64_t* waitUntil)
     // Skip when there are no messages to send.
     SpinLock::UniqueLock lock_queue(queueMutex);
     if (!sendReady) {
-        return false;
+        return 0;
     }
 
     /* The goal is to send out packets for messages that have bytes that have
@@ -1038,6 +1023,7 @@ Sender::trySend(uint64_t* waitUntil)
     // Optimistically assume we will finish sending every granted packet this
     // round; we will set again sendReady if it turns out we don't finish.
     sendReady = false;
+    uint64_t waitUntil = 0;
     auto it = sendQueue.begin();
     while (it != sendQueue.end()) {
         Message& message = *it;
@@ -1084,7 +1070,7 @@ Sender::trySend(uint64_t* waitUntil)
             // Compute how much time the driver needs to drain its queue,
             // then schedule to wake up a bit earlier to avoid blowing bubbles.
             static const uint64_t us = PerfUtils::Cycles::fromMicroseconds(1);
-            *waitUntil =
+            waitUntil =
                 PerfUtils::Cycles::rdtsc() - 1 * us +
                 queuedBytesEstimate * DRIVER_CYCLES_TO_DRAIN_1MB / 1000000;
             break;
@@ -1097,7 +1083,7 @@ Sender::trySend(uint64_t* waitUntil)
     } else {
         Perf::counters.idle_cycles.add(elapsed_cycles);
     }
-    return sendReady;
+    return waitUntil;
 }
 
 }  // namespace Core

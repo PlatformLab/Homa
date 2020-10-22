@@ -46,7 +46,7 @@ class TransportImpl final : public Transport {
     Homa::unique_ptr<OutMessage> alloc(uint16_t port) override;
     uint64_t checkTimeouts() override;
     void processPacket(Driver::Packet* packet, IpAddress source) override;
-    bool trySend(uint64_t* waitUntil) override;
+    uint64_t trySend() override;
     bool trySendGrants() override;
 
     /// See Homa::Core::Transport::getDriver()

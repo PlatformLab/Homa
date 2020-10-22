@@ -72,19 +72,19 @@ endif()
 
 ## lib Homa ####################################################################
 add_library(Homa
+    src/Bindings/CHoma.cc
     src/CodeLocation.cc
-    src/CHoma.cc
     src/Debug.cc
     src/Driver.cc
     src/Perf.cc
     src/Policy.cc
-    src/PollModeTransportImpl.cc
     src/Receiver.cc
     src/Sender.cc
-    src/Shenango.cc
     src/StringUtil.cc
     src/ThreadId.cc
     src/TransportImpl.cc
+    src/Transports/PollModeTransportImpl.cc
+    src/Transports/Shenango.cc
     src/Util.cc
 )
 add_library(Homa::Homa ALIAS Homa)
@@ -256,7 +256,6 @@ add_executable(unit_test
     src/IntrusiveTest.cc
     src/ObjectPoolTest.cc
     src/PolicyTest.cc
-    src/PollModeTransportImplTest.cc
     src/ReceiverTest.cc
     src/SenderTest.cc
     src/SpinLockTest.cc
@@ -265,6 +264,7 @@ add_executable(unit_test
     src/ThreadIdTest.cc
     src/TimeoutTest.cc
     src/TransportImplTest.cc
+    src/Transports/PollModeTransportImplTest.cc
     src/TubTest.cc
     src/UtilTest.cc
 )

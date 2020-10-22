@@ -54,7 +54,7 @@ class Sender {
     virtual void handleUnknownPacket(Driver::Packet* packet);
     virtual void handleErrorPacket(Driver::Packet* packet);
     virtual uint64_t checkTimeouts();
-    virtual bool trySend(uint64_t* waitUntil);
+    virtual uint64_t trySend();
 
   private:
     /// Forward declarations
@@ -393,7 +393,7 @@ class Sender {
 
     void sendMessage(Sender::Message* message, SocketAddress destination,
                      Message::Options options = Message::Options::NONE);
-    void signalPacerThread(const SpinLock::Lock& lockHeld);
+    void signalSendReady(const SpinLock::Lock& lockHeld);
     void cancelMessage(Sender::Message* message);
     void dropMessage(Sender::Message* message);
     uint64_t checkMessageTimeouts();
@@ -429,7 +429,8 @@ class Sender {
 
     /// Hint whether there are messages ready to be sent (i.e. there are granted
     /// messages in the sendQueue. Encoded into a single bool so that checking
-    /// if there is work to do is more efficient.
+    /// if there is work to do is more efficient. Access to this field is
+    /// protected by queueMutex.
     bool sendReady;
 
     /// A list of outbound messages that have unsent packets.  Messages are kept

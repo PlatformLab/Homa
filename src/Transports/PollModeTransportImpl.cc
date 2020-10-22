@@ -81,8 +81,7 @@ PollModeTransportImpl::poll()
     processPackets();
 
     // Allow sender and receiver to make incremental progress.
-    uint64_t waitUntil;
-    core.trySend(&waitUntil);
+    core.trySend();
     core.trySendGrants();
 
     if (PerfUtils::Cycles::rdtsc() >= nextTimeoutCycles.load()) {

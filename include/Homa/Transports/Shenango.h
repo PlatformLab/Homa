@@ -22,8 +22,6 @@
  * Shenango is an experimental operating system that aims to provide low tail
  * latency and high CPU efficiency simultaneously for servers in datacenters.
  * See <https://github.com/shenango/shenango> for more information.
- *
- * This file follows the Shenango coding style.
  */
 
 #ifndef HOMA_INCLUDE_HOMA_TRANSPORTS_SHENANGO_H

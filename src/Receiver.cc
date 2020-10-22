@@ -720,7 +720,7 @@ Receiver::trySendGrants()
     uint64_t start_tsc = PerfUtils::Cycles::rdtsc();
 
     // Fast path: skip if no message is waiting for grants
-    bool needGrants = !dontNeedGrants.test_and_set();
+    bool needGrants = !dontNeedGrants.test_and_set(std::memory_order_acquire);
     if (!needGrants) {
         return false;
     }

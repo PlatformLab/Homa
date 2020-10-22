@@ -16,7 +16,7 @@
 #include "Homa/Transports/Shenango.h"
 
 #include <utility>
-#include "Debug.h"
+#include "../Debug.h"
 #include "Homa/Core/Transport.h"
 
 using namespace Homa;
