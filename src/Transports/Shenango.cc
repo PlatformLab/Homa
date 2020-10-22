@@ -80,14 +80,15 @@ class ShenangoCallbacks final : Core::Transport::Callbacks {
 
     ~ShenangoCallbacks() override = default;
 
-    bool deliver(uint16_t port, InMessage* message) override
+    bool deliver(uint16_t port, Homa::unique_ptr<InMessage> message) override
     {
         // The socket table in Shenango is protected by an RCU.
         shenango_rcu_read_lock();
         SocketAddress laddr = {local_ip, port};
         void* trans_entry = shenango_trans_table_lookup(proto, laddr, {});
         if (trans_entry) {
-            shenango_homa_mb_deliver(trans_entry, homa_inmsg{message});
+            shenango_homa_mb_deliver(trans_entry,
+                                     homa_inmsg{message.release()});
         }
         shenango_rcu_read_unlock();
         return trans_entry != nullptr;

@@ -393,7 +393,6 @@ class Sender {
 
     void sendMessage(Sender::Message* message, SocketAddress destination,
                      Message::Options options = Message::Options::NONE);
-    void signalSendReady(const SpinLock::Lock& lockHeld);
     void cancelMessage(Sender::Message* message);
     void dropMessage(Sender::Message* message);
     uint64_t checkMessageTimeouts();
@@ -402,7 +401,8 @@ class Sender {
     /// Transport identifier.
     const uint64_t transportId;
 
-    /// User-defined transport callbacks; not owned by this class.
+    /// User-defined transport callbacks; not owned by this class. As a general
+    /// rule, one should not hold any locks when invoking a callback.
     Transport::Callbacks* const callbacks;
 
     /// Driver with which all packets will be sent and received.  This driver
@@ -427,9 +427,11 @@ class Sender {
     /// Protects the sendQueue and sendReady.
     SpinLock queueMutex;
 
-    /// Hint whether there are messages ready to be sent (i.e. there are granted
-    /// messages in the sendQueue. Encoded into a single bool so that checking
-    /// if there is work to do is more efficient. Access to this field is
+    /// Hint whether there are messages ready to be sent (i.e. granted messages
+    /// in the sendQueue). Encoded into a single bool so that checking if there
+    /// is work to do is more efficient. This bool can be cleared by trySend()
+    /// and set to true when new GRANTs arrive, when new outgoing messages
+    /// appear, and when retransmission is requested. Access to this field is
     /// protected by queueMutex.
     bool sendReady;
 

@@ -66,16 +66,16 @@ class MockCallbacks : public Transport::Callbacks {
         : receivedMessage()
     {}
 
-    bool deliver(uint16_t port, Homa::InMessage* message) override
+    bool deliver(uint16_t port, Homa::unique_ptr<InMessage> message) override
     {
         if (port != 60001) {
             return false;
         }
-        receivedMessage = message;
+        receivedMessage = std::move(message);
         return true;
     }
 
-    Homa::InMessage* receivedMessage;
+    Homa::unique_ptr<InMessage> receivedMessage;
 };
 
 class ReceiverTest : public ::testing::Test {
@@ -236,7 +236,7 @@ TEST_F(ReceiverTest, handleDataPacket)
     EXPECT_EQ(4U, message->numPackets);
     EXPECT_EQ(0U, info->bytesRemaining);
     EXPECT_EQ(Receiver::Message::State::COMPLETED, message->state);
-    EXPECT_EQ(message, mockCallbacks.receivedMessage);
+    EXPECT_EQ(message, mockCallbacks.receivedMessage.get());
     Mock::VerifyAndClearExpectations(&mockDriver);
 
     // -------------------------------------------------------------------------

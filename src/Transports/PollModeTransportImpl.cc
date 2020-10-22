@@ -97,9 +97,9 @@ PollModeTransportImpl::receive()
     if (receiveQueue.empty()) {
         return nullptr;
     }
-    InMessage* message = receiveQueue.back();
+    Homa::unique_ptr<InMessage> message = std::move(receiveQueue.back());
     receiveQueue.pop_back();
-    return Homa::unique_ptr<InMessage>(message);
+    return message;
 }
 
 /**

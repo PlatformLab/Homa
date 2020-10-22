@@ -78,7 +78,8 @@ class Transport : public TransportBase {
          * @return
          *      True if the message is delivered successfully; false, otherwise.
          */
-        virtual bool deliver(uint16_t port, InMessage* message) = 0;
+        virtual bool deliver(uint16_t port,
+                             Homa::unique_ptr<InMessage> message) = 0;
 
         /**
          * Invoked when some packets just became ready to be sent (and there was

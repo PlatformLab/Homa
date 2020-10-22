@@ -164,10 +164,12 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
             // All message packets have been received.
             message->setState(Message::State::COMPLETED);
             bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
+            lock_bucket.destroy();
+
             uint16_t dport = be16toh(header->common.prefix.dport);
-            bool success = callbacks->deliver(dport, message);
+            bool success =
+                callbacks->deliver(dport, Homa::unique_ptr<InMessage>(message));
             if (!success) {
-                lock_bucket.destroy();
                 ERROR("Unable to deliver the message; message dropped");
                 dropMessage(message);
             }

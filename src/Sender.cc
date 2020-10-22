@@ -187,7 +187,8 @@ Sender::handleResendPacket(Driver::Packet* packet)
     bucket->messageTimeouts.setTimeout(&message->messageTimeout);
     bucket->pingTimeouts.setTimeout(&message->pingTimeout);
 
-    SpinLock::Lock lock_queue(queueMutex);
+    bool notifySendReady = false;
+    SpinLock::UniqueLock lock_queue(queueMutex);
     QueuedMessageInfo* info = &message->queuedMessageInfo;
 
     // Check if RESEND request is out of range.
@@ -210,7 +211,8 @@ Sender::handleResendPacket(Driver::Packet* packet)
         // will never be overridden since the resend index will not exceed the
         // preset packetsGranted.
         info->priority = header->priority;
-        signalSendReady(lock_queue);
+        sendReady = true;
+        notifySendReady = true;
     }
 
     if (index >= info->packetsSent) {
@@ -233,6 +235,12 @@ Sender::handleResendPacket(Driver::Packet* packet)
             Perf::counters.tx_bytes.add(packet->length);
             driver->sendPacket(packet, message->destination.ip, resendPriority);
         }
+    }
+
+    // Only invoke the callback after unlocking queueMutex.
+    lock_queue.unlock();
+    if (notifySendReady) {
+        callbacks->notifySendReady();
     }
 
     driver->releasePackets(packet, 1);
@@ -263,6 +271,7 @@ Sender::handleGrantPacket(Driver::Packet* packet)
     bucket->messageTimeouts.setTimeout(&message->messageTimeout);
     bucket->pingTimeouts.setTimeout(&message->pingTimeout);
 
+    bool notifySendReady = false;
     if (message->getStatus() == OutMessage::Status::IN_PROGRESS) {
         SpinLock::Lock lock_queue(queueMutex);
         QueuedMessageInfo* info = &message->queuedMessageInfo;
@@ -292,8 +301,14 @@ Sender::handleGrantPacket(Driver::Packet* packet)
             // limit will never be overridden since the incomingGrantIndex will
             // not exceed the preset packetsGranted.
             info->priority = header->priority;
-            signalSendReady(lock_queue);
+            sendReady = true;
+            notifySendReady = true;
         }
+    }
+
+    // Only invoke the callback after unlocking queueMutex.
+    if (notifySendReady) {
+        callbacks->notifySendReady();
     }
 
     driver->releasePackets(packet, 1);
@@ -388,6 +403,7 @@ Sender::handleUnknownPacket(Driver::Packet* packet)
         bucket->pingTimeouts.setTimeout(&message->pingTimeout);
 
         assert(message->numPackets > 0);
+        bool notifySendReady = false;
         if (message->numPackets == 1) {
             // If there is only one packet in the message, send it right away.
             Driver::Packet* dataPacket = message->getPacket(0);
@@ -419,7 +435,13 @@ Sender::handleUnknownPacket(Driver::Packet* packet)
             Intrusive::deprioritize<Message>(
                 &sendQueue, &info->sendQueueNode,
                 QueuedMessageInfo::ComparePriority());
-            signalSendReady(lock_queue);
+            sendReady = true;
+            notifySendReady = true;
+        }
+
+        // Only invoke the callback after unlocking queueMutex.
+        if (notifySendReady) {
+            callbacks->notifySendReady();
         }
     }
 
@@ -801,6 +823,7 @@ Sender::sendMessage(Sender::Message* message, SocketAddress destination,
     bucket->messageTimeouts.setTimeout(&message->messageTimeout);
     bucket->pingTimeouts.setTimeout(&message->pingTimeout);
 
+    bool notifySendReady = false;
     assert(message->numPackets > 0);
     if (message->numPackets == 1) {
         // If there is only one packet in the message, send it right away.
@@ -826,7 +849,13 @@ Sender::sendMessage(Sender::Message* message, SocketAddress destination,
         sendQueue.push_front(&info->sendQueueNode);
         Intrusive::deprioritize<Message>(&sendQueue, &info->sendQueueNode,
                                          QueuedMessageInfo::ComparePriority());
-        signalSendReady(lock_queue);
+        sendReady = true;
+        notifySendReady = true;
+    }
+
+    // Only invoke the callback after unlocking queueMutex.
+    if (notifySendReady) {
+        callbacks->notifySendReady();
     }
 }
 
@@ -980,24 +1009,6 @@ Sender::checkPingTimeouts()
         globalNextTimeout = std::min(globalNextTimeout, nextTimeout);
     }
     return globalNextTimeout;
-}
-
-/**
- * Signal the thread which is responsible for calling trySend() that some
- * packets just become ready to be sent.
- *
- * This method is called when new GRANTs arrive, when new outgoing messages
- * appear, and when retransmission is requested.
- *
- * @param lockHeld
- *      Reminder to hold the Sender::queueMutex during this call.
- */
-void
-Sender::signalSendReady(const SpinLock::Lock& lockHeld)
-{
-    (void)lockHeld;
-    sendReady = true;
-    callbacks->notifySendReady();
 }
 
 /// See Homa::Core::Transport::trySend()

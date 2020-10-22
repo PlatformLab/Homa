@@ -50,11 +50,12 @@ class PollModeTransportImpl final : public PollModeTransport {
 
         ~PollModeCallbacks() override = default;
 
-        bool deliver(uint16_t port, InMessage* message) override
+        bool deliver(uint16_t port,
+                     Homa::unique_ptr<InMessage> message) override
         {
             (void)port;
             SpinLock::Lock _(owner->mutex);
-            owner->receiveQueue.push_back(message);
+            owner->receiveQueue.push_back(std::move(message));
             return true;
         }
 
@@ -77,7 +78,7 @@ class PollModeTransportImpl final : public PollModeTransport {
     SpinLock mutex;
 
     /// Queue of completed incoming messages.
-    std::vector<InMessage*> receiveQueue;
+    std::vector<Homa::unique_ptr<InMessage>> receiveQueue;
 };
 
 }  // namespace Homa
