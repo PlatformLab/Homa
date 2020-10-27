@@ -71,39 +71,18 @@ class InMessage {
     virtual void acknowledge() const = 0;
 
     /**
-     * Get the contents of a specified range of bytes in the Message by
-     * copying them into the provided destination memory region.
-     *
-     * @param offset
-     *      The number of bytes in the Message preceding the range of bytes
-     *      being requested.
-     * @param destination
-     *      The pointer to the memory region into which the requested byte
-     *      range will be copied. The caller must ensure that the buffer is
-     *      big enough to hold the requested number of bytes.
-     * @param count
-     *      The number of bytes being requested.
+     * Get the underlying contiguous memory buffer serving as message storage.
+     * The buffer will be large enough to hold at least length() bytes.
      *
      * @return
-     *      The number of bytes actually copied out. This number may be less
-     *      than "num" if the requested byte range exceeds the range of
-     *      bytes in the Message.
+     *      Pointer to the message buffer.
      */
-    virtual size_t get(size_t offset, void* destination,
-                       size_t count) const = 0;
+    virtual void* data() const = 0;
 
     /**
      * Return the number of bytes this Message contains.
      */
     virtual size_t length() const = 0;
-
-    /**
-     * Remove a number of bytes from the beginning of the Message.
-     *
-     * @param count
-     *      Number of bytes to remove.
-     */
-    virtual void strip(size_t count) = 0;
 
   protected:
     /**

@@ -74,13 +74,13 @@ isPowerOfTwo(num_type n)
  * Round up the result of x divided by y, where both x and y are positive
  * integers.
  */
-template <typename num_type, typename Y>
-constexpr num_type
-roundUpIntDiv(num_type x, Y y)
+template <typename num_type_x, typename num_type_y>
+constexpr num_type_x
+roundUpIntDiv(num_type_x x, num_type_y y)
 {
-    static_assert(std::is_integral<num_type>::value, "Integral required.");
+    static_assert(std::is_integral<num_type_x>::value, "Integral required.");
     assert(x > 0 && y > 0);
-    num_type yy = downCast<num_type>(y);
+    num_type_x yy = downCast<num_type_x>(y);
     return (x + yy - 1) / yy;
 }
 

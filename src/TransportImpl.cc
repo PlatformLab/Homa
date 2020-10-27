@@ -90,14 +90,10 @@ TransportImpl::processPackets()
     Driver::Packet* packets[MAX_BURST];
     IpAddress srcAddrs[MAX_BURST];
     int numPackets = driver->receivePackets(MAX_BURST, packets, srcAddrs);
-    int releaseCount = 0;
     for (int i = 0; i < numPackets; ++i) {
-        bool retainPacket = processPacket(packets[i], srcAddrs[i]);
-        if (!retainPacket) {
-            packets[releaseCount++] = packets[i];
-        }
+        processPacket(packets[i], srcAddrs[i]);
     }
-    driver->releasePackets(packets, releaseCount);
+    driver->releasePackets(packets, numPackets);
 
     if (numPackets > 0) {
         Perf::counters.active_cycles.add(timer.split());
@@ -105,18 +101,16 @@ TransportImpl::processPackets()
 }
 
 /**
- * Process an incoming packet.
+ * Process an incoming packet.  The transport will have no more use of this
+ * packet afterwards, so the packet can be released to the driver when the
+ * method returns.
  *
  * @param packet
  *      Incoming packet to be processed.
  * @param sourceIp
  *      Source IP address.
- * @return
- *      True if the transport decides to take ownership of the packet. False
- *      if the transport has no more use of this packet and it can be released
- *      to the driver.
  */
-bool
+void
 TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
 {
     assert(packet->length >=
@@ -124,18 +118,16 @@ TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
     Perf::counters.rx_bytes.add(packet->length);
     Protocol::Packet::CommonHeader* header =
         static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
-    bool retainPacket = false;
     switch (header->opcode) {
         case Protocol::Packet::DATA:
             Perf::counters.rx_data_pkts.add(1);
-            retainPacket = receiver->handleDataPacket(packet, sourceIp);
+            receiver->handleDataPacket(packet, sourceIp);
             break;
         case Protocol::Packet::GRANT:
             Perf::counters.rx_grant_pkts.add(1);
             sender->handleGrantPacket(packet);
             break;
         case Protocol::Packet::DONE:
-            // fixme: rename DONE to ACK?
             Perf::counters.rx_done_pkts.add(1);
             sender->handleDonePacket(packet);
             break;
@@ -156,12 +148,10 @@ TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
             sender->handleUnknownPacket(packet);
             break;
         case Protocol::Packet::ERROR:
-            // FIXME: remove ERROR?
             Perf::counters.rx_error_pkts.add(1);
             sender->handleErrorPacket(packet);
             break;
     }
-    return retainPacket;
 }
 
 }  // namespace Core

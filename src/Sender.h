@@ -75,33 +75,29 @@ class Sender {
          *      Message to which this metadata is associated.
          */
         explicit QueuedMessageInfo(Message* message)
-            : packets(message)
-            , unsentBytes(0)
+            : unsentBytes(0)
             , packetsGranted(0)
-            , priority(0)
             , packetsSent(0)
+            , priority(0)
             , sendQueueNode(message)
         {}
 
-        /// Handle to the queue Message for access to the packets that will
-        /// be sent.  This member documents that the packets are logically owned
-        /// by the sendQueue and thus protected by the queueMutex.
-        Message* const packets;
-
         /// The number of bytes that still need to be sent for a queued Message.
+        /// This variable is used to rank messages in SRPT order so it must be
+        /// protected by Sender::queueMutex.
         int unsentBytes;
 
         /// The number of packets that can be sent for this Message.
         int packetsGranted;
 
-        /// The network priority at which this Message should be sent.
-        int priority;
-
         /// The number of packets that have been sent for this Message.
         int packetsSent;
 
+        /// The network priority at which this Message should be sent.
+        int priority;
+
         /// Intrusive structure used to enqueue the associated Message into
-        /// the sendQueue.
+        /// the sendQueue. Protected by Sender::queueMutex.
         Intrusive::List<Message>::Node sendQueueNode;
     };
 
@@ -110,7 +106,6 @@ class Sender {
      */
     class Message : public Homa::OutMessage {
       public:
-
         /**
          * Implements a binary comparison function for the strict weak priority
          * ordering of two Message objects.
@@ -218,6 +213,7 @@ class Sender {
         /// constant after send() is invoked.
         int numPackets;
 
+        // FIXME: seems like an overkill? (e.g., packets should be added in order)
         /// Bit array representing which entries in the _packets_ array are set.
         /// Used to avoid having to zero out the entire _packets_ array. Must be
         /// constant after send() is invoked.
@@ -315,7 +311,8 @@ class Sender {
         /// Sender that owns this object.
         Sender* const sender;
 
-        /// Mutex protecting the contents of this bucket.
+        /// Mutex protecting the contents of this bucket. See Sender::queueMutex
+        /// for locking order constraints.
         SpinLock mutex;
 
         /// Collection of outbound messages
@@ -415,8 +412,13 @@ class Sender {
     /// Tracks all outbound messages being sent by the Sender.
     MessageBucketMap messageBuckets;
 
-    /// Protects the sendQueue.  Locking principle: when a bucket mutex is also
-    /// required, it must be acquired before the sendQueue mutex.
+    /// Protects the sendQueue, including all member variables of its items.
+    /// When multiple locks must be acquired, this class follows the locking
+    /// order constraint below ("<" means "acquired before"):
+    ///     queueMutex < MessageBucket::mutex
+    /// Usually, it's more natural to acquire coarser-grained locks first,
+    /// unless inverting the order would make the common code path simpler
+    /// and/or faster.
     SpinLock queueMutex;
 
     /// A list of outbound messages that have unsent packets.  Messages are kept
