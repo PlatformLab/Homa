@@ -68,7 +68,9 @@ Homa::OutMessage*
 Sender::allocMessage(uint16_t sourcePort)
 {
     Perf::counters.allocated_tx_messages.add(1);
-    return messageAllocator.construct(this, sourcePort);
+    uint64_t messageId =
+        nextMessageSequenceNumber.fetch_add(1, std::memory_order_relaxed);
+    return messageAllocator.construct(this, messageId, sourcePort);
 }
 
 /**

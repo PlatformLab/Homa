@@ -374,7 +374,7 @@ TEST_F(ReceiverTest, Message_destructor_basic)
 
     message->numPackets = NUM_PKTS;
     for (int i = 0; i < NUM_PKTS; ++i) {
-        message->occupied.set(i);
+        message->received.set(i);
     }
 
     EXPECT_CALL(mockDriver, releasePackets(Eq(message->packets), Eq(NUM_PKTS)))
@@ -392,10 +392,10 @@ TEST_F(ReceiverTest, Message_destructor_holes)
     const uint16_t NUM_PKTS = 4;
 
     message->numPackets = NUM_PKTS;
-    message->occupied.set(0);
-    message->occupied.set(1);
-    message->occupied.set(3);
-    message->occupied.set(4);
+    message->received.set(0);
+    message->received.set(1);
+    message->received.set(3);
+    message->received.set(4);
 
     EXPECT_CALL(mockDriver, releasePackets(Eq(&message->packets[0]), Eq(2)))
         .Times(1);
@@ -593,7 +593,7 @@ TEST_F(ReceiverTest, Message_getPacket)
 
     EXPECT_EQ(nullptr, message->getPacket(0));
 
-    message->occupied.set(0);
+    message->received.set(0);
 
     EXPECT_EQ(packet, message->getPacket(0));
 }
@@ -605,13 +605,13 @@ TEST_F(ReceiverTest, Message_setPacket)
         receiver, &mockDriver, 0, 0, id, SocketAddress{22, 60001}, 0);
     Driver::Packet* packet = (Driver::Packet*)42;
 
-    EXPECT_FALSE(message->occupied.test(0));
+    EXPECT_FALSE(message->received.test(0));
     EXPECT_EQ(0U, message->numPackets);
 
     EXPECT_TRUE(message->setPacket(0, packet));
 
     EXPECT_EQ(packet, message->packets[0]);
-    EXPECT_TRUE(message->occupied.test(0));
+    EXPECT_TRUE(message->received.test(0));
     EXPECT_EQ(1U, message->numPackets);
 
     EXPECT_FALSE(message->setPacket(0, packet));

@@ -121,13 +121,14 @@ class Sender {
         /**
          * Construct an Message.
          */
-        explicit Message(Sender* sender, uint16_t sourcePort)
+        explicit Message(Sender* sender, uint64_t messageId,
+                         uint16_t sourcePort)
             : sender(sender)
             , driver(sender->driver)
             , TRANSPORT_HEADER_LENGTH(sizeof(Protocol::Packet::DataHeader))
             , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() -
                                  TRANSPORT_HEADER_LENGTH)
-            , id(sender->transportId, sender->nextMessageSequenceNumber++)
+            , id(sender->transportId, messageId)
             , bucket(sender->messageBuckets.getBucket(id))
             , source{driver->getLocalAddress(), sourcePort}
             , destination()
@@ -401,7 +402,7 @@ class Sender {
     Policy::Manager* const policyManager;
 
     /// The sequence number to be used for the next Message.
-    volatile uint64_t nextMessageSequenceNumber;
+    std::atomic<uint64_t> nextMessageSequenceNumber;
 
     /// The maximum number of bytes that should be queued in the Driver.
     const uint32_t DRIVER_QUEUED_BYTE_LIMIT;

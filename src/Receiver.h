@@ -150,7 +150,7 @@ class Receiver {
             , scheduled(numExpectedPackets > numUnscheduledPackets)
             , messageLength(messageLength)
             , numPackets(0)
-            , occupied()
+            , received()
             , buffer(messageLength <= Util::arrayLength(internalBuffer)
                          ? internalBuffer
                          : receiver->externalBuffers.construct()->raw)
@@ -213,7 +213,7 @@ class Receiver {
 
         /// Bit array representing which packets in this message are received.
         /// Protected by MessageBucket::mutex.
-        std::bitset<MAX_MESSAGE_PACKETS> occupied;
+        std::bitset<MAX_MESSAGE_PACKETS> received;
 
         /// Pointer to the contiguous memory buffer serving as message storage.
         char* const buffer;

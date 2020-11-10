@@ -142,11 +142,11 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
         }
 
         // Add the packet, but don't copy the payload yet.
-        if (message->occupied.test(header->index)) {
+        if (message->received.test(header->index)) {
             // Must be a duplicate packet; drop it.
             return;
         }
-        message->occupied.set(header->index);
+        message->received.set(header->index);
         message->numPackets++;
         messageComplete = (message->numPackets == message->numExpectedPackets);
     }
@@ -415,8 +415,9 @@ Receiver::checkResendTimeouts(uint64_t now, MessageBucket* bucket)
         return;
     }
 
-    SpinLock::Lock lock_bucket(bucket->mutex);
     while (true) {
+        SpinLock::Lock lock_bucket(bucket->mutex);
+
         // No remaining timeouts.
         if (bucket->resendTimeouts.empty()) {
             break;
@@ -470,7 +471,7 @@ Receiver::checkResendTimeouts(uint64_t now, MessageBucket* bucket)
         }
 
         for (int i = 0; i < grantIndexLimit; ++i) {
-            if (!message->occupied.test(i)) {
+            if (!message->received.test(i)) {
                 // Unreceived packet
                 if (num == 0) {
                     // First unreceived packet

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2018, Stanford University
+/* Copyright (c) 2010-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -52,9 +52,10 @@ namespace Homa {
  * For example, transports use ObjectPool to allocate short-lived rpc
  * objects that cannot be kept in a stack context.
  *
- * This class is thread-safe.
+ * Thread-safety of this class can be configured statically using the
+ * template argument ThreadSafe.
  */
-template <typename T>
+template <typename T, bool ThreadSafe=true>
 class ObjectPool {
   public:
     /**
@@ -64,7 +65,8 @@ class ObjectPool {
      * allocations. For simplicity, no bulk allocations are performed.
      */
     ObjectPool()
-        : outstandingObjects(0)
+        : mutex()
+        , outstandingObjects(0)
         , pool()
     {}
 
@@ -101,23 +103,23 @@ class ObjectPool {
     T* construct(Args&&... args)
     {
         void* backing = nullptr;
-        {
-            SpinLock::Lock lock(mutex);
-            if (pool.size() == 0) {
-                backing = operator new(sizeof(T));
-            } else {
-                backing = pool.back();
-                pool.pop_back();
-            }
-            outstandingObjects++;
+        enterCS();
+        if (pool.size() == 0) {
+            backing = operator new(sizeof(T));
+        } else {
+            backing = pool.back();
+            pool.pop_back();
         }
+        outstandingObjects++;
+        exitCS();
 
         try {
             return new (backing) T(static_cast<Args&&>(args)...);
         } catch (...) {
-            SpinLock::Lock lock(mutex);
+            enterCS();
             pool.push_back(backing);
             outstandingObjects--;
+            exitCS();
             throw;
         }
     }
@@ -129,13 +131,34 @@ class ObjectPool {
     {
         object->~T();
 
-        SpinLock::Lock lock(mutex);
+        enterCS();
         assert(outstandingObjects > 0);
         pool.push_back(static_cast<void*>(object));
         outstandingObjects--;
+        exitCS();
     }
 
   private:
+    /**
+     * Enter the critical section guarded by _mutex_.
+     */
+    void enterCS()
+    {
+        if (ThreadSafe) {
+            mutex.lock();
+        }
+    }
+
+    /**
+    * Exit the critical section guarded by _mutex_.
+    */
+    void exitCS()
+    {
+        if (ThreadSafe) {
+            mutex.unlock();
+        }
+    }
+
     /// Monitor-style lock to protect the metadata of the pool.
     SpinLock mutex;
 
