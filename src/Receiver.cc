@@ -74,12 +74,15 @@ Receiver::~Receiver()
     // destructor should be sufficient. However, for clarity and debugging
     // purpose, we decided to write the cleanup procedure explicitly anyway.
 
+    // Remove all completed Messages that are still inside the receive queue.
+    receivedMessages.queue.clear();
+
     // Destruct all MessageBucket's and the Messages within.
     for (auto& bucket : messageBuckets.buckets) {
         // Intrusive::List is not responsible for destructing its elements;
         // it must be done manually.
         for (auto& message : bucket.messages) {
-            messageAllocator.destroy(&message);
+            dropMessage(&message);
         }
         assert(bucket.resendTimeouts.empty());
     }
@@ -88,11 +91,6 @@ Receiver::~Receiver()
     // Destruct all Peer's. Peer's must be removed from scheduledPeers first.
     scheduledPeers.clear();
     peerTable.clear();
-
-    // Destruct all completed Messages that are not yet delivered.
-    for (auto& message : receivedMessages.queue) {
-        messageAllocator.destroy(&message);
-    }
 }
 
 /**
@@ -110,58 +108,44 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
         static_cast<Protocol::Packet::DataHeader*>(packet->payload);
     Protocol::MessageId id = header->common.messageId;
 
-    bool needSchedule = false;
-    bool messageComplete;
     MessageBucket* bucket = messageBuckets.getBucket(id);
-    Message* message;
-    {
-        // Scoped critical section guarded by MessageBucket::mutex; this ensures
-        // that the bucket mutex is dropped before acquiring the schedulerMutex.
-        SpinLock::Lock lock_bucket(bucket->mutex);
-        message = bucket->findMessage(id, lock_bucket);
-        if (message == nullptr) {
-            // New message
-            int messageLength = header->totalLength;
-            int numUnscheduledPackets = header->unscheduledIndexLimit;
-            SocketAddress srcAddress = {
-                .ip = sourceIp, .port = be16toh(header->common.prefix.sport)};
-            message =
-                messageAllocator.construct(this, driver, messageLength, id,
-                                           srcAddress, numUnscheduledPackets);
-            Perf::counters.allocated_rx_messages.add(1);
+    SpinLock::UniqueLock lock_bucket(bucket->mutex);
+    Message* message = bucket->findMessage(id, lock_bucket);
+    if (message == nullptr) {
+        // New message
+        int messageLength = header->totalLength;
+        int numUnscheduledPackets = header->unscheduledIndexLimit;
+        SocketAddress srcAddress = {
+            .ip = sourceIp, .port = be16toh(header->common.prefix.sport)};
+        message = messageAllocator.construct(this, driver, messageLength, id,
+                                             srcAddress, numUnscheduledPackets);
+        Perf::counters.allocated_rx_messages.add(1);
 
-            // Start tracking the message.
-            bucket->messages.push_back(&message->bucketNode);
-            policyManager->signalNewMessage(
-                message->source.ip, header->policyVersion, header->totalLength);
-
-            if (message->scheduled) {
-                // Don't schedule the message while holding the bucket mutex.
-                needSchedule = true;
-            }
-        }
-
-        // Add the packet, but don't copy the payload yet.
-        if (message->received.test(header->index)) {
-            // Must be a duplicate packet; drop it.
-            return;
-        }
-        message->received.set(header->index);
-        message->numPackets++;
-        messageComplete = (message->numPackets == message->numExpectedPackets);
+        // Start tracking the message.
+        bucket->messages.push_back(&message->bucketNode);
+        policyManager->signalNewMessage(
+            message->source.ip, header->policyVersion, header->totalLength);
     }
-
-    // Copy the payload into the message buffer.
-    std::memcpy(message->buffer + header->index * PACKET_DATA_LENGTH,
-                static_cast<char*>(packet->payload) + TRANSPORT_HEADER_LENGTH,
-                packet->length - TRANSPORT_HEADER_LENGTH);
 
     // Sanity checks
     assert(message->source.ip == sourceIp);
     assert(message->source.port == be16toh(header->common.prefix.sport));
     assert(message->messageLength == Util::downCast<int>(header->totalLength));
 
-    if (needSchedule) {
+    if (message->received.test(header->index)) {
+        // Must be a duplicate packet; drop it.
+        return;
+    } else {
+        // Add the packet and copy the payload.
+        message->received.set(header->index);
+        message->numPackets++;
+        std::memcpy(
+            message->buffer + header->index * PACKET_DATA_LENGTH,
+            static_cast<char*>(packet->payload) + TRANSPORT_HEADER_LENGTH,
+            packet->length - TRANSPORT_HEADER_LENGTH);
+    }
+
+    if (message->scheduled) {
         // A new Message needs to be entered into the scheduler.
         SpinLock::Lock lock_scheduler(schedulerMutex);
         schedule(message, lock_scheduler);
@@ -179,19 +163,23 @@ Receiver::handleDataPacket(Driver::Packet* packet, IpAddress sourceIp)
         }
     }
 
-    // Complete the message if all packets have been received.
-    if (messageComplete) {
-        message->state.store(Message::State::COMPLETED,
-                             std::memory_order_release);
+    if (message->numPackets == message->numExpectedPackets) {
+        // All message packets have been received.
+        message->completed.store(true, std::memory_order_release);
         if (message->needTimeout) {
-            SpinLock::Lock lock(bucket->mutex);
             bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
         }
+        lock_bucket.unlock();
 
         // Deliver the message to the user of the transport.
         SpinLock::Lock lock_received_messages(receivedMessages.mutex);
         receivedMessages.queue.push_back(&message->receivedMessageNode);
         Perf::counters.received_rx_messages.add(1);
+    } else if (message->needTimeout) {
+        // Receiving a new packet means the message is still active so it
+        // shouldn't time out until a while later.
+        message->numResendTimeouts = 0;
+        bucket->resendTimeouts.setTimeout(&message->resendTimeout);
     }
 }
 
@@ -209,12 +197,13 @@ Receiver::handleBusyPacket(Driver::Packet* packet)
     Protocol::MessageId id = header->common.messageId;
 
     MessageBucket* bucket = messageBuckets.getBucket(id);
-    SpinLock::Lock lock_bucket(bucket->mutex);
+    SpinLock::UniqueLock lock_bucket(bucket->mutex);
     Message* message = bucket->findMessage(id, lock_bucket);
     if (message != nullptr) {
         // Sender has replied BUSY to our RESEND request; consider this message
         // still active.
-        if (message->getState() == Message::State::IN_PROGRESS) {
+        if (message->needTimeout && !message->completed) {
+            message->numResendTimeouts = 0;
             bucket->resendTimeouts.setTimeout(&message->resendTimeout);
         }
     }
@@ -235,13 +224,20 @@ Receiver::handlePingPacket(Driver::Packet* packet, IpAddress sourceIp)
         static_cast<Protocol::Packet::PingHeader*>(packet->payload);
     Protocol::MessageId id = header->common.messageId;
 
+    // FIXME(Yilong): after making the transport purely message-based, we need
+    // to send back an ACK packet here if this message is complete
+
     MessageBucket* bucket = messageBuckets.getBucket(id);
-    Message* message;
-    {
-        SpinLock::Lock lock_bucket(bucket->mutex);
-        message = bucket->findMessage(id, lock_bucket);
-    }
+    SpinLock::UniqueLock lock_bucket(bucket->mutex);
+    Message* message = bucket->findMessage(id, lock_bucket);
     if (message != nullptr) {
+        // Don't (re-)insert a timeout unless necessary.
+        if (message->needTimeout && !message->completed) {
+            // Sender is checking on this message; consider it still active.
+            message->numResendTimeouts = 0;
+            bucket->resendTimeouts.setTimeout(&message->resendTimeout);
+        }
+
         // We are here either because a GRANT got lost, or we haven't issued a
         // GRANT in along time.  Send out the latest GRANT if one exists or just
         // an "empty" GRANT to let the Sender know we are aware of the message.
@@ -261,15 +257,17 @@ Receiver::handlePingPacket(Driver::Packet* packet, IpAddress sourceIp)
             priority = info->priority;
         }
 
+        lock_bucket.unlock();
         Perf::counters.tx_grant_pkts.add(1);
         ControlPacket::send<Protocol::Packet::GrantHeader>(
-            driver, message->source.ip, message->id, bytesGranted, priority);
+            driver, sourceIp, id, bytesGranted, priority);
     } else {
         // We are here because we have no knowledge of the message the Sender is
         // asking about.  Reply UNKNOWN so the Sender can react accordingly.
+        lock_bucket.unlock();
         Perf::counters.tx_unknown_pkts.add(1);
-        ControlPacket::send<Protocol::Packet::UnknownHeader>(
-            driver, sourceIp, header->common.messageId);
+        ControlPacket::send<Protocol::Packet::UnknownHeader>(driver, sourceIp,
+                                                             id);
     }
 }
 
@@ -324,40 +322,14 @@ Receiver::checkTimeouts()
 
 /**
  * Destruct a Message.
- *
- * This method will detach the message from the transport and release all
- * contained Packet objects.
  */
 Receiver::Message::~Message()
 {
-    Perf::counters.destroyed_rx_messages.add(1);
-    Receiver* receiver = bucket->receiver;
-
-    // Unschedule the message if it is still scheduled (i.e. still linked to a
-    // scheduled peer).
-    if (scheduled) {
-        SpinLock::Lock lock_scheduler(receiver->schedulerMutex);
-        ScheduledMessageInfo* info = &scheduledMessageInfo;
-        if (info->peer != nullptr) {
-            receiver->unschedule(this, lock_scheduler);
-        }
-    }
-
-    // Remove this message from the other data structures of the Receiver.
-    {
-        SpinLock::Lock bucket_lock(bucket->mutex);
-        bucket->resendTimeouts.cancelTimeout(&resendTimeout);
-        bucket->messages.remove(&bucketNode);
-
-        SpinLock::Lock receive_lock(receiver->receivedMessages.mutex);
-        receiver->receivedMessages.queue.remove(&receivedMessageNode);
-    }
-
     // Release the external buffer, if any.
     if (buffer != internalBuffer) {
         MessageBuffer<MAX_MESSAGE_LENGTH>* externalBuf =
             (MessageBuffer<MAX_MESSAGE_LENGTH>*)buffer;
-        receiver->externalBuffers.destroy(externalBuf);
+        bucket->receiver->externalBuffers.destroy(externalBuf);
     }
 }
 
@@ -395,7 +367,40 @@ Receiver::Message::length() const
 void
 Receiver::Message::release()
 {
-    bucket->receiver->messageAllocator.destroy(this);
+    bucket->receiver->dropMessage(this);
+}
+
+/**
+ * Drop a message because it's no longer needed (either the application released
+ * the message or a timeout occurred).
+ *
+ * @param message
+ *      Message which will be detached from the transport and destroyed.
+ */
+void
+Receiver::dropMessage(Receiver::Message* message)
+{
+    // Unschedule the message if it is still scheduled (i.e. still linked to a
+    // scheduled peer).
+    if (message->scheduled) {
+        SpinLock::Lock lock_scheduler(schedulerMutex);
+        ScheduledMessageInfo* info = &message->scheduledMessageInfo;
+        if (info->peer != nullptr) {
+            unschedule(message, lock_scheduler);
+        }
+    }
+
+    // Remove this message from the other data structures of the Receiver.
+    MessageBucket* bucket = message->bucket;
+    {
+        SpinLock::Lock bucket_lock(bucket->mutex);
+        bucket->resendTimeouts.cancelTimeout(&message->resendTimeout);
+        bucket->messages.remove(&message->bucketNode);
+    }
+
+    // Destroy the message.
+    messageAllocator.destroy(message);
+    Perf::counters.destroyed_rx_messages.add(1);
 }
 
 /**
@@ -416,7 +421,7 @@ Receiver::checkResendTimeouts(uint64_t now, MessageBucket* bucket)
     }
 
     while (true) {
-        SpinLock::Lock lock_bucket(bucket->mutex);
+        SpinLock::UniqueLock lock_bucket(bucket->mutex);
 
         // No remaining timeouts.
         if (bucket->resendTimeouts.empty()) {
@@ -430,11 +435,12 @@ Receiver::checkResendTimeouts(uint64_t now, MessageBucket* bucket)
         }
 
         // Found expired timeout.
-        assert(message->getState() == Message::State::IN_PROGRESS);
+        assert(!message->completed);
         message->numResendTimeouts++;
         if (message->numResendTimeouts >= MESSAGE_TIMEOUT_INTERVALS) {
             // Message timed out before being fully received; drop the message.
-            messageAllocator.destroy(message);
+            lock_bucket.unlock();
+            dropMessage(message);
             continue;
         } else {
             bucket->resendTimeouts.setTimeout(&message->resendTimeout);
@@ -541,11 +547,11 @@ Receiver::trySendGrants()
     int slot = 0;
     while (it != scheduledPeers.end() && slot < policy.degreeOvercommitment) {
         assert(!it->scheduledMessages.empty());
+        // No need to acquire the bucket mutex here because we are only going to
+        // access the const members of a Message; besides, the message can't get
+        // destroyed while we are holding the schedulerMutex.
         Message* message = &it->scheduledMessages.front();
         ScheduledMessageInfo* info = &message->scheduledMessageInfo;
-        // Access message const variables without message mutex.
-        const Protocol::MessageId id = message->id;
-        const IpAddress sourceIp = message->source.ip;
 
         // Recalculate message priority
         info->priority =
@@ -561,7 +567,7 @@ Receiver::trySendGrants()
             info->bytesGranted = newGrantLimit;
             Perf::counters.tx_grant_pkts.add(1);
             ControlPacket::send<Protocol::Packet::GrantHeader>(
-                driver, sourceIp, id,
+                driver, message->source.ip, message->id,
                 Util::downCast<uint32_t>(info->bytesGranted), info->priority);
             Perf::counters.active_cycles.add(timer.split());
         }

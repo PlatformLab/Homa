@@ -128,15 +128,6 @@ class Receiver {
             }
         };
 
-        /**
-         * Defines the possible states of this Message.
-         */
-        enum class State {
-            IN_PROGRESS,  //< Receiver is in the process of receiving this
-                          // message.
-            COMPLETED,    //< Receiver has received the entire message.
-        };
-
         explicit Message(Receiver* receiver, Driver* driver, int messageLength,
                          Protocol::MessageId id, SocketAddress source,
                          int numUnscheduledPackets)
@@ -155,7 +146,7 @@ class Receiver {
                          ? internalBuffer
                          : receiver->externalBuffers.construct()->raw)
             // No need to zero-out internalBuffer.
-            , state(Message::State::IN_PROGRESS)
+            , completed(false)
             , bucketNode(this)
             , receivedMessageNode(this)
             , needTimeout(numExpectedPackets > 1)
@@ -171,14 +162,6 @@ class Receiver {
         void* data() const override;
         size_t length() const override;
         void release() override;
-
-        /**
-         * Return the current state of this message.
-         */
-        State getState() const
-        {
-            return state.load(std::memory_order_acquire);
-        }
 
       private:
         /// Driver from which packets were received and to which they should be
@@ -221,8 +204,9 @@ class Receiver {
         /// Internal memory buffer used to store messages within 2KB.
         char internalBuffer[2048];
 
-        /// This message's current state.
-        std::atomic<State> state;
+        /// Current state of the message. True means the entire message has been
+        /// received; otherwise, this message is still in progress.
+        std::atomic<bool> completed;
 
         /// Intrusive structure used by the Receiver to hold on to this Message
         /// in one of the Receiver's MessageBuckets.  Access to this structure
@@ -304,15 +288,14 @@ class Receiver {
          * @param msgId
          *      MessageId of the Message to be found.
          * @param lock
-         *      Reminder to hold the MessageBucket::mutex during this call. (Not
-         *      used)
+         *      Reminder to hold the MessageBucket::mutex during this call.
          * @return
          *      A pointer to the Message if found; nullptr, otherwise.
          */
         Message* findMessage(const Protocol::MessageId& msgId,
-                             const SpinLock::Lock& lock)
+                             const SpinLock::UniqueLock& lock)
         {
-            (void)lock;
+            assert(lock.owns_lock());
             for (auto& it : messages) {
                 if (it.id == msgId) {
                     return &it;
@@ -324,7 +307,8 @@ class Receiver {
         /// The Receiver that owns this bucket.
         Receiver* const receiver;
 
-        /// Mutex protecting the contents of this bucket.
+        /// Mutex protecting the contents of this bucket. This includes messages
+        /// within the bucket.
         SpinLock mutex;
 
         /// Collection of inbound messages
@@ -437,6 +421,7 @@ class Receiver {
         Intrusive::List<Peer>::Node scheduledPeerNode;
     };
 
+    void dropMessage(Receiver::Message* message);
     void checkResendTimeouts(uint64_t now, MessageBucket* bucket);
     void trySendGrants();
     void schedule(Message* message, const SpinLock::Lock& lock);
