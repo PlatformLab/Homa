@@ -58,24 +58,19 @@ class Receiver {
   private:
     // Forward declaration
     class Message;
+    struct MessageBucket;
     struct Peer;
+
+    /// Define the maximum number of packets that a message can hold.
+    static const int MAX_MESSAGE_PACKETS = 1024;
+
+    /// Define the maximum number of bytes within a message.
+    static const int MAX_MESSAGE_LENGTH = 1u << 20u;
 
     /**
      * Contains metadata for a Message that requires additional GRANTs.
      */
     struct ScheduledMessageInfo {
-        /**
-         * Implements a binary comparison function for the strict weak priority
-         * ordering of two Message objects.
-         */
-        struct ComparePriority {
-            bool operator()(const Message& a, const Message& b)
-            {
-                return a.scheduledMessageInfo.bytesRemaining <
-                       b.scheduledMessageInfo.bytesRemaining;
-            }
-        };
-
         /**
          * ScheduledMessageInfo constructor.
          *
@@ -122,73 +117,53 @@ class Receiver {
     class Message : public Homa::InMessage {
       public:
         /**
-         * Defines the possible states of this Message.
+         * Implements a binary comparison function for the strict weak priority
+         * ordering of two Message objects.
          */
-        enum class State {
-            IN_PROGRESS,  //< Receiver is in the process of receiving this
-                          // message.
-            COMPLETED,    //< Receiver has received the entire message.
-            DROPPED,      //< Message was COMPLETED but the Receiver has lost
-                          //< communication with the Sender.
+        struct ComparePriority {
+            bool operator()(const Message& a, const Message& b)
+            {
+                return a.scheduledMessageInfo.bytesRemaining <
+                       b.scheduledMessageInfo.bytesRemaining;
+            }
         };
 
-        explicit Message(Receiver* receiver, Driver* driver,
-                         size_t packetHeaderLength, size_t messageLength,
+        explicit Message(Receiver* receiver, Driver* driver, int messageLength,
                          Protocol::MessageId id, SocketAddress source,
                          int numUnscheduledPackets)
-            : receiver(receiver)
-            , driver(driver)
+            : driver(driver)
             , id(id)
+            , bucket(receiver->messageBuckets.getBucket(id))
             , source(source)
-            , TRANSPORT_HEADER_LENGTH(packetHeaderLength)
-            , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() -
-                                 TRANSPORT_HEADER_LENGTH)
-            , numExpectedPackets((messageLength + PACKET_DATA_LENGTH - 1) /
-                                 PACKET_DATA_LENGTH)
+            , numExpectedPackets(Util::roundUpIntDiv(
+                  messageLength, receiver->PACKET_DATA_LENGTH))
             , numUnscheduledPackets(numUnscheduledPackets)
             , scheduled(numExpectedPackets > numUnscheduledPackets)
-            , start(0)
             , messageLength(messageLength)
             , numPackets(0)
-            , occupied()
-            // packets is not initialized to reduce the work done during
-            // construction. See Message::occupied.
-            , state(Message::State::IN_PROGRESS)
+            , received()
+            , buffer(messageLength <= Util::arrayLength(internalBuffer)
+                         ? internalBuffer
+                         : receiver->externalBuffers.construct()->raw)
+            // No need to zero-out internalBuffer.
+            , completed(false)
             , bucketNode(this)
             , receivedMessageNode(this)
-            , messageTimeout(this)
+            , needTimeout(numExpectedPackets > 1)
+            , numResendTimeouts(0)
             , resendTimeout(this)
             , scheduledMessageInfo(this, messageLength)
-        {}
-
-        virtual ~Message();
-        virtual void acknowledge() const;
-        virtual bool dropped() const;
-        virtual void fail() const;
-        virtual size_t get(size_t offset, void* destination,
-                           size_t count) const;
-        virtual size_t length() const;
-        virtual void strip(size_t count);
-        virtual void release();
-
-        /**
-         * Return the current state of this message.
-         */
-        State getState() const
         {
-            return state.load();
+            assert(messageLength <= MAX_MESSAGE_LENGTH);
         }
 
+        virtual ~Message();
+        void acknowledge() const override;
+        void* data() const override;
+        size_t length() const override;
+        void release() override;
+
       private:
-        /// Define the maximum number of packets that a message can hold.
-        static const int MAX_MESSAGE_PACKETS = 1024;
-
-        Driver::Packet* getPacket(size_t index) const;
-        bool setPacket(size_t index, Driver::Packet* packet);
-
-        /// The Receiver responsible for this message.
-        Receiver* const receiver;
-
         /// Driver from which packets were received and to which they should be
         /// returned when this message is no longer needed.
         Driver* const driver;
@@ -196,15 +171,11 @@ class Receiver {
         /// Contains the unique identifier for this message.
         const Protocol::MessageId id;
 
+        /// Message bucket this message belongs to.
+        MessageBucket* const bucket;
+
         /// Contains source address this message.
         const SocketAddress source;
-
-        /// Number of bytes at the beginning of each Packet that should be
-        /// reserved for the Homa transport header.
-        const int TRANSPORT_HEADER_LENGTH;
-
-        /// Number of bytes of data in each full packet.
-        const int PACKET_DATA_LENGTH;
 
         /// Number of packets the message is expected to contain.
         const int numExpectedPackets;
@@ -216,25 +187,26 @@ class Receiver {
         /// GRANTs to be sent.
         const bool scheduled;
 
-        /// First byte where data is or will go if empty.
-        int start;
-
         /// Number of bytes in this Message including any stripped bytes.
-        int messageLength;
+        const int messageLength;
 
-        /// Number of packets currently contained in this message.
+        /// Number of packets currently contained in this message. Protected by
+        /// MessageBucket::mutex.
         int numPackets;
 
-        /// Bit array representing which entires in the _packets_ array are set.
-        /// Used to avoid having to zero out the entire _packets_ array.
-        std::bitset<MAX_MESSAGE_PACKETS> occupied;
+        /// Bit array representing which packets in this message are received.
+        /// Protected by MessageBucket::mutex.
+        std::bitset<MAX_MESSAGE_PACKETS> received;
 
-        /// Collection of Packet objects that make up this context's Message.
-        /// These Packets will be released when this context is destroyed.
-        Driver::Packet* packets[MAX_MESSAGE_PACKETS];
+        /// Pointer to the contiguous memory buffer serving as message storage.
+        char* const buffer;
 
-        /// This message's current state.
-        std::atomic<State> state;
+        /// Internal memory buffer used to store messages within 2KB.
+        char internalBuffer[2048];
+
+        /// Current state of the message. True means the entire message has been
+        /// received; otherwise, this message is still in progress.
+        std::atomic<bool> completed;
 
         /// Intrusive structure used by the Receiver to hold on to this Message
         /// in one of the Receiver's MessageBuckets.  Access to this structure
@@ -245,12 +217,18 @@ class Receiver {
         /// message when it has been completely received.
         Intrusive::List<Message>::Node receivedMessageNode;
 
-        /// Intrusive structure used by the Receiver to keep track when the
-        /// receiving of this message should be considered failed.
-        Timeout<Message> messageTimeout;
+        /// True if this message needs to be tracked by the timeout manager.
+        /// As an inbound message, this variable should only be set to false
+        /// when the message fits in a single packet.
+        const bool needTimeout;
+
+        /// Number of resend timeouts that occurred in a row. Protected by
+        /// MessageBucket::mutex.
+        int numResendTimeouts;
 
         /// Intrusive structure used by the Receiver to keep track when
-        /// unreceived parts of this message should be re-requested.
+        /// unreceived parts of this message should be re-requested. Protected
+        /// by MessageBucket::mutex.
         Timeout<Message> resendTimeout;
 
         /// Intrusive structure used by the Receiver to keep track of this
@@ -259,6 +237,20 @@ class Receiver {
         ScheduledMessageInfo scheduledMessageInfo;
 
         friend class Receiver;
+    };
+
+    /**
+     * Memory buffer used to hold large messages that don't fit in Message's
+     * internal buffer.  It's basically a simple wrapper around an array so
+     * that it can be allocated from an ObjectPool.
+     *
+     * @tparam length
+     *      Number of bytes in the buffer.
+     */
+    template <size_t length>
+    struct MessageBuffer {
+        /// Buffer space.
+        char raw[length];
     };
 
     /**
@@ -271,21 +263,24 @@ class Receiver {
         /**
          * MessageBucket constructor.
          *
-         * @param messageTimeoutCycles
-         *      Number of cycles of inactivity to wait before a Message is
-         *      considered failed.
+         * @param receiver
+         *      Receiver that owns this bucket.
          * @param resendIntervalCycles
          *      Number of cycles of inactivity to wait between requesting
          *      retransmission of un-received parts of a Message.
          *      liveness of a Message.
          */
-        explicit MessageBucket(uint64_t messageTimeoutCycles,
+        explicit MessageBucket(Receiver* receiver,
                                uint64_t resendIntervalCycles)
-            : mutex()
+            : receiver(receiver)
+            , mutex()
             , messages()
-            , messageTimeouts(messageTimeoutCycles)
             , resendTimeouts(resendIntervalCycles)
         {}
+
+        // MessageBucket's are only destroyed when the transport is destructed;
+        // all the real work are done in ~Receiver().
+        ~MessageBucket() = default;
 
         /**
          * Return the Message with the given MessageId.
@@ -293,35 +288,33 @@ class Receiver {
          * @param msgId
          *      MessageId of the Message to be found.
          * @param lock
-         *      Reminder to hold the MessageBucket::mutex during this call. (Not
-         *      used)
+         *      Reminder to hold the MessageBucket::mutex during this call.
          * @return
          *      A pointer to the Message if found; nullptr, otherwise.
          */
         Message* findMessage(const Protocol::MessageId& msgId,
-                             const SpinLock::Lock& lock)
+                             const SpinLock::UniqueLock& lock)
         {
-            (void)lock;
-            Message* message = nullptr;
-            for (auto it = messages.begin(); it != messages.end(); ++it) {
-                if (it->id == msgId) {
-                    message = &(*it);
-                    break;
+            assert(lock.owns_lock());
+            for (auto& it : messages) {
+                if (it.id == msgId) {
+                    return &it;
                 }
             }
-            return message;
+            return nullptr;
         }
 
-        /// Mutex protecting the contents of this bucket.
+        /// The Receiver that owns this bucket.
+        Receiver* const receiver;
+
+        /// Mutex protecting the contents of this bucket. This includes messages
+        /// within the bucket.
         SpinLock mutex;
 
         /// Collection of inbound messages
         Intrusive::List<Message> messages;
 
-        /// Maintains Message objects in increasing order of timeout.
-        TimeoutManager<Message> messageTimeouts;
-
-        /// Maintains Message object in increase order of resend timeout.
+        /// Maintains Message object in increasing order of resend timeout.
         TimeoutManager<Message> resendTimeouts;
     };
 
@@ -348,66 +341,41 @@ class Receiver {
         static_assert(NUM_BUCKETS == HASH_KEY_MASK + 1);
 
         /**
-         * Helper method to create the set of buckets.
-         *
-         * @param messageTimeoutCycles
-         *      Number of cycles of inactivity to wait before a Message is
-         *      considered failed.
-         * @param resendIntervalCycles
-         *      Number of cycles of inactivity to wait between requesting
-         *      retransmission of un-received parts of a Message.
-         *      liveness of a Message.
-         */
-        static std::array<MessageBucket*, NUM_BUCKETS> makeBuckets(
-            uint64_t messageTimeoutCycles, uint64_t resendIntervalCycles)
-        {
-            std::array<MessageBucket*, NUM_BUCKETS> buckets;
-            for (int i = 0; i < NUM_BUCKETS; ++i) {
-                buckets[i] = new MessageBucket(messageTimeoutCycles,
-                                               resendIntervalCycles);
-            }
-            return buckets;
-        }
-
-        /**
          * MessageBucketMap constructor.
          *
-         * @param messageTimeoutCycles
-         *      Number of cycles of inactivity to wait before a Message is
-         *      considered failed.
          * @param resendIntervalCycles
          *      Number of cycles of inactivity to wait between requesting
          *      retransmission of un-received parts of a Message.
          *      liveness of a Message.
          */
-        explicit MessageBucketMap(uint64_t messageTimeoutCycles,
-                                  uint64_t resendIntervalCycles)
-            : buckets(makeBuckets(messageTimeoutCycles, resendIntervalCycles))
+        explicit MessageBucketMap(uint64_t resendIntervalCycles)
+            : buckets()
             , hasher()
-        {}
+        {
+            buckets.reserve(NUM_BUCKETS);
+            for (int i = 0; i < NUM_BUCKETS; ++i) {
+                buckets.emplace_back(resendIntervalCycles);
+            }
+        }
 
         /**
          * MessageBucketMap destructor.
          */
-        ~MessageBucketMap()
-        {
-            for (int i = 0; i < NUM_BUCKETS; ++i) {
-                delete buckets[i];
-            }
-        }
+        ~MessageBucketMap() = default;
 
         /**
          * Return the MessageBucket that should hold a Message with the given
          * MessageId.
          */
-        MessageBucket* getBucket(const Protocol::MessageId& msgId) const
+        MessageBucket* getBucket(const Protocol::MessageId& msgId)
         {
             uint index = hasher(msgId) & HASH_KEY_MASK;
-            return buckets[index];
+            return &buckets[index];
         }
 
-        /// Array of buckets.
-        std::array<MessageBucket*, NUM_BUCKETS> const buckets;
+        /// Array of NUM_BUCKETS buckets. Defined as a vector to avoid the need
+        /// for a default constructor in MessageBucket.
+        std::vector<MessageBucket> buckets;
 
         /// MessageId hash function container.
         Protocol::MessageId::Hasher hasher;
@@ -415,23 +383,22 @@ class Receiver {
 
     /**
      * Holds the incoming scheduled messages from another transport.
+     *
+     * The lifetime of a Peer is the same as Receiver: we never destruct Peer
+     * objects when the transport is running.
      */
     struct Peer {
         /**
-         * Peer constructor.
+         * Default constructor. Easy to use with std::unorderd_map.
          */
         Peer()
             : scheduledMessages()
             , scheduledPeerNode(this)
         {}
 
-        /**
-         * Peer destructor.
-         */
-        ~Peer()
-        {
-            scheduledMessages.clear();
-        }
+        // Peer's are only destroyed when the transport is destructed; all the
+        // real work are done in ~Receiver().
+        ~Peer() = default;
 
         /**
          * Implements a binary comparison function for the strict weak priority
@@ -442,7 +409,7 @@ class Receiver {
             {
                 assert(!a.scheduledMessages.empty());
                 assert(!b.scheduledMessages.empty());
-                ScheduledMessageInfo::ComparePriority comp;
+                Message::ComparePriority comp;
                 return comp(a.scheduledMessages.front(),
                             b.scheduledMessages.front());
             }
@@ -455,25 +422,37 @@ class Receiver {
     };
 
     void dropMessage(Receiver::Message* message);
-    void checkMessageTimeouts(uint64_t now, MessageBucket* bucket);
     void checkResendTimeouts(uint64_t now, MessageBucket* bucket);
     void trySendGrants();
-    void schedule(Message* message, const SpinLock::Lock& lock);
-    void unschedule(Message* message, const SpinLock::Lock& lock);
-    void updateSchedule(Message* message, const SpinLock::Lock& lock);
+    void schedule(Message* message, SpinLock::Lock& lock);
+    void unschedule(Message* message, SpinLock::Lock& lock);
+    void updateSchedule(Message* message, SpinLock::Lock& lock);
 
     /// Driver with which all packets will be sent and received.  This driver
-    /// is chosen by the Transport that owns this Sender.
+    /// is chosen by the Transport that owns this Receiver.
     Driver* const driver;
 
-    /// Provider of network packet priority and grant policy decisions.
+    /// Provider of network packet priority and grant policy decisions. Not
+    /// owned by this class.
     Policy::Manager* const policyManager;
+
+    /// The number of resend timeouts to occur before declaring a message
+    /// timeout.
+    const int MESSAGE_TIMEOUT_INTERVALS;
+
+    /// Number of bytes at the beginning of each Packet that should be reserved
+    /// for the Homa transport header.
+    const int TRANSPORT_HEADER_LENGTH;
+
+    /// Number of bytes of data in each full packet.
+    const int PACKET_DATA_LENGTH;
 
     /// Tracks the set of inbound messages being received by this Receiver.
     MessageBucketMap messageBuckets;
 
     /// Protects access to the Receiver's scheduler state (i.e. peerTable,
-    /// scheduledPeers, and ScheduledMessageInfo).
+    /// scheduledPeers, and ScheduledMessageInfo). Locking order constraint:
+    /// MessageBucket::mutex must be acquired before schedulerMutex.
     SpinLock schedulerMutex;
 
     /// Collection of all peers; used for fast access.  Access is protected by
@@ -504,12 +483,10 @@ class Receiver {
     std::atomic<uint> nextBucketIndex;
 
     /// Used to allocate Message objects.
-    struct {
-        /// Protects the messageAllocator.pool
-        SpinLock mutex;
-        /// Pool from which Message objects can be allocated.
-        ObjectPool<Message> pool;
-    } messageAllocator;
+    ObjectPool<Message> messageAllocator;
+
+    /// Used to allocate large memory buffers outside the Message struct.
+    ObjectPool<MessageBuffer<MAX_MESSAGE_LENGTH>> externalBuffers;
 };
 
 }  // namespace Core

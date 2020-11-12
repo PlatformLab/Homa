@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2018, Stanford University
+/* Copyright (c) 2010-2020, Stanford University
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,11 +16,10 @@
 #ifndef HOMA_OBJECTPOOL_H
 #define HOMA_OBJECTPOOL_H
 
-#include "Homa/Exception.h"
-
-#include "Debug.h"
-
 #include <vector>
+#include "Debug.h"
+#include "Homa/Exception.h"
+#include "SpinLock.h"
 
 /*
  * Notes on performance and efficiency:
@@ -52,8 +51,11 @@ namespace Homa {
  * new and delete an relatively fixed set of objects very quickly.
  * For example, transports use ObjectPool to allocate short-lived rpc
  * objects that cannot be kept in a stack context.
+ *
+ * Thread-safety of this class can be configured statically using the
+ * template argument ThreadSafe.
  */
-template <typename T>
+template <typename T, bool ThreadSafe=true>
 class ObjectPool {
   public:
     /**
@@ -63,7 +65,8 @@ class ObjectPool {
      * allocations. For simplicity, no bulk allocations are performed.
      */
     ObjectPool()
-        : outstandingObjects(0)
+        : mutex()
+        , outstandingObjects(0)
         , pool()
     {}
 
@@ -99,24 +102,26 @@ class ObjectPool {
     template <typename... Args>
     T* construct(Args&&... args)
     {
-        void* backing = NULL;
+        void* backing = nullptr;
+        enterCS();
         if (pool.size() == 0) {
             backing = operator new(sizeof(T));
         } else {
             backing = pool.back();
             pool.pop_back();
         }
+        outstandingObjects++;
+        exitCS();
 
-        T* object = NULL;
         try {
-            object = new (backing) T(static_cast<Args&&>(args)...);
+            return new (backing) T(static_cast<Args&&>(args)...);
         } catch (...) {
+            enterCS();
             pool.push_back(backing);
+            outstandingObjects--;
+            exitCS();
             throw;
         }
-
-        outstandingObjects++;
-        return object;
     }
 
     /**
@@ -124,13 +129,39 @@ class ObjectPool {
      */
     void destroy(T* object)
     {
-        assert(outstandingObjects > 0);
         object->~T();
+
+        enterCS();
+        assert(outstandingObjects > 0);
         pool.push_back(static_cast<void*>(object));
         outstandingObjects--;
+        exitCS();
     }
 
   private:
+    /**
+     * Enter the critical section guarded by _mutex_.
+     */
+    void enterCS()
+    {
+        if (ThreadSafe) {
+            mutex.lock();
+        }
+    }
+
+    /**
+    * Exit the critical section guarded by _mutex_.
+    */
+    void exitCS()
+    {
+        if (ThreadSafe) {
+            mutex.unlock();
+        }
+    }
+
+    /// Monitor-style lock to protect the metadata of the pool.
+    SpinLock mutex;
+
     /// Count of the number of objects for which construct() was called, but
     /// destroy() was not.
     uint64_t outstandingObjects;

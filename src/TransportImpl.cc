@@ -14,11 +14,7 @@
  */
 
 #include "TransportImpl.h"
-
 #include <algorithm>
-#include <memory>
-#include <utility>
-
 #include "Cycles.h"
 #include "Perf.h"
 #include "Protocol.h"
@@ -97,12 +93,23 @@ TransportImpl::processPackets()
     for (int i = 0; i < numPackets; ++i) {
         processPacket(packets[i], srcAddrs[i]);
     }
+    driver->releasePackets(packets, numPackets);
 
     if (numPackets > 0) {
         Perf::counters.active_cycles.add(timer.split());
     }
 }
 
+/**
+ * Process an incoming packet.  The transport will have no more use of this
+ * packet afterwards, so the packet can be released to the driver when the
+ * method returns.
+ *
+ * @param packet
+ *      Incoming packet to be processed.
+ * @param sourceIp
+ *      Source IP address.
+ */
 void
 TransportImpl::processPacket(Driver::Packet* packet, IpAddress sourceIp)
 {

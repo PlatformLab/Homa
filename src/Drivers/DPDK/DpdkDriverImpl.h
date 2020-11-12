@@ -189,10 +189,10 @@ class DpdkDriver::Impl {
 
     /// Provides memory allocation for the DPDK specific implementation of a
     /// Driver Packet.
-    ObjectPool<Packet> packetPool;
+    ObjectPool<Packet, false> packetPool;
 
     /// Provides memory allocation for packet storage when mbuf are running out.
-    ObjectPool<OverflowBuffer> overflowBufferPool;
+    ObjectPool<OverflowBuffer, false> overflowBufferPool;
 
     /// The number of mbufs that have been given out to callers in Packets.
     uint32_t mbufsOutstanding;

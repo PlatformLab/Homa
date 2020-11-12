@@ -45,7 +45,7 @@ class Sender {
     explicit Sender(uint64_t transportId, Driver* driver,
                     Policy::Manager* policyManager,
                     uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles);
-    virtual ~Sender();
+    virtual ~Sender() = default;
 
     virtual Homa::OutMessage* allocMessage(uint16_t sourcePort);
     virtual void handleDonePacket(Driver::Packet* packet);
@@ -53,17 +53,57 @@ class Sender {
     virtual void handleGrantPacket(Driver::Packet* packet);
     virtual void handleUnknownPacket(Driver::Packet* packet);
     virtual void handleErrorPacket(Driver::Packet* packet);
+
     virtual void poll();
     virtual void checkTimeouts();
 
   private:
     /// Forward declarations
     class Message;
+    struct MessageBucket;
 
     /**
      * Contains metadata for a Message that has been queued to be sent.
      */
     struct QueuedMessageInfo {
+        /**
+         * QueuedMessageInfo constructor.
+         *
+         * @param message
+         *      Message to which this metadata is associated.
+         */
+        explicit QueuedMessageInfo(Message* message)
+            : unsentBytes(0)
+            , packetsGranted(0)
+            , packetsSent(0)
+            , priority(0)
+            , sendQueueNode(message)
+        {}
+
+        /// The number of bytes that still need to be sent for a queued Message.
+        /// This variable is used to rank messages in SRPT order so it must be
+        /// protected by Sender::queueMutex.
+        int unsentBytes;
+
+        /// The number of packets that can be sent for this Message.
+        int packetsGranted;
+
+        /// The number of packets that have been sent for this Message.
+        int packetsSent;
+
+        /// The network priority at which this Message should be sent.
+        int priority;
+
+        /// Intrusive structure used to enqueue the associated Message into
+        /// the sendQueue. Protected by Sender::queueMutex.
+        Intrusive::List<Message>::Node sendQueueNode;
+    };
+
+    /**
+     * Represents an outgoing message that can be sent.
+     */
+    class Message : public Homa::OutMessage {
+      public:
         /**
          * Implements a binary comparison function for the strict weak priority
          * ordering of two Message objects.
@@ -77,68 +117,17 @@ class Sender {
         };
 
         /**
-         * QueuedMessageInfo constructor.
-         *
-         * @param message
-         *      Message to which this metadata is associated.
-         */
-        explicit QueuedMessageInfo(Message* message)
-            : id(0, 0)
-            , destination()
-            , packets(nullptr)
-            , unsentBytes(0)
-            , packetsGranted(0)
-            , priority(0)
-            , packetsSent(0)
-            , sendQueueNode(message)
-        {}
-
-        /// Contains the unique identifier for this message.
-        Protocol::MessageId id;
-
-        /// Contains destination address this message.
-        SocketAddress destination;
-
-        /// Handle to the queue Message for access to the packets that will
-        /// be sent.  This member documents that the packets are logically owned
-        /// by the sendQueue and thus protected by the queueMutex.
-        Message* packets;
-
-        /// The number of bytes that still need to be sent for a queued Message.
-        int unsentBytes;
-
-        /// The number of packets that can be sent for this Message.
-        int packetsGranted;
-
-        /// The network priority at which this Message should be sent.
-        int priority;
-
-        /// The number of packets that have been sent for this Message.
-        int packetsSent;
-
-        /// Intrusive structure used to enqueue the associated Message into
-        /// the sendQueue.
-        Intrusive::List<Message>::Node sendQueueNode;
-    };
-
-    /**
-     * Represents an outgoing message that can be sent.
-     *
-     * Sender::Message objects are contained in the Transport::Op but should
-     * only be accessed by the Sender.
-     */
-    class Message : public Homa::OutMessage {
-      public:
-        /**
          * Construct an Message.
          */
-        explicit Message(Sender* sender, uint16_t sourcePort)
+        explicit Message(Sender* sender, uint64_t messageId,
+                         uint16_t sourcePort)
             : sender(sender)
             , driver(sender->driver)
             , TRANSPORT_HEADER_LENGTH(sizeof(Protocol::Packet::DataHeader))
             , PACKET_DATA_LENGTH(driver->getMaxPayloadSize() -
                                  TRANSPORT_HEADER_LENGTH)
-            , id(0, 0)
+            , id(sender->transportId, messageId)
+            , bucket(sender->messageBuckets.getBucket(id))
             , source{driver->getLocalAddress(), sourcePort}
             , destination()
             , options(Options::NONE)
@@ -146,30 +135,32 @@ class Sender {
             , start(0)
             , messageLength(0)
             , numPackets(0)
+            , throttled()
             , occupied()
             // packets is not initialized to reduce the work done during
             // construction. See Message::occupied.
             , state(Status::NOT_STARTED)
             , bucketNode(this)
-            , messageTimeout(this)
+            , numPingTimeouts(0)
             , pingTimeout(this)
             , queuedMessageInfo(this)
         {}
 
         virtual ~Message();
-        virtual void append(const void* source, size_t count);
-        virtual void cancel();
-        virtual Status getStatus() const;
-        virtual size_t length() const;
-        virtual void prepend(const void* source, size_t count);
-        virtual void release();
-        virtual void reserve(size_t count);
-        virtual void send(SocketAddress destination,
-                          Options options = Options::NONE);
+        void append(const void* source, size_t count) override;
+        void cancel() override;
+        Status getStatus() const override;
+        void setStatus(Status newStatus, bool deschedule, SpinLock::Lock& lock);
+        size_t length() const override;
+        void prepend(const void* source, size_t count) override;
+        void release() override;
+        void reserve(size_t count) override;
+        void send(SocketAddress destination,
+                  Options options = Options::NONE) override;
 
       private:
         /// Define the maximum number of packets that a message can hold.
-        static const size_t MAX_MESSAGE_PACKETS = 1024;
+        static const int MAX_MESSAGE_PACKETS = 1024;
 
         Driver::Packet* getPacket(size_t index) const;
         Driver::Packet* getOrAllocPacket(size_t index);
@@ -189,37 +180,53 @@ class Sender {
         const int PACKET_DATA_LENGTH;
 
         /// Contains the unique identifier for this message.
-        Protocol::MessageId id;
+        const Protocol::MessageId id;
+
+        /// Message bucket this message belongs to.
+        MessageBucket* const bucket;
 
         /// Contains source address of this message.
-        SocketAddress source;
+        const SocketAddress source;
 
-        /// Contains destination address of this message.
+        /// Contains destination address of this message. Must be constant after
+        /// send() is invoked.
         SocketAddress destination;
 
-        /// Contains flags for any requested optional send behavior.
+        /// Contains flags for any requested optional send behavior. Must be
+        /// constant after send() is invoked.
         Options options;
 
         /// True if a pointer to this message is accessible by the application
         /// (e.g. the message has been allocated via allocMessage() but has not
         /// been release via dropMessage()); false, otherwise.
-        bool held;
+        std::atomic<bool> held;
 
-        /// First byte where data is or will go if empty.
+        /// First byte where data is or will go if empty. Must be constant after
+        /// send() is invoked.
         int start;
 
         /// Number of bytes in this Message including any reserved headroom.
+        /// Must be constant after send() is invoked.
         int messageLength;
 
-        /// Number of packets currently contained in this message.
+        /// Number of packets currently contained in this message. Must be
+        /// constant after send() is invoked.
         int numPackets;
 
-        /// Bit array representing which entires in the _packets_ array are set.
-        /// Used to avoid having to zero out the entire _packets_ array.
+        /// False if this message is so small that we are better off sending it
+        /// right away to reduce software overhead; otherwise, the message must
+        /// be put into Sender::sendQueue and transmitted in SRPT order. Must be
+        /// constant after send() is invoked.
+        bool throttled;
+
+        /// Bit array representing which entries in the _packets_ array are set.
+        /// Used to avoid having to zero out the entire _packets_ array. Must be
+        /// constant after send() is invoked.
         std::bitset<MAX_MESSAGE_PACKETS> occupied;
 
         /// Collection of Packet objects that make up this context's Message.
-        /// These Packets will be released when this context is destroyed.
+        /// These Packets will be released when this context is destroyed. Must
+        /// be constant after send() is invoked.
         Driver::Packet* packets[MAX_MESSAGE_PACKETS];
 
         /// This message's current state.
@@ -230,10 +237,9 @@ class Sender {
         /// is protected by the associated MessageBucket::mutex;
         Intrusive::List<Message>::Node bucketNode;
 
-        /// Intrusive structure used by the Sender to keep track when the
-        /// sending of this message should be considered failed.  Access to this
+        /// Number of ping timeouts that occurred in a row.  Access to this
         /// structure is protected by the associated MessageBucket::mutex.
-        Timeout<Message> messageTimeout;
+        int numPingTimeouts;
 
         /// Intrusive structure used by the Sender to keep track when this
         /// message should be checked to ensure progress is still being made.
@@ -259,20 +265,30 @@ class Sender {
         /**
          * MessageBucket constructor.
          *
-         * @param messageTimeoutCycles
-         *      Number of cycles of inactivity to wait before a Message is
-         *      considered failed.
+         * @param Sender
+         *      Sender that owns this bucket.
          * @param pingIntervalCycles
          *      Number of cycles of inactivity to wait between checking on the
          *      liveness of a Message.
          */
-        explicit MessageBucket(uint64_t messageTimeoutCycles,
-                               uint64_t pingIntervalCycles)
-            : mutex()
+        explicit MessageBucket(Sender* sender, uint64_t pingIntervalCycles)
+            : sender(sender)
+            , mutex()
             , messages()
-            , messageTimeouts(messageTimeoutCycles)
             , pingTimeouts(pingIntervalCycles)
         {}
+
+        /**
+         * Destruct a MessageBucket. Will destroy all contained Message objects.
+         */
+        ~MessageBucket()
+        {
+            // Intrusive::List is not responsible for destructing its elements;
+            // it must be done manually.
+            for (auto& message : messages) {
+                sender->messageAllocator.destroy(&message);
+            }
+        }
 
         /**
          * Return the Message with the given MessageId.
@@ -286,29 +302,27 @@ class Sender {
          *      A pointer to the Message if found; nullptr, otherwise.
          */
         Message* findMessage(const Protocol::MessageId& msgId,
-                             const SpinLock::Lock& lock)
+                             [[maybe_unused]] const SpinLock::Lock& lock)
         {
-            (void)lock;
-            Message* message = nullptr;
-            for (auto it = messages.begin(); it != messages.end(); ++it) {
-                if (it->id == msgId) {
-                    message = &(*it);
-                    break;
+            for (auto& it : messages) {
+                if (it.id == msgId) {
+                    return &it;
                 }
             }
-            return message;
+            return nullptr;
         }
 
-        /// Mutex protecting the contents of this bucket.
+        /// Sender that owns this object.
+        Sender* const sender;
+
+        /// Mutex protecting the contents of this bucket. See Sender::queueMutex
+        /// for locking order constraints.
         SpinLock mutex;
 
         /// Collection of outbound messages
         Intrusive::List<Message> messages;
 
-        /// Maintains Message objects in increasing order of timeout.
-        TimeoutManager<Message> messageTimeouts;
-
-        /// Maintains Message object in increase order of ping timeout.
+        /// Maintains Message objects in increasing order of ping timeout.
         TimeoutManager<Message> pingTimeouts;
     };
 
@@ -335,74 +349,50 @@ class Sender {
         static_assert(NUM_BUCKETS == HASH_KEY_MASK + 1);
 
         /**
-         * Helper method to create the set of buckets.
-         *
-         * @param messageTimeoutCycles
-         *      Number of cycles of inactivity to wait before a Message is
-         *      considered failed.
-         * @param pingIntervalCycles
-         *      Number of cycles of inactivity to wait between checking on the
-         *      liveness of a Message.
-         */
-        static std::array<MessageBucket*, NUM_BUCKETS> makeBuckets(
-            uint64_t messageTimeoutCycles, uint64_t pingIntervalCycles)
-        {
-            std::array<MessageBucket*, NUM_BUCKETS> buckets;
-            for (int i = 0; i < NUM_BUCKETS; ++i) {
-                buckets[i] =
-                    new MessageBucket(messageTimeoutCycles, pingIntervalCycles);
-            }
-            return buckets;
-        }
-
-        /**
          * MessageBucketMap constructor.
          *
-         * @param messageTimeoutCycles
-         *      Number of cycles of inactivity to wait before a Message is
-         *      considered failed.
+         * @param sender
+         *      Sender that owns this bucket map.
          * @param pingIntervalCycles
          *      Number of cycles of inactivity to wait between checking on the
          *      liveness of a Message.
          */
-        explicit MessageBucketMap(uint64_t messageTimeoutCycles,
-                                  uint64_t pingIntervalCycles)
-            : buckets(makeBuckets(messageTimeoutCycles, pingIntervalCycles))
+        explicit MessageBucketMap(Sender* sender, uint64_t pingIntervalCycles)
+            : buckets()
             , hasher()
-        {}
+        {
+            buckets.reserve(NUM_BUCKETS);
+            for (int i = 0; i < NUM_BUCKETS; ++i) {
+                buckets.emplace_back(sender, pingIntervalCycles);
+            }
+        }
 
         /**
          * MessageBucketMap destructor.
          */
-        ~MessageBucketMap()
-        {
-            for (int i = 0; i < NUM_BUCKETS; ++i) {
-                delete buckets[i];
-            }
-        }
+        ~MessageBucketMap() = default;
 
         /**
          * Return the MessageBucket that should hold a Message with the given
          * MessageId.
          */
-        MessageBucket* getBucket(const Protocol::MessageId& msgId) const
+        MessageBucket* getBucket(const Protocol::MessageId& msgId)
         {
             uint index = hasher(msgId) & HASH_KEY_MASK;
-            return buckets[index];
+            return &buckets[index];
         }
 
-        /// Array of buckets.
-        std::array<MessageBucket*, NUM_BUCKETS> const buckets;
+        /// Array of NUM_BUCKETS buckets. Defined as a vector to avoid the need
+        /// for a default constructor in MessageBucket.
+        std::vector<MessageBucket> buckets;
 
         /// MessageId hash function container.
         Protocol::MessageId::Hasher hasher;
     };
 
-    void sendMessage(Sender::Message* message, SocketAddress destination,
-                     Message::Options options = Message::Options::NONE);
-    void cancelMessage(Sender::Message* message);
-    void dropMessage(Sender::Message* message);
-    void checkMessageTimeouts(uint64_t now, MessageBucket* bucket);
+    void dropMessage(Sender::Message* message, SpinLock::Lock& lock);
+    void startMessage(Sender::Message* message, bool restart,
+                      SpinLock::Lock& lock);
     void checkPingTimeouts(uint64_t now, MessageBucket* bucket);
     void trySend();
 
@@ -422,10 +412,16 @@ class Sender {
     /// The maximum number of bytes that should be queued in the Driver.
     const uint32_t DRIVER_QUEUED_BYTE_LIMIT;
 
+    /// The number of ping timeouts to occur before declaring a message timeout.
+    const int MESSAGE_TIMEOUT_INTERVALS;
+
     /// Tracks all outbound messages being sent by the Sender.
     MessageBucketMap messageBuckets;
 
-    /// Protects the readyQueue.
+    /// Protects the sendQueue, including all member variables of its items.
+    /// When multiple locks must be acquired, this class follows the locking
+    /// order constraint below ("<" means "acquired before"):
+    ///     MessageBucket::mutex < queueMutex
     SpinLock queueMutex;
 
     /// A list of outbound messages that have unsent packets.  Messages are kept
@@ -441,6 +437,10 @@ class Sender {
     /// if there is work to do is more efficient.
     std::atomic<bool> sendReady;
 
+    /// Used to temporarily hold messages whose last packets have just been
+    /// sent out. Always empty unless inside trySend().
+    std::vector<std::pair<MessageBucket*, Protocol::MessageId>> sentMessages;
+
     /// The index of the next bucket in the messageBuckets::buckets array to
     /// process in the poll loop. The index is held in the lower order bits of
     /// this variable; the higher order bits should be masked off using the
@@ -448,12 +448,7 @@ class Sender {
     std::atomic<uint> nextBucketIndex;
 
     /// Used to allocate Message objects.
-    struct {
-        /// Protects the messageAllocator.pool
-        SpinLock mutex;
-        /// Pool allocator for Message objects.
-        ObjectPool<Message> pool;
-    } messageAllocator;
+    ObjectPool<Message> messageAllocator;
 };
 
 }  // namespace Core
