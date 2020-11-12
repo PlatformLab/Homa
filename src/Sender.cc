@@ -57,6 +57,7 @@ Sender::Sender(uint64_t transportId, Driver* driver,
     , sendQueue()
     , sending()
     , sendReady(false)
+    , sentMessages()
     , nextBucketIndex(0)
     , messageAllocator()
 {}
@@ -74,37 +75,6 @@ Sender::allocMessage(uint16_t sourcePort)
 }
 
 /**
- * Execute the common processing logic that is shared among all incoming control
- * packets.
- *
- * @param packet
- *      Incoming control packet to be processed.
- * @param resetTimeout
- *      True if we should update the timeouts in response to the packet.
- * @return
- *      Pointer to the message targeted by the incoming packet, or nullptr if no
- *      matching message can be found.
- */
-Sender::Message*
-Sender::handleIncomingPacket(Driver::Packet* packet, bool resetTimeout)
-{
-    // Find the message bucket
-    Protocol::Packet::CommonHeader* commonHeader =
-        static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
-    Protocol::MessageId msgId = commonHeader->messageId;
-    MessageBucket* bucket = messageBuckets.getBucket(msgId);
-
-    // Find the target message and update its expiration time
-    SpinLock::Lock lock(bucket->mutex);
-    Message* message = bucket->findMessage(msgId, lock);
-    if (resetTimeout) {
-        message->numPingTimeouts = 0;
-        bucket->pingTimeouts.setTimeout(&message->pingTimeout);
-    }
-    return message;
-}
-
-/**
  * Process an incoming DONE packet.
  *
  * @param packet
@@ -113,19 +83,24 @@ Sender::handleIncomingPacket(Driver::Packet* packet, bool resetTimeout)
 void
 Sender::handleDonePacket(Driver::Packet* packet)
 {
-    Message* message = handleIncomingPacket(packet, false);
+    Protocol::Packet::CommonHeader* header =
+        static_cast<Protocol::Packet::CommonHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->messageId;
+
+    MessageBucket* bucket = messageBuckets.getBucket(msgId);
+    SpinLock::Lock lock(bucket->mutex);
+    Message* message = bucket->findMessage(msgId, lock);
     if (message == nullptr) {
         // No message for this DONE packet; must be old.
         return;
     }
 
     // Process DONE packet
-    Protocol::MessageId msgId = message->id;
     OutMessage::Status status = message->getStatus();
     switch (status) {
         case OutMessage::Status::SENT:
             // Expected behavior
-            message->setStatus(OutMessage::Status::COMPLETED, false);
+            message->setStatus(OutMessage::Status::COMPLETED, false, lock);
             break;
         case OutMessage::Status::CANCELED:
             // Canceled by the the application; just ignore the DONE.
@@ -173,7 +148,15 @@ Sender::handleDonePacket(Driver::Packet* packet)
 void
 Sender::handleResendPacket(Driver::Packet* packet)
 {
-    Message* message = handleIncomingPacket(packet, true);
+    Protocol::Packet::ResendHeader* header =
+        static_cast<Protocol::Packet::ResendHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->common.messageId;
+    int index = header->index;
+    int resendEnd = index + header->num;
+
+    MessageBucket* bucket = messageBuckets.getBucket(msgId);
+    SpinLock::Lock lock(bucket->mutex);
+    Message* message = bucket->findMessage(msgId, lock);
 
     // Check for unexpected conditions
     if (message == nullptr) {
@@ -190,10 +173,8 @@ Sender::handleResendPacket(Driver::Packet* packet)
         return;
     }
 
-    Protocol::Packet::ResendHeader* resendHeader =
-        static_cast<Protocol::Packet::ResendHeader*>(packet->payload);
-    int index = resendHeader->index;
-    int resendEnd = index + resendHeader->num;
+    message->numPingTimeouts = 0;
+    bucket->pingTimeouts.setTimeout(&message->pingTimeout);
 
     // Check if RESEND request is out of range.
     if (index >= message->numPackets || resendEnd > message->numPackets) {
@@ -214,7 +195,7 @@ Sender::handleResendPacket(Driver::Packet* packet)
         // Note that the priority of messages under the unscheduled byte limit
         // will never be overridden since the resend index will not exceed the
         // preset packetsGranted.
-        info->priority = resendHeader->priority;
+        info->priority = header->priority;
         sendReady.store(true);
     }
 
@@ -253,11 +234,19 @@ Sender::handleResendPacket(Driver::Packet* packet)
 void
 Sender::handleGrantPacket(Driver::Packet* packet)
 {
-    Message* message = handleIncomingPacket(packet, true);
+    Protocol::Packet::GrantHeader* header =
+        static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->common.messageId;
+
+    MessageBucket* bucket = messageBuckets.getBucket(msgId);
+    SpinLock::Lock lock(bucket->mutex);
+    Message* message = bucket->findMessage(msgId, lock);
     if (message == nullptr) {
         // No message for this grant; grant must be old.
         return;
     }
+    message->numPingTimeouts = 0;
+    bucket->pingTimeouts.setTimeout(&message->pingTimeout);
 
     Protocol::Packet::GrantHeader* grantHeader =
         static_cast<Protocol::Packet::GrantHeader*>(packet->payload);
@@ -302,7 +291,14 @@ Sender::handleGrantPacket(Driver::Packet* packet)
 void
 Sender::handleUnknownPacket(Driver::Packet* packet)
 {
-    Message* message = handleIncomingPacket(packet, false);
+    Protocol::Packet::UnknownHeader* header =
+        static_cast<Protocol::Packet::UnknownHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->common.messageId;
+
+    MessageBucket* bucket = messageBuckets.getBucket(msgId);
+    SpinLock::Lock lock(bucket->mutex);
+    Message* message = bucket->findMessage(msgId, lock);
+
     if (message == nullptr) {
         // No message was found.
         return;
@@ -318,10 +314,10 @@ Sender::handleUnknownPacket(Driver::Packet* packet)
         // Option: NO_RETRY
         // Either the Message or the DONE packet was lost; consider the message
         // failed since the application asked for the message not to be retried.
-        message->setStatus(OutMessage::Status::FAILED, true);
+        message->setStatus(OutMessage::Status::FAILED, true, lock);
     } else {
         // Message isn't done yet so we will restart sending the message.
-        startMessage(message, true);
+        startMessage(message, true, lock);
     }
 }
 
@@ -334,18 +330,23 @@ Sender::handleUnknownPacket(Driver::Packet* packet)
 void
 Sender::handleErrorPacket(Driver::Packet* packet)
 {
-    Message* message = handleIncomingPacket(packet, false);
+    Protocol::Packet::ErrorHeader* header =
+        static_cast<Protocol::Packet::ErrorHeader*>(packet->payload);
+    Protocol::MessageId msgId = header->common.messageId;
+
+    MessageBucket* bucket = messageBuckets.getBucket(msgId);
+    SpinLock::Lock lock(bucket->mutex);
+    Message* message = bucket->findMessage(msgId, lock);
     if (message == nullptr) {
         // No message for this ERROR packet; must be old.
         return;
     }
 
-    Protocol::MessageId msgId = message->id;
     OutMessage::Status status = message->getStatus();
     switch (status) {
         case OutMessage::Status::SENT:
             // Message was sent and a failure notification was received.
-            message->setStatus(OutMessage::Status::FAILED, false);
+            message->setStatus(OutMessage::Status::FAILED, false, lock);
             break;
         case OutMessage::Status::CANCELED:
             // Canceled by the the application; just ignore the ERROR.
@@ -419,19 +420,6 @@ Sender::checkTimeouts()
  */
 Sender::Message::~Message()
 {
-    Perf::counters.destroyed_tx_messages.add(1);
-
-    // We assume that this message has been unlinked from the sendQueue before
-    // this method is invoked.
-    assert(getStatus() != OutMessage::Status::IN_PROGRESS);
-
-    // Remove this message from the other data structures of the Sender.
-    {
-        SpinLock::Lock bucket_lock(bucket->mutex);
-        bucket->pingTimeouts.cancelTimeout(&pingTimeout);
-        bucket->messages.remove(&bucketNode);
-    }
-
     // Sender message must be contiguous
     driver->releasePackets(packets, numPackets);
 }
@@ -480,7 +468,8 @@ Sender::Message::append(const void* source, size_t count)
 void
 Sender::Message::cancel()
 {
-    setStatus(OutMessage::Status::CANCELED, true);
+    SpinLock::Lock lock(bucket->mutex);
+    setStatus(OutMessage::Status::CANCELED, true, lock);
 }
 
 /**
@@ -501,41 +490,42 @@ Sender::Message::getStatus() const
  *     The new status.
  * @param deschedule
  *     True if we should remove this message from the send queue.
+ * @param lock
+ *     Reminder to hold the MessageBucket::mutex during this call.
  *
- * Note: special care must be taken when calling this method to avoid deadlocks
+ * Note: the caller should not hold Sender::queueMutex when calling this method
  * because our spinlock is not reentrant.
  */
 void
-Sender::Message::setStatus(Status newStatus, bool deschedule)
+Sender::Message::setStatus(Status newStatus, bool deschedule,
+                           [[maybe_unused]] SpinLock::Lock& lock)
 {
     // Whether to remove the message from the send queue depends on more than
     // just the message status; only the caller has enough information to make
     // the decision.
     if (deschedule) {
-        // TODO: with jumbo packets, single-packet messages may also be paced
-
         // An outgoing message is on the sendQueue iff. it's still in progress
         // and subject to the sender's packet pacing mechanism; test this
         // condition first to reduce the expensive locking operation
-        if ((numPackets > 1) &&
-            (getStatus() == OutMessage::Status::IN_PROGRESS)) {
+        if (throttled && (getStatus() == OutMessage::Status::IN_PROGRESS)) {
             SpinLock::Lock lock_queue(sender->queueMutex);
             sender->sendQueue.remove(&queuedMessageInfo.sendQueueNode);
         }
     }
 
     state.store(newStatus, std::memory_order_release);
-
-    // Cancel the timeouts if the message reaches an end state.
-    if (newStatus == OutMessage::Status::CANCELED ||
-        newStatus == OutMessage::Status::COMPLETED ||
-        newStatus == OutMessage::Status::FAILED) {
-        SpinLock::Lock lock(bucket->mutex);
-        bucket->pingTimeouts.cancelTimeout(&pingTimeout);
+    bool endState = (newStatus == OutMessage::Status::CANCELED ||
+                     newStatus == OutMessage::Status::COMPLETED ||
+                     newStatus == OutMessage::Status::FAILED);
+    if (endState) {
+        if (!held.load(std::memory_order_acquire)) {
+            // Ok to delete now that the message has reached an end state.
+            sender->dropMessage(this, lock);
+        } else {
+            // Cancel the timeouts; the message will be dropped upon release().
+            bucket->pingTimeouts.cancelTimeout(&pingTimeout);
+        }
     }
-
-    // This method is not the right place to remove the message from the bucket;
-    // it's the job of Message::release().
 }
 
 /**
@@ -587,9 +577,10 @@ Sender::Message::release()
     if (getStatus() != OutMessage::Status::IN_PROGRESS) {
         // Ok to delete immediately since we don't have to wait for the message
         // to be sent.
-        sender->messageAllocator.destroy(this);
+        SpinLock::Lock lock(bucket->mutex);
+        sender->dropMessage(this, lock);
     } else {
-        // Defer deletion and wait for the message to be SENT.
+        // Defer deletion and wait for the message to be SENT at least.
     }
     Perf::counters.released_tx_messages.add(1);
 }
@@ -644,8 +635,12 @@ Sender::Message::send(SocketAddress destination,
     this->destination = destination;
     this->options = options;
 
+    // All single-packet messages currently bypass our packet pacing mechanism.
+    throttled = (numPackets > 1);
+
     // Kick start the transmission.
-    sender->startMessage(this, false);
+    SpinLock::Lock lock(bucket->mutex);
+    sender->startMessage(this, false, lock);
 }
 
 /**
@@ -691,6 +686,31 @@ Sender::Message::getOrAllocPacket(size_t index)
 }
 
 /**
+ * Drop a message that is no longer needed (released by the application).
+ *
+ * @param message
+ *      Message which will be detached from the transport and destroyed.
+ * @param lock
+ *     Reminder to hold the MessageBucket::mutex during this call.
+ */
+void
+Sender::dropMessage(Sender::Message* message,
+                    [[maybe_unused]] SpinLock::Lock& lock)
+{
+    // We assume that this message has been unlinked from the sendQueue before
+    // this method is invoked.
+    assert(message->getStatus() != OutMessage::Status::IN_PROGRESS);
+
+    // Remove this message from the other data structures of the Sender.
+    MessageBucket* bucket = message->bucket;
+    bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+    bucket->messages.remove(&message->bucketNode);
+
+    Perf::counters.destroyed_tx_messages.add(1);
+    messageAllocator.destroy(message);
+}
+
+/**
  * (Re)start the transmission of an outgoing message.
  *
  * @param message
@@ -698,13 +718,16 @@ Sender::Message::getOrAllocPacket(size_t index)
  * @param restart
  *      False if the message is new to the transport; true means the message is
  *      restarted by the transport.
+ * @param lock
+ *     Reminder to hold the MessageBucket::mutex during this call.
  */
 void
-Sender::startMessage(Sender::Message* message, bool restart)
+Sender::startMessage(Sender::Message* message, bool restart,
+                     [[maybe_unused]] SpinLock::Lock& lock)
 {
     // If we are restarting an existing message, make sure it's not in the
     // sendQueue before making any changes to it.
-    message->setStatus(OutMessage::Status::IN_PROGRESS, restart);
+    message->setStatus(OutMessage::Status::IN_PROGRESS, restart, lock);
 
     // Get the current policy for unscheduled bytes.
     Policy::Unscheduled policy = policyManager->getUnscheduledPolicy(
@@ -730,7 +753,6 @@ Sender::startMessage(Sender::Message* message, bool restart)
 
         // Start tracking the new message
         MessageBucket* bucket = message->bucket;
-        SpinLock::Lock lock(bucket->mutex);
         assert(!bucket->messages.contains(&message->bucketNode));
         bucket->messages.push_back(&message->bucketNode);
     } else {
@@ -748,15 +770,15 @@ Sender::startMessage(Sender::Message* message, bool restart)
     // Kick start the message.
     assert(message->numPackets > 0);
     bool needTimeouts = true;
-    if (message->numPackets == 1) {
-        // If there is only one packet in the message, send it right away.
+    if (!message->throttled) {
+        // The message is too small to be scheduled, send it right away.
         Driver::Packet* dataPacket = message->getPacket(0);
         assert(dataPacket != nullptr);
         Perf::counters.tx_data_pkts.add(1);
         Perf::counters.tx_bytes.add(dataPacket->length);
         driver->sendPacket(dataPacket, message->destination.ip,
                            policy.priority);
-        message->setStatus(OutMessage::Status::SENT, false);
+        message->setStatus(OutMessage::Status::SENT, false, lock);
         // This message must be still be held by the application since the
         // message still exists (it would have been removed when dropped
         // because single packet messages are never IN_PROGRESS). Assuming
@@ -787,10 +809,8 @@ Sender::startMessage(Sender::Message* message, bool restart)
 
     // Initialize the timeouts
     if (needTimeouts) {
-        MessageBucket* bucket = message->bucket;
-        SpinLock::Lock lock(bucket->mutex);
         message->numPingTimeouts = 0;
-        bucket->pingTimeouts.setTimeout(&message->pingTimeout);
+        message->bucket->pingTimeouts.setTimeout(&message->pingTimeout);
     }
 }
 
@@ -813,7 +833,7 @@ Sender::checkPingTimeouts(uint64_t now, MessageBucket* bucket)
     }
 
     while (true) {
-        SpinLock::UniqueLock bucket_lock(bucket->mutex);
+        SpinLock::Lock lock_bucket(bucket->mutex);
         // No remaining timeouts.
         if (bucket->pingTimeouts.empty()) {
             break;
@@ -835,18 +855,13 @@ Sender::checkPingTimeouts(uint64_t now, MessageBucket* bucket)
             message->numPingTimeouts++;
             if (message->numPingTimeouts >= MESSAGE_TIMEOUT_INTERVALS) {
                 // Found expired message.
-
-                // Release the bucket mutex to avoid deadlock in setStatus().
-                bucket_lock.unlock();
-                message->setStatus(OutMessage::Status::FAILED, true);
+                message->setStatus(OutMessage::Status::FAILED, true,
+                                   lock_bucket);
                 continue;
             } else {
                 bucket->pingTimeouts.setTimeout(&message->pingTimeout);
             }
         }
-
-        // Release the bucket mutex to follow the locking order constraint.
-        bucket_lock.unlock();
 
         // Check if sender still has packets to send
         if (status == OutMessage::Status::IN_PROGRESS) {
@@ -893,13 +908,17 @@ Sender::trySend()
      * Each time this method is called we will try to send enough packet to keep
      * the NIC busy but not too many as to cause excessive queue in the NIC.
      */
-    SpinLock::Lock lock_queue(queueMutex);
+    SpinLock::UniqueLock lock_queue(queueMutex);
     uint32_t queuedBytesEstimate = driver->getQueuedBytes();
     // Optimistically assume we will finish sending every granted packet this
     // round; we will set again sendReady if it turns out we don't finish.
     sendReady = false;
     auto it = sendQueue.begin();
     while (it != sendQueue.end()) {
+        // No need to acquire the bucket mutex here because we are only going to
+        // access the const members of a Message; besides, the message can't get
+        // destroyed concurrently because whoever needs to destroy the message
+        // will need to acquire queueMutex first.
         Message& message = *it;
         assert(message.getStatus() == OutMessage::Status::IN_PROGRESS);
         QueuedMessageInfo* info = &message.queuedMessageInfo;
@@ -929,25 +948,8 @@ Sender::trySend()
         }
         if (info->packetsSent >= message.numPackets) {
             // We have finished sending the message.
-
-            // Note: instead of relying on setStatus(), manually deschedule this
-            // message since we are already holding the queueMutex (out spinlock
-            // is not reentrant).
-            assert(message.numPackets > 1 &&
-                   message.getStatus() == OutMessage::Status::IN_PROGRESS);
             it = sendQueue.remove(it);
-            message.setStatus(OutMessage::Status::SENT, false);
-
-            if (!message.held.load(std::memory_order_acquire)) {
-                // Ok to delete now that the message has been sent.
-                messageAllocator.destroy(&message);
-            } else if (message.options & OutMessage::Options::NO_KEEP_ALIVE) {
-                // No timeouts need to be checked after sending the message when
-                // the NO_KEEP_ALIVE option is enabled.
-                MessageBucket* bucket = message.bucket;
-                SpinLock::Lock lock_bucket(bucket->mutex);
-                bucket->pingTimeouts.cancelTimeout(&message.pingTimeout);
-            }
+            sentMessages.emplace_back(message.bucket, message.id);
         } else if (info->packetsSent >= info->packetsGranted) {
             // We have sent every granted packet.
             ++it;
@@ -959,6 +961,32 @@ Sender::trySend()
         }
     }
     sending.clear();
+
+    // Unlock the queueMutex to process any SENT messages to ensure any bucket
+    // mutex is always acquired before the send queueMutex.
+    lock_queue.unlock();
+    for (auto& [bucket, id] : sentMessages) {
+        SpinLock::Lock lock(bucket->mutex);
+        Message* message = bucket->findMessage(id, lock);
+        if (message == nullptr) {
+            // Message must have already been deleted.
+            continue;
+        }
+
+        // The message status may change after the queueMutex is unlocked;
+        // ignore this message if that is the case.
+        if (message->getStatus() == OutMessage::Status::IN_PROGRESS) {
+            message->setStatus(OutMessage::Status::SENT, false, lock);
+            if (!message->held.load(std::memory_order_acquire)) {
+                // Ok to delete now that the message has been sent.
+                dropMessage(message, lock);
+            } else if (message->options & OutMessage::Options::NO_KEEP_ALIVE) {
+                // No timeouts need to be checked after sending the message when
+                // the NO_KEEP_ALIVE option is enabled.
+                bucket->pingTimeouts.cancelTimeout(&message->pingTimeout);
+            }
+        }
+    }
 
     if (!idle) {
         Perf::counters.active_cycles.add(timer.split());

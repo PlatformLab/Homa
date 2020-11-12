@@ -599,9 +599,9 @@ Receiver::trySendGrants()
  *      Reminder to hold the Receiver::schedulerMutex during this call.
  */
 void
-Receiver::schedule(Receiver::Message* message, const SpinLock::Lock& lock)
+Receiver::schedule(Receiver::Message* message,
+                   [[maybe_unused]] SpinLock::Lock& lock)
 {
-    (void)lock;
     ScheduledMessageInfo* info = &message->scheduledMessageInfo;
     Peer* peer = &peerTable[message->source.ip];
     // Insert the Message
@@ -636,9 +636,9 @@ Receiver::schedule(Receiver::Message* message, const SpinLock::Lock& lock)
  *      Reminder to hold the Receiver::schedulerMutex during this call.
  */
 void
-Receiver::unschedule(Receiver::Message* message, const SpinLock::Lock& lock)
+Receiver::unschedule(Receiver::Message* message,
+                     [[maybe_unused]] SpinLock::Lock& lock)
 {
-    (void)lock;
     ScheduledMessageInfo* info = &message->scheduledMessageInfo;
     assert(info->peer != nullptr);
     Peer* peer = info->peer;
@@ -681,9 +681,9 @@ Receiver::unschedule(Receiver::Message* message, const SpinLock::Lock& lock)
  *      Reminder to hold the Receiver::schedulerMutex during this call.
  */
 void
-Receiver::updateSchedule(Receiver::Message* message, const SpinLock::Lock& lock)
+Receiver::updateSchedule(Receiver::Message* message,
+                         [[maybe_unused]] SpinLock::Lock& lock)
 {
-    (void)lock;
     ScheduledMessageInfo* info = &message->scheduledMessageInfo;
     assert(info->peer != nullptr);
     assert(info->peer->scheduledMessages.contains(&info->scheduledMessageNode));

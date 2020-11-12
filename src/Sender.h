@@ -62,8 +62,6 @@ class Sender {
     class Message;
     struct MessageBucket;
 
-    Message* handleIncomingPacket(Driver::Packet* packet, bool resetTimeout);
-
     /**
      * Contains metadata for a Message that has been queued to be sent.
      */
@@ -137,6 +135,7 @@ class Sender {
             , start(0)
             , messageLength(0)
             , numPackets(0)
+            , throttled()
             , occupied()
             // packets is not initialized to reduce the work done during
             // construction. See Message::occupied.
@@ -151,7 +150,7 @@ class Sender {
         void append(const void* source, size_t count) override;
         void cancel() override;
         Status getStatus() const override;
-        void setStatus(Status newStatus, bool deschedule);
+        void setStatus(Status newStatus, bool deschedule, SpinLock::Lock& lock);
         size_t length() const override;
         void prepend(const void* source, size_t count) override;
         void release() override;
@@ -214,7 +213,12 @@ class Sender {
         /// constant after send() is invoked.
         int numPackets;
 
-        // FIXME: seems like an overkill? (e.g., packets should be added in order)
+        /// False if this message is so small that we are better off sending it
+        /// right away to reduce software overhead; otherwise, the message must
+        /// be put into Sender::sendQueue and transmitted in SRPT order. Must be
+        /// constant after send() is invoked.
+        bool throttled;
+
         /// Bit array representing which entries in the _packets_ array are set.
         /// Used to avoid having to zero out the entire _packets_ array. Must be
         /// constant after send() is invoked.
@@ -298,9 +302,8 @@ class Sender {
          *      A pointer to the Message if found; nullptr, otherwise.
          */
         Message* findMessage(const Protocol::MessageId& msgId,
-                             const SpinLock::Lock& lock)
+                             [[maybe_unused]] const SpinLock::Lock& lock)
         {
-            (void)lock;
             for (auto& it : messages) {
                 if (it.id == msgId) {
                     return &it;
@@ -387,7 +390,9 @@ class Sender {
         Protocol::MessageId::Hasher hasher;
     };
 
-    void startMessage(Sender::Message* message, bool restart);
+    void dropMessage(Sender::Message* message, SpinLock::Lock& lock);
+    void startMessage(Sender::Message* message, bool restart,
+                      SpinLock::Lock& lock);
     void checkPingTimeouts(uint64_t now, MessageBucket* bucket);
     void trySend();
 
@@ -416,10 +421,7 @@ class Sender {
     /// Protects the sendQueue, including all member variables of its items.
     /// When multiple locks must be acquired, this class follows the locking
     /// order constraint below ("<" means "acquired before"):
-    ///     queueMutex < MessageBucket::mutex
-    /// Usually, it's more natural to acquire coarser-grained locks first,
-    /// unless inverting the order would make the common code path simpler
-    /// and/or faster.
+    ///     MessageBucket::mutex < queueMutex
     SpinLock queueMutex;
 
     /// A list of outbound messages that have unsent packets.  Messages are kept
@@ -434,6 +436,10 @@ class Sender {
     /// messages in the sendQueue. Encoded into a single bool so that checking
     /// if there is work to do is more efficient.
     std::atomic<bool> sendReady;
+
+    /// Used to temporarily hold messages whose last packets have just been
+    /// sent out. Always empty unless inside trySend().
+    std::vector<std::pair<MessageBucket*, Protocol::MessageId>> sentMessages;
 
     /// The index of the next bucket in the messageBuckets::buckets array to
     /// process in the poll loop. The index is held in the lower order bits of

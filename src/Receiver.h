@@ -424,9 +424,9 @@ class Receiver {
     void dropMessage(Receiver::Message* message);
     void checkResendTimeouts(uint64_t now, MessageBucket* bucket);
     void trySendGrants();
-    void schedule(Message* message, const SpinLock::Lock& lock);
-    void unschedule(Message* message, const SpinLock::Lock& lock);
-    void updateSchedule(Message* message, const SpinLock::Lock& lock);
+    void schedule(Message* message, SpinLock::Lock& lock);
+    void unschedule(Message* message, SpinLock::Lock& lock);
+    void updateSchedule(Message* message, SpinLock::Lock& lock);
 
     /// Driver with which all packets will be sent and received.  This driver
     /// is chosen by the Transport that owns this Receiver.
