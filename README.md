@@ -2,6 +2,11 @@
 
 An implementation of the Homa transport protocol as a C++ userspace library.
 
+*(Note: this repo is no longer under active development and the implementation is
+still at a relatively early stage (see below); for a more production-ready
+version of Homa, check out the Homa Linux kernel module:
+[PlatformLab/HomaModule](https://github.com/PlatformLab/HomaModule))*
+
 ## What is the Homa transport protocol?
 
 Homa is a new transport protocol for datacenter networks developed at the
